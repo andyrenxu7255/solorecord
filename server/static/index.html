@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SoloRecord</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">SR</div>
+        <div>
+          <h1>SoloRecord</h1>
+          <p>内部会议记录系统</p>
+        </div>
+      </div>
+      <nav class="nav">
+        <button class="nav-item active" data-view="meetings">会议</button>
+        <button class="nav-item" data-view="recorder">新建上传</button>
+        <button class="nav-item" data-view="downloads">App 下载</button>
+        <button class="nav-item" data-view="admin">管理</button>
+      </nav>
+      <div class="account-card">
+        <span id="accountName">未登录</span>
+        <button id="loginButton">登录</button>
+      </div>
+    </aside>
+
+    <main class="content">
+      <section id="view-meetings" class="view active">
+        <header class="page-header">
+          <div>
+            <h2>会议记录</h2>
+            <p>查看、搜索、编辑转写和整理待办。</p>
+          </div>
+          <div class="header-actions">
+            <input id="searchInput" class="input" placeholder="搜索标题、纪要、正文">
+            <button id="refreshMeetings" class="button secondary">刷新</button>
+          </div>
+        </header>
+        <div class="workspace">
+          <section class="panel list-panel">
+            <div id="meetingList" class="meeting-list"></div>
+          </section>
+          <section class="panel detail-panel">
+            <div id="meetingDetail" class="empty-state">选择一场会议查看详情</div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-recorder" class="view">
+        <header class="page-header">
+          <div>
+            <h2>新建上传</h2>
+            <p>用于 PC 端补传录音；手机端录音会自动分段上传。</p>
+          </div>
+        </header>
+        <section class="panel form-panel">
+          <label>会议标题</label>
+          <input id="newMeetingTitle" class="input" placeholder="例如：客户复盘会">
+          <label>音频文件</label>
+          <input id="audioFile" class="input" type="file" accept="audio/*">
+          <button id="createUploadButton" class="button primary">创建会议并上传</button>
+          <p class="hint">上传完成后会自动进入转写队列。未配置本地 ASR 时会生成占位转写，方便先验证系统闭环。</p>
+        </section>
+      </section>
+
+      <section id="view-downloads" class="view">
+        <header class="page-header">
+          <div>
+            <h2>Android App 下载</h2>
+            <p>公司内部 APK 分发入口。</p>
+          </div>
+        </header>
+        <section class="panel">
+          <div id="releaseBox" class="release-box">正在读取版本信息...</div>
+        </section>
+      </section>
+
+      <section id="view-admin" class="view">
+        <header class="page-header">
+          <div>
+            <h2>系统管理</h2>
+            <p>配置模型、处理参数、查看任务和发布 APK。</p>
+          </div>
+          <button id="refreshAdmin" class="button secondary">刷新管理信息</button>
+        </header>
+        <div class="admin-grid">
+          <section class="panel">
+            <h3>模型与音频处理</h3>
+            <div class="form-grid">
+              <label>ASR 提供方</label>
+              <select id="asrProvider" class="input">
+                <option value="mock">mock（先跑通闭环）</option>
+                <option value="sherpa-onnx">sherpa-onnx</option>
+                <option value="whisper.cpp">whisper.cpp</option>
+                <option value="command">命令行适配器</option>
+                <option value="remote-qwen">远程 Qwen API</option>
+              </select>
+              <label>ASR 命令</label>
+              <input id="asrCommand" class="input" placeholder="可选，例如 python run_asr.py {audio}">
+              <label>LLM 提供方</label>
+              <select id="llmProvider" class="input">
+                <option value="mock">mock</option>
+                <option value="ollama">Ollama</option>
+                <option value="openai-compatible">OpenAI 兼容</option>
+                <option value="remote-qwen">百炼/Qwen 兼容接口</option>
+                <option value="internal">公司内网模型</option>
+              </select>
+              <label>LLM Endpoint</label>
+              <input id="llmEndpoint" class="input" placeholder="可选">
+              <label>LLM API Key</label>
+              <input id="llmApiKey" class="input" type="password" placeholder="留空表示保持现有密钥">
+              <label>LLM Model</label>
+              <input id="llmModel" class="input" placeholder="可选">
+              <label>Hermes Webhook</label>
+              <input id="hermesWebhookUrl" class="input" placeholder="可选，销售工作区接收地址">
+              <label>Hermes Token</label>
+              <input id="hermesWebhookToken" class="input" type="password" placeholder="留空表示保持现有密钥">
+              <label class="checkbox-row"><input id="esEnabled" type="checkbox"> 启用 ES/OpenSearch 索引</label>
+              <span class="hint">用于全文检索和外部系统读取</span>
+              <label>ES/OpenSearch URL</label>
+              <input id="esUrl" class="input" placeholder="例如 http://127.0.0.1:9200">
+              <label>ES Index</label>
+              <input id="esIndex" class="input" placeholder="solorecord_meetings">
+              <label>外部 API Token</label>
+              <input id="externalApiTokens" class="input" type="password" placeholder="client:token，多个用逗号分隔，留空保持不变">
+              <label>手机分段分钟数</label>
+              <input id="segmentMinutes" class="input" type="number" min="1" max="30" value="5">
+              <label>目标采样率</label>
+              <input id="targetSampleRate" class="input" type="number" min="8000" max="48000" value="16000">
+              <label class="checkbox-row"><input id="enableDiarization" type="checkbox" checked> 启用说话人分离</label>
+              <label class="checkbox-row"><input id="enableDenoise" type="checkbox"> 启用轻量降噪</label>
+            </div>
+            <button id="saveProviders" class="button primary">保存配置</button>
+            <p class="hint">必填项保持很少：未配置模型时系统使用 mock，保证上传、队列、编辑和导出先能跑通。</p>
+          </section>
+
+          <section class="panel">
+            <h3>任务队列</h3>
+            <div id="jobList" class="job-list">暂无任务</div>
+          </section>
+
+          <section class="panel">
+            <h3>发布 APK</h3>
+            <label>版本名</label>
+            <input id="releaseVersionName" class="input" placeholder="1.0.0">
+            <label>版本号</label>
+            <input id="releaseVersionCode" class="input" type="number" value="1">
+            <label>更新说明</label>
+            <textarea id="releaseNotes" class="input" rows="4"></textarea>
+            <label class="checkbox-row"><input id="forceUpdate" type="checkbox"> 强制更新</label>
+            <input id="apkFile" class="input" type="file" accept=".apk,application/vnd.android.package-archive">
+            <button id="uploadRelease" class="button primary">上传 APK</button>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div id="toast" class="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

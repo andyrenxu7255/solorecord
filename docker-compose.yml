@@ -1,0 +1,60 @@
+services:
+  solorecord:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - server/.env
+    init: true
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./var:/app/var
+      - ./server/static:/app/server/static:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    restart: unless-stopped
+
+  # Optional production services for tomorrow's server. The app defaults to
+  # SQLite so these can be enabled after the first successful deployment.
+  postgres:
+    image: postgres:16
+    profiles: ["full"]
+    env_file:
+      - server/.env
+    environment:
+      POSTGRES_DB: solorecord
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    profiles: ["full"]
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    profiles: ["full"]
+    command: server /data --console-address ":9001"
+    env_file:
+      - server/.env
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  minio_data:

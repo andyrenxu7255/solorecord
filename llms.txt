@@ -1,0 +1,60 @@
+# SoloRecord
+
+> Internal company meeting recorder: Android APK + FastAPI server + Web admin + local ASR/LLM pipeline + Synology SSO + server-side transcript/summary storage + optional ES/OpenSearch.
+
+## Start Here
+
+- [Agent Guide](AGENTS.md): Critical rules, build/test commands, architecture map.
+- [README](README.md): Project overview and quick start.
+
+## Human Operations
+
+- [Operations Manual](docs/human-ops/README.md): Deployment, env vars, SSO, ASR/LLM, ES, backups, APK publishing, troubleshooting.
+- [Deployment Reference](docs/deployment.md): Quick start and Docker notes.
+- [Security Audit](docs/security-audit.md): Security controls, prototype risks, verification results.
+- [Data Storage And ES](docs/data-storage-and-es.md): Server authoritative storage, mobile resync, external API, ES/OpenSearch document shape.
+
+## Human Development
+
+- [Developer Manual](docs/human-dev/README.md): Repository structure, modules, API, data model, tests, Android/Web/server development.
+- [Integration Contract](docs/integration-contract.md): Legacy ASR/LLM/webhook contract notes.
+- [Local ASR Pipeline](docs/local-asr-pipeline.md): Audio processing, VAD, diarization, ASR pipeline decisions.
+
+## End Users
+
+- [User Manual](docs/user/README.md): Login, recording, sync, records, speaker rename, Web use, export, FAQ.
+
+## Agent Maintenance
+
+- [Agent Maintenance Manual](docs/agents/README.md): Context summary, safe task patterns, known risks, documentation maintenance rules.
+
+## Product And Architecture References
+
+- [PRD](docs/meeting-app-prd-v2.md): Product scope, UX, architecture, data model, acceptance criteria.
+- [Synology SSO + ASR Architecture](docs/synology-bailian-architecture.md): Security decision, Synology SSO, Bailian/Qwen ASR analysis.
+- [Open Source Research](docs/open-source-research.md): sherpa-onnx, whisper.cpp, Vosk, Whishper, Meetily, licensing notes.
+- [Distribution Mode](docs/distribution-mode.md): Original internal-distribution notes.
+- [Roadmap](docs/roadmap.md): Follow-up enhancement ideas.
+
+## Code Map
+
+- `server/solorecord_server/main.py`: FastAPI routes.
+- `server/solorecord_server/db.py`: SQLite schema and migrations.
+- `server/solorecord_server/auth.py`: Sessions, SSO, external token auth.
+- `server/solorecord_server/processing.py`: ASR, summary, forwarding, indexing workflow.
+- `server/solorecord_server/repository.py`: Full meeting document aggregation.
+- `server/solorecord_server/search_index.py`: ES/OpenSearch indexing.
+- `server/static/index.html`: Web shell.
+- `server/static/app.js`: Web behavior.
+- `server/tests/test_api.py`: Main API regression test.
+- `app/src/main/java/com/solorecord/MainActivity.java`: Android UI and workflow.
+- `app/src/main/java/com/solorecord/net/RollingAudioRecorder.java`: Android rolling recorder.
+- `app/src/main/java/com/solorecord/net/SoloServerClient.java`: Android server API client, mobile sync, server audio download.
+
+## Commands
+
+```powershell
+scripts\run-tests.ps1
+scripts\run-server.ps1
+& 'C:\Users\Andy\.gradle\wrapper\dists\gradle-8.7-bin\bhs2wmbdwecv87pi65oeuq5iu\gradle-8.7\bin\gradle.bat' assembleDebug
+```

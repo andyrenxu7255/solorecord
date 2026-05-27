@@ -1,0 +1,42 @@
+plugins {
+    id "com.android.application"
+}
+
+def localProps = new Properties()
+def localPropsFile = rootProject.file("local.properties")
+if (localPropsFile.exists()) {
+    localPropsFile.withInputStream { stream -> localProps.load(stream) }
+}
+
+def soloValue = { key, fallback = "" ->
+    def localValue = localProps.getProperty(key)
+    if (localValue != null && !localValue.trim().isEmpty()) {
+        return localValue
+    }
+    return providers.gradleProperty(key)
+            .orElse(providers.environmentVariable(key))
+            .getOrElse(fallback)
+}
+
+def quoted = { value ->
+    '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+}
+
+android {
+    namespace "com.solorecord"
+    compileSdk 34
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    defaultConfig {
+        applicationId "com.solorecord"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "0.1.0"
+
+        buildConfigField "String", "SERVER_ENDPOINT", quoted(soloValue("SOLO_SERVER_ENDPOINT", "http://127.0.0.1:8000"))
+    }
+}
