@@ -37,6 +37,6 @@ android {
         versionCode 7
         versionName "0.7.0"
 
-        buildConfigField "String", "SERVER_ENDPOINT", quoted(soloValue("SOLO_SERVER_ENDPOINT", "http://127.0.0.1:8000"))
+        buildConfigField "String", "SERVER_ENDPOINT", quoted(soloValue("SOLO_SERVER_ENDPOINT", ""))
     }
 }

@@ -148,6 +148,19 @@ public final class SoloServerClient {
         return output;
     }
 
+    public ReleaseInfo latestRelease(String serverEndpoint, String token) throws Exception {
+        JSONObject response = httpJsonClient.getJson(url(serverEndpoint, "/api/mobile/releases/latest"), token);
+        JSONObject release = response.optJSONObject("release");
+        if (release == null) {
+            return null;
+        }
+        return new ReleaseInfo(
+                release.optString("version_name"),
+                release.optInt("version_code"),
+                release.optString("downloadUrl"),
+                release.optString("release_notes"));
+    }
+
     private MeetingRecord parseMeetingResponse(JSONObject response) {
         JSONObject meeting = response.optJSONObject("meeting");
         JSONArray audioSegments = response.optJSONArray("audioSegments");
@@ -275,6 +288,36 @@ public final class SoloServerClient {
 
         public String getEmail() {
             return email;
+        }
+    }
+
+    public static final class ReleaseInfo {
+        private final String versionName;
+        private final int versionCode;
+        private final String downloadUrl;
+        private final String releaseNotes;
+
+        ReleaseInfo(String versionName, int versionCode, String downloadUrl, String releaseNotes) {
+            this.versionName = versionName == null ? "" : versionName;
+            this.versionCode = versionCode;
+            this.downloadUrl = downloadUrl == null ? "" : downloadUrl;
+            this.releaseNotes = releaseNotes == null ? "" : releaseNotes;
+        }
+
+        public String getVersionName() {
+            return versionName;
+        }
+
+        public int getVersionCode() {
+            return versionCode;
+        }
+
+        public String getDownloadUrl() {
+            return downloadUrl;
+        }
+
+        public String getReleaseNotes() {
+            return releaseNotes;
         }
     }
 }

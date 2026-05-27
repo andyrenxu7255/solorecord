@@ -108,11 +108,13 @@ http://127.0.0.1:8000
 
 ## App 预配置
 
-APK 正式分发时只建议预配置服务器地址：
+APK 正式分发时只建议预配置服务器地址，不预置任何 token/key：
 
 ```properties
 SOLO_SERVER_ENDPOINT=https://record.example.com
 ```
+
+如果构建时没有传入 `SOLO_SERVER_ENDPOINT`，App 首次打开会在“登录状态”页要求填写服务器地址；填写后再走统一登录。GitHub 公开 Release 附带的 APK 不包含真实服务器地址和密钥，适合初装/联调；公司正式分发时，建议用实际域名重新构建后上传到服务器 Web 管理端的“发布 APK”。
 
 ASR、LLM、SSO、Hermes、ES 等密钥都放在服务器 `server/.env` 或 Web 管理页，不写进 APK。
 
@@ -123,6 +125,18 @@ https://record.example.com/api/auth/sso/start?redirect_after=solorecord://auth/c
 ```
 
 登录完成后服务端会回跳 `solorecord://auth/callback`，APK 只保存服务端短期会话 token。
+
+构建可预配置服务器地址的 APK：
+
+```powershell
+& 'C:\Users\Andy\.gradle\wrapper\dists\gradle-8.7-bin\bhs2wmbdwecv87pi65oeuq5iu\gradle-8.7\bin\gradle.bat' assembleDebug -PSOLO_SERVER_ENDPOINT=https://record.example.com
+```
+
+构建产物：
+
+```text
+app/build/outputs/apk/debug/app-debug.apk
+```
 
 ## 本地 ASR 接入
 
@@ -148,6 +162,7 @@ SoloRecord is an internal company meeting recorder. V0.7 is the first deployable
 - Server: login sessions, meetings, audio segments, transcripts, speaker names, summaries, action items, ASR/LLM configuration, exports, APK publishing, Hermes/Webhook forwarding, external API, and optional ES/OpenSearch indexing.
 - Web app: PC upload, meeting review/editing, transcript editing, speaker rename, exports, model configuration, job management, and APK publishing.
 - Secrets are stored server-side. The APK only needs the server endpoint and a short-lived session token.
+- The public GitHub Release APK contains no real server URL or secret. Users can enter the server URL on first run; for company distribution, rebuild with `-PSOLO_SERVER_ENDPOINT=https://record.example.com` and publish that APK from the server Web admin.
 
 ### Quick Start
 

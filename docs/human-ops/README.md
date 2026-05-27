@@ -286,6 +286,23 @@ POST /api/admin/search/reindex
 - 是否强制更新
 - APK 文件
 
+APK 有两种构建方式：
+
+1. 公开 GitHub Release 附件：不内置真实服务器地址和任何密钥，首次打开后在“登录状态”页填写服务器地址，适合初装、联调和公开共享。
+2. 公司内部分发 APK：构建时只内置服务器地址，不内置 token/key。
+
+内部分发构建示例：
+
+```powershell
+& 'C:\Users\Andy\.gradle\wrapper\dists\gradle-8.7-bin\bhs2wmbdwecv87pi65oeuq5iu\gradle-8.7\bin\gradle.bat' assembleDebug -PSOLO_SERVER_ENDPOINT=https://record.example.com
+```
+
+输出文件：
+
+```text
+app/build/outputs/apk/debug/app-debug.apk
+```
+
 用户在 Web 的“App 下载”页下载。App 的登录状态页也会提示从 Web 下载最新 APK。
 
 App 重装后，本机缓存会清空，但服务器记录不丢失。用户重新登录后可在“录音”或“记录”页点击“从服务器恢复记录”。恢复后的记录带服务器音频下载地址；播放时会按用户权限下载音频分段再播放。
@@ -406,6 +423,7 @@ docker compose build --build-arg INSTALL_MEDIA_TOOLS=true solorecord
 - 备份任务已配置。
 - 外部 API token 已换成长随机值。
 - APK 已上传并可下载。
+- APK 已确认只内置服务器地址，不包含 ASR/LLM/SSO/Hermes/ES token 或 key。
 - 测试用户完成统一登录、录音、上传、转写、改名、导出、从服务器恢复记录、下载播放服务器音频。
 - `scripts\smoke-e2e.ps1` 已通过。
 - `pip-audit -r server/requirements.txt` 无已知漏洞。
@@ -664,6 +682,23 @@ Admins upload APKs from the Web admin page:
 - Force update flag
 - APK file
 
+There are two APK build modes:
+
+1. Public GitHub Release attachment: contains no real server URL or secret. Users enter the server URL on the Login Status tab. This is suitable for first install, integration testing, and public source sharing.
+2. Internal company APK: embeds only the server URL and never embeds tokens or keys.
+
+Internal build example:
+
+```powershell
+& 'C:\Users\Andy\.gradle\wrapper\dists\gradle-8.7-bin\bhs2wmbdwecv87pi65oeuq5iu\gradle-8.7\bin\gradle.bat' assembleDebug -PSOLO_SERVER_ENDPOINT=https://record.example.com
+```
+
+Output:
+
+```text
+app/build/outputs/apk/debug/app-debug.apk
+```
+
 Users download APKs from the Web App Download page. After reinstall, users sign in and click server recovery. Server audio can be downloaded and played according to permissions.
 
 ### Data And Backup
@@ -725,6 +760,7 @@ docker compose build --build-arg INSTALL_MEDIA_TOOLS=true solorecord
 - Backups configured.
 - External API tokens replaced with long random values.
 - APK uploaded and downloadable.
+- APK confirmed to contain only the server URL, with no ASR/LLM/SSO/Hermes/ES token or key.
 - Test user completes SSO, recording, upload, transcription, speaker rename, export, server recovery, and server audio playback.
 - `scripts\smoke-e2e.ps1` passed.
 - `pip-audit -r server/requirements.txt` shows no known vulnerabilities.

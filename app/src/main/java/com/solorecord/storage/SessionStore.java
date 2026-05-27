@@ -13,7 +13,7 @@ public final class SessionStore {
     }
 
     public String getServerEndpoint() {
-        return preferences.getString("serverEndpoint", "http://127.0.0.1:8000");
+        return preferences.getString("serverEndpoint", "");
     }
 
     public void setServerEndpoint(String endpoint) {

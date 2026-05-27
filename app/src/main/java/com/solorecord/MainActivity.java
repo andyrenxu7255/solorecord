@@ -82,7 +82,8 @@ public final class MainActivity extends Activity {
         meetingStore = new MeetingStore(this);
         sessionStore = new SessionStore(this);
         String configuredServerEndpoint = PreconfiguredConfig.serverEndpoint();
-        if (sessionStore.getServerEndpoint().equals("http://127.0.0.1:8000")
+        String savedServerEndpoint = sessionStore.getServerEndpoint();
+        if ((savedServerEndpoint.isEmpty() || savedServerEndpoint.equals("http://127.0.0.1:8000"))
                 && !configuredServerEndpoint.isEmpty()) {
             sessionStore.setServerEndpoint(configuredServerEndpoint);
         }
@@ -398,8 +399,10 @@ public final class MainActivity extends Activity {
         content.addView(logout, spacedParams());
 
         Button checkRelease = secondaryButton("检查 APK 更新");
-        checkRelease.setOnClickListener(view -> toast("请在 Web 端下载最新 APK：" + sessionStore.getServerEndpoint()));
+        checkRelease.setOnClickListener(view -> openLatestRelease());
         content.addView(checkRelease, spacedParams());
+
+        addHint("App 版本：" + BuildConfig.VERSION_NAME + "。APK 只保存服务器地址和登录会话，不内置模型密钥或外部系统 token。");
     }
 
     private void toggleRecording() {
@@ -592,10 +595,15 @@ public final class MainActivity extends Activity {
     }
 
     private void login(String serverEndpoint, String displayName, String email) {
-        sessionStore.setServerEndpoint(serverEndpoint);
+        String endpoint = normalizeServerEndpoint(serverEndpoint);
+        if (endpoint.isEmpty()) {
+            toast("请先填写服务器地址");
+            return;
+        }
+        sessionStore.setServerEndpoint(endpoint);
         executorService.execute(() -> {
             try {
-                SoloServerClient.LoginResult result = serverClient.demoLogin(serverEndpoint, displayName, email);
+                SoloServerClient.LoginResult result = serverClient.demoLogin(endpoint, displayName, email);
                 sessionStore.saveLogin(result.getToken(), result.getDisplayName(), result.getEmail());
                 runOnUiThread(() -> {
                     updateHeader();
@@ -609,11 +617,17 @@ public final class MainActivity extends Activity {
     }
 
     private void startSsoLogin(String serverEndpoint) {
-        sessionStore.setServerEndpoint(serverEndpoint);
-        String base = serverEndpoint == null ? "" : serverEndpoint.trim();
-        while (base.endsWith("/")) {
-            base = base.substring(0, base.length() - 1);
+        String base = normalizeServerEndpoint(serverEndpoint);
+        if (base.isEmpty()) {
+            toast("请先填写服务器地址");
+            return;
         }
+        Uri baseUri = Uri.parse(base);
+        if (!"http".equals(baseUri.getScheme()) && !"https".equals(baseUri.getScheme())) {
+            toast("服务器地址需要以 http:// 或 https:// 开头");
+            return;
+        }
+        sessionStore.setServerEndpoint(base);
         Uri uri = Uri.parse(base + "/api/auth/sso/start")
                 .buildUpon()
                 .appendQueryParameter("redirect_after", "solorecord://auth/callback")
@@ -623,6 +637,38 @@ public final class MainActivity extends Activity {
         } catch (ActivityNotFoundException exception) {
             toast("无法打开统一登录页面");
         }
+    }
+
+    private void openLatestRelease() {
+        if (!sessionStore.isLoggedIn()) {
+            toast("请先登录");
+            return;
+        }
+        String endpoint = normalizeServerEndpoint(sessionStore.getServerEndpoint());
+        if (endpoint.isEmpty()) {
+            toast("请先填写服务器地址");
+            return;
+        }
+        executorService.execute(() -> {
+            try {
+                SoloServerClient.ReleaseInfo release = serverClient.latestRelease(endpoint, sessionStore.getToken());
+                if (release == null || release.getDownloadUrl().isEmpty()) {
+                    runOnUiThread(() -> toast("服务器还没有发布 APK"));
+                    return;
+                }
+                Uri downloadUri = Uri.parse(absoluteUrl(endpoint, release.getDownloadUrl()));
+                runOnUiThread(() -> {
+                    try {
+                        startActivity(new Intent(Intent.ACTION_VIEW, downloadUri));
+                        toast("正在打开下载：" + release.getVersionName());
+                    } catch (ActivityNotFoundException exception) {
+                        toast("无法打开 APK 下载页面");
+                    }
+                });
+            } catch (Exception exception) {
+                runOnUiThread(() -> toast("检查更新失败：" + exception.getMessage()));
+            }
+        });
     }
 
     private void handleAuthCallback(Intent intent) {
@@ -685,6 +731,25 @@ public final class MainActivity extends Activity {
         } finally {
             mediaPlayer = null;
         }
+    }
+
+    private String normalizeServerEndpoint(String value) {
+        String endpoint = value == null ? "" : value.trim();
+        while (endpoint.endsWith("/")) {
+            endpoint = endpoint.substring(0, endpoint.length() - 1);
+        }
+        return endpoint;
+    }
+
+    private String absoluteUrl(String endpoint, String pathOrUrl) {
+        String value = pathOrUrl == null ? "" : pathOrUrl.trim();
+        if (value.startsWith("http://") || value.startsWith("https://")) {
+            return value;
+        }
+        if (!value.startsWith("/")) {
+            value = "/" + value;
+        }
+        return normalizeServerEndpoint(endpoint) + value;
     }
 
     private void addMeetingSummary(MeetingRecord record) {

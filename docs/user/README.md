@@ -29,6 +29,8 @@ SoloRecord 是公司内部会议记录系统。你可以用手机录音，系统
 2. 点击“登录”。
 3. 按页面提示完成公司统一登录。
 
+如果公司内部分发的 APK 已经预置服务器地址，这里会自动显示；如果是 GitHub Release 公开附件安装包，需要手动填写公司运维提供的服务器地址。
+
 登录成功后，顶部会显示当前用户和服务器地址。
 
 没有登录时，不能录音，也不能查看记录。
@@ -229,6 +231,8 @@ Open the Login Status tab:
 1. Enter the server address.
 2. Tap Login.
 3. Complete company unified login in the browser.
+
+If the internally distributed APK was built with the server URL, it appears automatically. If the APK came from the public GitHub Release asset, enter the server URL provided by operations.
 
 After sign-in, the top area shows the current user and server address. You cannot record or view records before signing in.
 
