@@ -280,7 +280,7 @@ POST /api/admin/search/reindex
 
 管理员登录 Web 后进入“管理”页上传 APK：
 
-- 版本名：例如 `1.0.0`
+- 版本名：例如 `0.7.0`
 - 版本号：整数，递增
 - 更新说明
 - 是否强制更新
@@ -409,3 +409,322 @@ docker compose build --build-arg INSTALL_MEDIA_TOOLS=true solorecord
 - 测试用户完成统一登录、录音、上传、转写、改名、导出、从服务器恢复记录、下载播放服务器音频。
 - `scripts\smoke-e2e.ps1` 已通过。
 - `pip-audit -r server/requirements.txt` 无已知漏洞。
+
+## English
+
+### Audience
+
+This manual is for the people who deploy, operate, back up, secure, and troubleshoot SoloRecord. You do not need to read the Android or Web source code to bring the system online.
+
+### System Components
+
+SoloRecord has three main parts:
+
+- Android APK: employee recording, local records, playback, and server sync.
+- Server API: login, meetings, audio, transcripts, summaries, action items, exports, APK publishing, and external integrations.
+- Web admin / PC UI: meeting management, provider configuration, jobs, APK download/publishing, and external API configuration.
+
+The server is the authoritative data source. The APK keeps local audio and cache only. After reinstalling the APK, users can sign in again and recover server records.
+
+### Recommended Deployment Shape
+
+Start with a single-machine deployment:
+
+```text
+Nginx/Caddy HTTPS
+        |
+SoloRecord FastAPI :8000
+        |
+SQLite + var/storage + var/apk
+```
+
+For production growth, move toward:
+
+```text
+Nginx/Caddy HTTPS
+        |
+SoloRecord API + Worker
+        |
+PostgreSQL + NAS/S3/Object Storage + ES/OpenSearch
+        |
+Local ASR/LLM + Hermes/Sales Workspace
+```
+
+### Server Preparation
+
+Minimum recommendation:
+
+- Linux or Windows server; Linux is preferred.
+- 4+ CPU cores and 8 GB+ memory.
+- Disk capacity sized for meeting audio; start from 500 GB if unsure.
+- A separate GPU host if the local ASR runtime needs GPU.
+- HTTPS domain for Web, APK download, and SSO callback.
+
+Prepare:
+
+- Synology SSO/OIDC app information.
+- SoloRecord service domain.
+- Local ASR command or service endpoint.
+- LLM endpoint, such as Ollama, OpenAI-compatible API, or internal model.
+- Hermes/sales workspace webhook or external pull token.
+
+### First Start
+
+Windows local:
+
+```powershell
+scripts\run-server.ps1
+```
+
+Linux:
+
+```bash
+cp server/.env.example server/.env
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r server/requirements.txt
+PYTHONPATH=server uvicorn solorecord_server.main:app --host 0.0.0.0 --port 8000
+```
+
+Docker:
+
+```bash
+cp server/.env.example server/.env
+docker compose up -d --build solorecord
+```
+
+If a Windows Docker build stalls, use the mounted-source smoke path:
+
+```powershell
+docker run --rm --name solorecord-smoke -d -p 8000:8000 `
+  -w /app -v "${PWD}:/app" --env-file server/.env `
+  -e PYTHONPATH=/app/server `
+  python:3.12.13-slim `
+  sh -c "pip install --disable-pip-version-check --timeout 120 --retries 5 --no-cache-dir -r /app/server/requirements.txt && uvicorn solorecord_server.main:app --host 0.0.0.0 --port 8000"
+```
+
+Run the end-to-end smoke after startup:
+
+```powershell
+scripts\smoke-e2e.ps1 -BaseUrl http://127.0.0.1:8000 -ExternalToken test-token
+```
+
+### Required Configuration Changes
+
+At minimum, edit `server/.env`:
+
+```text
+SOLO_BASE_URL=https://record.example.com
+SOLO_SECRET_KEY=replace-with-a-long-random-string
+SOLO_ALLOW_DEMO_LOGIN=false
+SOLO_DATABASE_PATH=var/solorecord.db
+SOLO_STORAGE_DIR=var/storage
+SOLO_APK_DIR=var/apk
+SOLO_STATIC_DIR=server/static
+```
+
+Demo login can stay enabled only during internal validation:
+
+```text
+SOLO_ALLOW_DEMO_LOGIN=true
+```
+
+Disable it before production use. If the optional Docker Compose `full` profile is enabled, replace `POSTGRES_PASSWORD` and `MINIO_ROOT_PASSWORD` with long random values.
+
+### Synology SSO
+
+Register these in Synology SSO/OIDC:
+
+- Client ID
+- Client Secret
+- Redirect URI: `https://record.example.com/api/auth/sso/callback`
+- Scope, usually `openid email`
+
+The Android APK never stores the Synology secret. The APK opens the server SSO start URL with:
+
+```text
+redirect_after=solorecord://auth/callback
+```
+
+The server completes SSO and returns a short-lived SoloRecord session token to the APK.
+
+Server configuration:
+
+```text
+SOLO_SSO_VERIFY_MODE=oidc
+SOLO_SSO_ISSUER=https://sso.example.com
+SOLO_SSO_CLIENT_ID=your-client-id
+SOLO_SSO_CLIENT_SECRET=your-client-secret
+SOLO_SSO_REDIRECT_URI=https://record.example.com/api/auth/sso/callback
+SOLO_SSO_SCOPE=openid email
+SOLO_SSO_AUTHORIZE_URL=
+SOLO_SSO_TOKEN_URL=
+SOLO_SSO_USERINFO_URL=
+SOLO_SSO_JWKS_URL=
+```
+
+Prefer explicit OIDC endpoint URLs when Synology provides them. Otherwise, the server can infer Synology-style `/webman/sso/SSOOauth.cgi` and `/webman/sso/SSOAccessToken.cgi` endpoints from `SOLO_SSO_ISSUER`.
+
+### ASR Provider
+
+Default mock mode keeps the full system runnable:
+
+```text
+SOLO_ASR_PROVIDER=mock
+```
+
+For a local ASR runtime, use the command adapter:
+
+```text
+SOLO_ASR_PROVIDER=command
+SOLO_ASR_COMMAND=python /opt/solorecord-asr/run_asr.py --audios-json {audio_json} --sample-rate {sample_rate}
+```
+
+The command must print JSON to stdout:
+
+```json
+{
+  "segments": [
+    {
+      "speaker_id": "SPEAKER_01",
+      "display_name": "Speaker 1",
+      "start_ms": 0,
+      "end_ms": 5200,
+      "text": "Let's confirm the quote today.",
+      "confidence": 0.91
+    }
+  ]
+}
+```
+
+Supported placeholders include `{audio}`, `{audio_json}`, `{audios}`, `{meeting_id}`, `{sample_rate}`, `{diarization}`, and `{denoise}`.
+
+### LLM Provider
+
+Mock mode produces placeholder summaries:
+
+```text
+SOLO_LLM_PROVIDER=mock
+```
+
+Ollama:
+
+```text
+SOLO_LLM_PROVIDER=ollama
+SOLO_LLM_ENDPOINT=http://127.0.0.1:11434
+SOLO_LLM_MODEL=qwen3
+```
+
+OpenAI-compatible API:
+
+```text
+SOLO_LLM_PROVIDER=openai-compatible
+SOLO_LLM_ENDPOINT=https://model.example.com/v1
+SOLO_LLM_API_KEY=
+SOLO_LLM_MODEL=qwen3
+```
+
+Real keys belong only in `server/.env` or a secret manager, never in the APK or public repository.
+
+### External API And ES/OpenSearch
+
+Hermes or other internal systems can pull records with:
+
+```text
+SOLO_EXTERNAL_API_TOKENS=hermes:replace-with-long-random-token,crm:another-token
+```
+
+Endpoints:
+
+```text
+GET /api/external/meetings
+GET /api/external/meetings/{meetingId}
+```
+
+ES/OpenSearch is optional:
+
+```text
+SOLO_ES_ENABLED=true
+SOLO_ES_URL=http://127.0.0.1:9200
+SOLO_ES_INDEX=solorecord_meetings
+SOLO_ES_API_KEY=
+SOLO_ES_USERNAME=
+SOLO_ES_PASSWORD=
+```
+
+It is an index only. The database remains the source of truth.
+
+### APK Publishing
+
+Admins upload APKs from the Web admin page:
+
+- Version name, such as `0.7.0`
+- Version code, integer and increasing
+- Release notes
+- Force update flag
+- APK file
+
+Users download APKs from the Web App Download page. After reinstall, users sign in and click server recovery. Server audio can be downloaded and played according to permissions.
+
+### Data And Backup
+
+Default paths:
+
+```text
+var/solorecord.db
+var/storage/
+var/apk/
+```
+
+Back up:
+
+- `var/solorecord.db`
+- `var/storage/`
+- `var/apk/`
+- `server/.env`
+
+Do not share `server/.env` externally or include it in images/public repositories.
+
+### Health Check
+
+```text
+GET /api/health
+```
+
+Expected:
+
+```json
+{"status":"ok","app":"SoloRecord"}
+```
+
+### Troubleshooting
+
+Login failures usually point to `SOLO_BASE_URL`, `SOLO_SSO_REDIRECT_URI`, Synology callback configuration, or reverse proxy Host/TLS settings.
+
+Sync failures usually point to the APK server endpoint, network access, expired token, or `GET /api/mobile/sync`.
+
+Transcription failures usually point to `SOLO_ASR_PROVIDER`, `SOLO_ASR_COMMAND`, command execution permission, invalid JSON stdout, or `processing_jobs.error_message`.
+
+Empty summaries usually point to missing `SOLO_LLM_PROVIDER`, `SOLO_LLM_ENDPOINT`, `SOLO_LLM_MODEL`, or `SOLO_LLM_API_KEY`. If the LLM is not configured, SoloRecord falls back to mock summaries.
+
+For CJK PDF rendering issues, build the production image with:
+
+```bash
+docker compose build --build-arg INSTALL_MEDIA_TOOLS=true solorecord
+```
+
+### Go-Live Checklist
+
+- `SOLO_SECRET_KEY` changed.
+- `SOLO_ALLOW_DEMO_LOGIN=false`.
+- HTTPS enabled.
+- SSO callback verified.
+- ASR command or service verified.
+- LLM configuration verified.
+- `var/` mounted to persistent disk.
+- Backups configured.
+- External API tokens replaced with long random values.
+- APK uploaded and downloadable.
+- Test user completes SSO, recording, upload, transcription, speaker rename, export, server recovery, and server audio playback.
+- `scripts\smoke-e2e.ps1` passed.
+- `pip-audit -r server/requirements.txt` shows no known vulnerabilities.

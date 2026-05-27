@@ -81,7 +81,7 @@ Docker smoke fallback 见 `docs/human-ops/README.md`。
 
 用户目标：
 
-- 公司内部使用，不公开分发。
+- APK 和生产服务面向公司内部使用，不做公开分发；源码仓库可公开，但不能包含真实密钥、运行数据、数据库、APK 构建产物或客户会议音频。
 - 通过群晖统一登录后才能使用。
 - App 录音可靠优先。
 - 每次开始/结束归为一条会议记录。
@@ -174,3 +174,181 @@ scripts\smoke-e2e.ps1 -BaseUrl http://127.0.0.1:8000 -ExternalToken test-token
 - 智能体接手：`AGENTS.md`、`docs/agents/README.md`、`llms.txt`
 
 长调研和背景放到 `docs/*` 参考文档，不要塞进 `AGENTS.md`。
+
+## English
+
+### Purpose
+
+This document is for future AI agents maintaining SoloRecord. It summarizes project boundaries, run commands, common tasks, and hard safety rules.
+
+Recommended reading order:
+
+1. `AGENTS.md`
+2. `llms.txt`
+3. This file
+4. The relevant human manual
+5. Code
+
+### Current System State
+
+SoloRecord currently includes:
+
+- Android three-tab app.
+- Login gate.
+- Rolling segmented recording.
+- Local playback.
+- Server-side meetings, audio, transcripts, summaries, and action items.
+- Web admin UI.
+- APK upload/download.
+- SSO browser login returning to Android through `solorecord://auth/callback`.
+- APK reinstall recovery through `/api/mobile/sync`, including permission-protected server audio download.
+- Local ASR command adapter.
+- LLM summary adapter.
+- Hermes/Webhook forwarding.
+- External API token access.
+- Optional ES/OpenSearch indexing.
+- Synology SSO skeleton and demo login.
+
+### Important Paths
+
+```text
+server/solorecord_server/main.py
+server/solorecord_server/db.py
+server/solorecord_server/auth.py
+server/solorecord_server/processing.py
+server/solorecord_server/repository.py
+server/solorecord_server/search_index.py
+server/static/app.js
+server/static/index.html
+app/src/main/java/com/solorecord/MainActivity.java
+app/src/main/java/com/solorecord/net/RollingAudioRecorder.java
+server/tests/test_api.py
+```
+
+### Verification
+
+Minimum server verification:
+
+```powershell
+scripts\run-tests.ps1
+```
+
+Android:
+
+```powershell
+& 'C:\Users\Andy\.gradle\wrapper\dists\gradle-8.7-bin\bhs2wmbdwecv87pi65oeuq5iu\gradle-8.7\bin\gradle.bat' assembleDebug
+```
+
+Web/API smoke:
+
+```powershell
+scripts\run-server.ps1
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8000/api/health
+http://127.0.0.1:8000/
+```
+
+Docker smoke fallback is documented in `docs/human-ops/README.md`.
+
+### User Goal Summary
+
+The user wants an internal company system with:
+
+- Synology/company unified login before use.
+- Reliable recording as the top priority.
+- One meeting record per start/end cycle.
+- Segmented audio internally, but one meeting in the user experience.
+- Audio playback, transcript, summary, and action items.
+- Speaker-name correction by stable speaker id.
+- Server-authoritative storage.
+- APK reinstall recovery from server records.
+- Protected server audio download for recovered records.
+- External data access for other apps, preferably with optional ES/OpenSearch.
+
+The repository can be public only if no real secrets, runtime data, databases, caches, APK build artifacts, or customer meeting audio are committed. Production deployments remain internal.
+
+### Do Not
+
+- Do not put model keys in the APK.
+- Do not copy `server/.env` values into docs or answers.
+- Do not treat ES/OpenSearch as the only storage layer.
+- Do not expose meeting data without `_assert_access`.
+- Do not render unescaped dynamic HTML in the Web UI.
+- Do not make Android responsible for heavy ASR, denoise, or diarization.
+- Do not directly copy GPL/AGPL project source code.
+
+### Recommended Change Strategy
+
+Small change:
+
+- Read the relevant files.
+- Apply a focused patch.
+- Run `scripts\run-tests.ps1`.
+- If Android is touched, run `assembleDebug`.
+
+Server API change:
+
+- Update `schemas.py`.
+- Update `main.py`.
+- Update `repository.py` if response shape changes.
+- Update `server/tests/test_api.py`.
+
+Web admin change:
+
+- Update `index.html`.
+- Update `app.js`.
+- Update `styles.css` only when needed.
+- Keep secret fields masked; never echo real values.
+
+Android change:
+
+- Confirm login gating.
+- Confirm recording cannot lose data due to UI changes.
+- Build the APK.
+
+### Known Risks
+
+- SQLite is acceptable for initial deployment; migrate to PostgreSQL for multi-user production.
+- Android token currently uses SharedPreferences; use EncryptedSharedPreferences/Keystore before broader rollout.
+- Android Base64 upload is prototype-friendly; long meetings should move to multipart or resumable upload.
+- Windows Docker BuildKit may stall on slow Python package downloads; use the documented mounted-source smoke fallback locally.
+- PDF Chinese rendering depends on system fonts; production can enable `INSTALL_MEDIA_TOOLS=true`.
+
+### Key Tests
+
+`server/tests/test_api.py` covers:
+
+- Login
+- Meeting creation
+- Audio upload
+- Processing
+- Transcript fetch
+- Speaker rename
+- Export
+- APK publishing
+- Mobile sync
+- Protected audio segment download
+- External API
+
+Any change touching these flows must keep the test passing.
+
+Also run HTTP smoke:
+
+```powershell
+scripts\smoke-e2e.ps1 -BaseUrl http://127.0.0.1:8000 -ExternalToken test-token
+```
+
+### Documentation Maintenance Rules
+
+Update the related docs when adding features:
+
+- Operations: `docs/human-ops/README.md`
+- Development: `docs/human-dev/README.md`
+- User-visible behavior: `docs/user/README.md`
+- Agent handoff: `AGENTS.md`, `docs/agents/README.md`, `llms.txt`
+
+Keep long research notes and background in `docs/*` reference files rather than overloading `AGENTS.md`.

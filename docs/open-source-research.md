@@ -1,3 +1,81 @@
+# 开源调研记录
+
+日期：2026-05-26
+
+本文总结与 SoloRecord “群晖登录 Android 录音 + 本地 ASR 会议流水线”相似的开源项目和可复用组件。
+
+## 简短建议
+
+把开源组件作为依赖或适配器复用，不要克隆现成会议 App。
+
+最适合复用：
+
+- 本地 ASR/VAD/diarization runtime：`k2-fsa/sherpa-onnx`，Apache-2.0。
+- 本地 Whisper runtime / ASR 基准：`ggml-org/whisper.cpp`，MIT。
+- Web 转写架构参考：`pluja/whishper`，但 AGPL-3.0，不要直接复制代码。
+- 桌面会议助手参考：`Zackriya-Solutions/meetily`，MIT。
+- Android 滚动录音架构参考：`151henry151/listen`，GPL-3.0，不要复制代码。
+- 简单 Android VAD 备选：`gkonovalov/android-vad`，MIT。
+- 低资源 ASR 备用：`alphacep/vosk-api`，Apache-2.0。
+
+SoloRecord 仍应保持自有 App 架构，因为它有群晖 SSO、会议聚合、上传重试、本地 ASR 服务、会议纪要、Hermes/销售工作区转发和企业部署要求。
+
+## 候选项目概览
+
+- `sherpa-onnx`：最强本地 ASR/VAD/diarization 候选，支持多平台和多语言绑定，适合先部署在本地网关/服务器。
+- `whisper.cpp`：无需重 Python/PyTorch 栈的本地 Whisper 推理，适合作为 ASR 适配器和质量基准。
+- `Vosk`：成熟、轻量，可做低资源 fallback。
+- `WhisperX`、`pyannote.audio`、`NeMo`：适合实验和离线 benchmark，但生产部署更重。
+- `Whishper`：Web 转写系统架构很接近，但 AGPL-3.0，仅做设计参考。
+- `Meetily`：PC 桌面端参考，适合后续需要捕获 PC 麦克风和系统声音时评估。
+- `HushNote`、`ownscribe`：验证“本地录音/转写/说话人标注/纪要/导出”的产品形态，可参考 UX。
+- `android-vad` 和 `Android-Wave-Recorder`：可用于后续端侧人声提示、网络优化或改录 WAV/PCM 的评估。
+
+## 架构经验
+
+1. 不要耦合录音和 ASR。模型慢或不可用时，录音仍必须可靠。
+2. Android 使用滚动音频文件、前台服务、分段管理、本地元数据和播放 UI。
+3. 网关作为处理 owner，可跑重模型、统一格式、按段重试，并把模型密钥留在服务端。
+4. VAD、diarization、ASR、summary 拆成独立阶段，方便重试和对比模型。
+5. diarization 是概率结果，保存匿名 speaker id、置信度和修正状态，不假设系统总能知道真实姓名。
+6. 代码复用优先 Apache-2.0/MIT；GPL/AGPL 项目只做架构参考，除非公司接受许可证义务。
+
+## SoloRecord 组件选择
+
+APK：
+
+- 保持自研原生 Android Java/Kotlin。
+- 使用前台 `RecordingService`。
+- 本地保存会议和分段元数据。
+- 未来可用 WorkManager 做上传重试。
+- 初期使用 MediaRecorder M4A/AAC。
+- 端侧 VAD 只作为可选 UX/诊断/网络优化。
+
+本地网关 / ASR 服务：
+
+- 优先用 `sherpa-onnx` 做 VAD + ASR 实验。
+- 通过 sherpa-onnx 评估 SenseVoice/Paraformer/Whisper 类模型对中文会议音频的质量。
+- 如果到人归因必须可靠，再加入 sherpa-onnx diarization。
+- Vosk 作为小资源 fallback。
+- pyannote/WhisperX 作为 benchmark 工具，不一定进入第一版生产 runtime。
+
+会议智能：
+
+- 原始 chunk 和合并转写分开保存。
+- 保存模型名、版本、runtime、时间戳、置信度、VAD speech ratio、diarization confidence。
+- 从合并时间线生成纪要和待办。
+- 允许用户或管理员修正 speaker name。
+
+## 复用优先级
+
+1. 将 `sherpa-onnx` 作为依赖或 sidecar binary。
+2. 借鉴 `Listen` 的 Android 前台录音和分段架构，但不复制 GPL 代码。
+3. 仅在需要端侧 VAD 时使用 `android-vad`。
+4. 参考 `ownscribe`/`HushNote` 的进度状态、输出格式和说话人标注。
+5. 除非许可证策略改变，避免直接导入 GPL 会议 App 代码。
+
+## English
+
 # Open Source Research Notes
 
 Date: 2026-05-26

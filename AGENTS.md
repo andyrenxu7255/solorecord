@@ -1,3 +1,181 @@
+# SoloRecord 智能体指南
+
+## 关键规则
+
+- 不要把真实 ASR、LLM、SSO、Hermes、ES 或外部 API 密钥写进源码、文档、APK、Docker 镜像或最终回复。
+- 服务端是权威数据源。Android 本地数据只是缓存和离线录音保护。
+- ES/OpenSearch 只是可选索引层。业务数据必须先写入数据库。
+- 所有会议读写接口都必须做权限校验。
+- Web 动态文本必须转义后渲染。
+- Android 录音可靠性优先于端侧音频重处理。
+- 不要删除用户改动或生成数据，除非用户明确要求。
+
+## 构建与测试
+
+服务端测试：
+
+```powershell
+scripts\run-tests.ps1
+```
+
+服务端本地运行：
+
+```powershell
+scripts\run-server.ps1
+```
+
+Android 调试 APK：
+
+```powershell
+& 'C:\Users\Andy\.gradle\wrapper\dists\gradle-8.7-bin\bhs2wmbdwecv87pi65oeuq5iu\gradle-8.7\bin\gradle.bat' assembleDebug
+```
+
+APK 输出：
+
+```text
+app/build/outputs/apk/debug/app-debug.apk
+```
+
+HTTP smoke：
+
+```powershell
+scripts\smoke-e2e.ps1 -BaseUrl http://127.0.0.1:8000 -ExternalToken test-token
+```
+
+## 架构速览
+
+组件：
+
+- Android App：`app/src/main/java/com/solorecord/`
+- FastAPI 服务端：`server/solorecord_server/`
+- 静态 Web 端：`server/static/`
+- 文档：`docs/`
+- 测试：`server/tests/`
+
+核心服务端文件：
+
+- `main.py`：API 路由。
+- `db.py`：SQLite schema 和迁移。
+- `auth.py`：用户会话、SSO、外部 token。
+- `processing.py`：ASR、纪要、转发、索引工作流。
+- `repository.py`：会议完整文档聚合。
+- `search_index.py`：ES/OpenSearch 索引。
+- `asr_adapters.py`：本地命令 ASR。
+- `llm_adapters.py`：LLM 纪要适配器。
+- `publisher.py`：Hermes/Webhook 推送。
+- `exports.py`：导出格式。
+
+核心 Android 文件：
+
+- `MainActivity.java`：三页签 UI 和主流程。
+- `RollingAudioRecorder.java`：滚动分段录音。
+- `RecordingService.java`：前台录音通知。
+- `SoloServerClient.java`：服务端 API、移动端同步、服务器音频下载。
+- `MeetingStore.java`：本地缓存。
+- `SessionStore.java`：登录和服务器地址。
+
+## 数据与权限
+
+重要表：
+
+- `users`
+- `sessions`
+- `meetings`
+- `meeting_members`
+- `audio_segments`
+- `transcript_segments`
+- `speakers`
+- `action_items`
+- `processing_jobs`
+- `apk_releases`
+- `app_config`
+- `audit_logs`
+
+会议归属：
+
+- `meetings.owner_id` 记录创建者。
+- `meeting_members` 记录可读/可写用户。
+- `audit_logs.actor_user_id` 记录操作人。
+
+## 常用 API
+
+移动端同步：
+
+```text
+GET /api/mobile/sync
+```
+
+会议：
+
+```text
+POST /api/mobile/meetings
+GET  /api/mobile/meetings
+GET  /api/mobile/meetings/{meetingId}
+POST /api/mobile/meetings/{meetingId}/segments
+POST /api/mobile/meetings/{meetingId}/segments-json
+GET  /api/mobile/meetings/{meetingId}/segments/{segmentNo}/audio
+POST /api/mobile/meetings/{meetingId}/finish
+GET  /api/mobile/meetings/{meetingId}/transcript
+POST /api/mobile/meetings/{meetingId}/speakers/rename
+```
+
+外部集成：
+
+```text
+GET /api/external/meetings
+GET /api/external/meetings/{meetingId}
+```
+
+管理：
+
+```text
+GET  /api/admin/providers
+PUT  /api/admin/providers
+GET  /api/admin/jobs
+POST /api/admin/jobs/{jobId}/retry
+POST /api/admin/releases
+POST /api/admin/search/reindex
+```
+
+## 常见任务
+
+新增服务端字段：
+
+1. 更新 `server/solorecord_server/db.py`。
+2. 在 `init_db` 中加兼容迁移。
+3. 如果完整会议文档需要该字段，更新 `repository.py`。
+4. 如有展示需求，更新 Web/Android。
+5. 扩展 `server/tests/test_api.py`。
+
+新增 Provider 配置字段：
+
+1. 更新 `schemas.ProviderConfig`。
+2. 更新 `main.get_providers` 和 `main.update_providers`。
+3. 更新 `server/static/index.html`。
+4. 更新 `server/static/app.js`。
+5. 不要把密钥回显给浏览器。
+
+新增 ASR Runtime：
+
+- 优先做成输出标准 JSON 的 sidecar 命令，避免把模型代码耦合进业务 API。
+
+新增外部系统：
+
+- 推送走 `publisher.py`。
+- 拉取走 `/api/external/*`。
+- 搜索走 ES/OpenSearch。
+- 不要让外部系统直接读取 SQLite。
+
+## 文档地图
+
+- 运维：`docs/human-ops/README.md`
+- 开发：`docs/human-dev/README.md`
+- 用户：`docs/user/README.md`
+- 智能体：`docs/agents/README.md`、`llms.txt`
+- 参考：`docs/meeting-app-prd-v2.md`、`docs/deployment.md`、`docs/data-storage-and-es.md`、`docs/local-asr-pipeline.md`、`docs/synology-bailian-architecture.md`、`docs/open-source-research.md`、`docs/security-audit.md`
+
+## English
+
 # SoloRecord Agent Guide
 
 ## Critical Rules

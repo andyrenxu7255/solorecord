@@ -46,3 +46,37 @@
 1. 先读 [../AGENTS.md](../AGENTS.md)。
 2. 再读 [../llms.txt](../llms.txt)。
 3. 根据任务读取对应人类手册。
+
+## English
+
+### Read By Audience
+
+| Audience | Document | Purpose |
+| --- | --- | --- |
+| Operations / IT | [human-ops/README.md](human-ops/README.md) | Deployment, configuration, backup, troubleshooting, go-live checks |
+| Developers | [human-dev/README.md](human-dev/README.md) | Code structure, APIs, data model, tests, extension work |
+| End users | [user/README.md](user/README.md) | Login, recording, records, speaker rename, export |
+| AI agents | [../AGENTS.md](../AGENTS.md), [agents/README.md](agents/README.md), [../llms.txt](../llms.txt) | Fast handoff, constraints, commands, context index |
+
+### References
+
+| Document | Content |
+| --- | --- |
+| [meeting-app-prd-v2.md](meeting-app-prd-v2.md) | Full PRD; the filename is kept for history |
+| [deployment.md](deployment.md) | Deployment quick reference |
+| [data-storage-and-es.md](data-storage-and-es.md) | Server-side storage, APK reinstall sync, external API, ES/OpenSearch |
+| [local-asr-pipeline.md](local-asr-pipeline.md) | Local ASR, VAD, diarization, audio processing |
+| [synology-bailian-architecture.md](synology-bailian-architecture.md) | Synology SSO, Bailian/Qwen ASR, security architecture |
+| [open-source-research.md](open-source-research.md) | Open-source component research and license guidance |
+| [security-audit.md](security-audit.md) | Security review, known risks, verification records |
+| [integration-contract.md](integration-contract.md) | Early integration contract reference |
+| [distribution-mode.md](distribution-mode.md) | Internal distribution mode reference |
+| [roadmap.md](roadmap.md) | Follow-up enhancement ideas |
+
+### Recommended Path
+
+For deployment, start with [human-ops/README.md](human-ops/README.md), configure `server/.env`, start the service, upload the APK, and run one real test meeting through recording, transcription, summary, sync, and export.
+
+For development, start with [human-dev/README.md](human-dev/README.md), run `scripts\run-tests.ps1`, make scoped changes, then rerun tests and Android `assembleDebug`.
+
+For AI agent maintenance, read [../AGENTS.md](../AGENTS.md), then [../llms.txt](../llms.txt), then the relevant human manual for the task.

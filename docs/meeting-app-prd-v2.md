@@ -768,3 +768,298 @@ grafana
 - App 录音链路自研，参考 Listen 的思路。
 - Web 转写后台参考 Whishper 的服务拆分，不复制代码。
 - 本地 ASR 优先评估 sherpa-onnx 和 whisper.cpp。
+
+## English
+
+# Meeting Recorder App PRD
+
+> Internal company system covering Android APK, server, local ASR, Web/PC UI, unified login, internal APK distribution, and operations deployment.
+
+## 1. One-Sentence Goal
+
+Build an internal meeting recorder: employees sign in through Synology/company SSO, record reliably on Android, and let the server complete upload, VAD, diarization, ASR, meeting summaries, and action items after network recovery. Users can review, edit, search, export, administer, and download the APK from the Web UI.
+
+## 2. Background And Key Judgments
+
+The user experience depends on the entire workflow, not ASR alone:
+
+- Recordings must not be lost, especially during app close, lock screen, weak network, or power changes.
+- Transcription does not need to be real-time, but status must be clear and failures must be retryable.
+- Meeting results must be editable, searchable, and exportable.
+- "Who said what" must be correctable; diarization is never assumed to be perfect.
+- Internal use still requires protection for secrets, audio, summaries, and employee identity.
+- A single 16 GB GPU environment needs asynchronous processing, concurrency limits, and segmented jobs.
+
+The product uses a light mobile client, heavier server processing, and a Web admin/editor UI.
+
+## 3. Product Scope
+
+### Complete Delivery Scope
+
+Android app:
+
+- Synology/company unified login.
+- Recording, Records, and Login Status tabs.
+- Foreground recording service.
+- Rolling audio files every 3 to 5 minutes.
+- Upload after network recovery.
+- Local and server audio playback.
+- Transcript, summary, and action-item viewing.
+
+Server:
+
+- Synology SSO integration.
+- Meeting, audio segment, job, transcript, export, and APK release management.
+- Local ASR processing pipeline.
+- Retryable processing state and admin-visible errors.
+
+Web app:
+
+- Login.
+- Meeting list and details.
+- Player.
+- Transcript editing and speaker rename.
+- Summary and action-item editing.
+- Search, export, and APK download.
+- Admin model/provider configuration and job retry.
+
+Exports:
+
+- Markdown, Word, PDF, JSON, and SRT.
+
+### Not A Go-Live Blocker
+
+- True multi-user collaborative editing.
+- Real-time subtitles as the main workflow.
+- Phone-side local ASR inference.
+- Silent automatic APK upgrades.
+- Fully automatic real-name speaker identification.
+- Public SaaS distribution.
+
+### Future Enhancements
+
+- PC desktop client for microphone and system-audio capture.
+- Near-real-time captions.
+- Meeting Q&A and semantic search.
+- Terminology learning.
+- Calendar, Feishu/WeCom docs, CRM/Hermes integration.
+
+## 4. User Roles
+
+| Role | Need |
+| --- | --- |
+| Employee | Record, view transcripts, generate summaries, export |
+| Sales / PM | Person-specific action items, traceable customer meetings, forwarding to sales workspace |
+| Manager | Team meeting output and search |
+| IT Admin | SSO, permissions, models, queues, APK versions, logs, alerts |
+| Maintainer | ASR/LLM/denoise/diarization tuning |
+
+## 5. Android UX
+
+The app has three fixed tabs:
+
+- Recording
+- Records
+- Login Status
+
+Unauthenticated users cannot record or view records.
+
+Recording tab:
+
+- One primary button starts/stops recording.
+- A local meeting record is created immediately after start.
+- Audio rolls into segments every 3 to 5 minutes.
+- Stop or app close finalizes the current segment.
+- Bad network never blocks local recording.
+- Local audio is not deleted before upload and server acknowledgement.
+
+Records tab:
+
+- One start/end cycle is one meeting record even with many audio segments.
+- Detail view shows audio playback, transcript timeline, speaker rename, summary, action items, retry/export actions, and server recovery.
+- Speaker rename updates all rows with the same stable speaker id.
+
+Login Status tab:
+
+- Shows current user, account/email, token expiry, server address, app version, update check, and logout.
+- Login uses system browser/Custom Tabs and returns to `solorecord://auth/callback`.
+- Synology client secret is server-only.
+
+## 6. Web / PC
+
+Web is required because mobile is not ideal for:
+
+- Long-text editing.
+- Batch speaker rename.
+- Word/PDF export.
+- Searching old meetings.
+- Managing glossary, permissions, model settings, APK releases, and failed jobs.
+
+The first delivery uses responsive Web rather than a full desktop client. A later Tauri desktop client can reuse Web UI and add PC microphone/system-audio capture.
+
+## 7. Server Design
+
+Recommended start is Docker Compose, with later migration to Kubernetes if needed.
+
+Required or planned components:
+
+- Nginx/Caddy for HTTPS/reverse proxy.
+- API service for auth, meetings, upload, jobs, exports, admin.
+- Worker for audio processing, ASR, diarization, summaries, forwarding.
+- PostgreSQL for production business data; SQLite is acceptable for initial validation.
+- Redis for queue/cache/locks in production.
+- MinIO/NAS/S3-compatible storage for audio, exports, APKs.
+- ASR runtime such as sherpa-onnx, whisper.cpp, or custom local model service.
+- LLM runtime such as Ollama, vLLM, OpenAI-compatible API, or internal model.
+- Prometheus/Grafana and logs when production monitoring is required.
+
+## 8. Audio And ASR Pipeline
+
+APK saves:
+
+- One `meeting_id`.
+- Multiple `part_0001.m4a` style segments.
+- Per-segment start, end, size, upload state.
+
+Server steps:
+
+1. Receive segments.
+2. Transcode/normalize audio.
+3. Compute quality metrics.
+4. Run VAD.
+5. Optionally denoise/dereverb.
+6. Optionally diarize.
+7. Run ASR.
+8. Merge into a global timeline.
+9. Post-process terms, punctuation, and numbers.
+10. Generate summary and action items.
+
+Recommended defaults:
+
+| Parameter | Default |
+| --- | --- |
+| APK rolling segment | 3-5 minutes |
+| Server VAD chunk | 10-30 seconds |
+| Chunk overlap | 300-800 ms |
+| ASR input | mono, 16 kHz or model-specific |
+| GPU ASR concurrency | 1 |
+| Diarization | Configurable, degraded safely |
+| Denoise/dereverb | Off by default; enable after A/B tests |
+
+## 9. Login, Authorization, And Audit
+
+Supported SSO validation modes:
+
+- OIDC/JWT with JWKS.
+- Introspection.
+- Ticket verification.
+
+Meeting roles:
+
+- owner
+- editor
+- viewer
+- admin
+
+Audit should record login-adjacent business events, meeting creation, upload/delete, read, edit, export, retry, and admin config changes. Logs must not contain raw API keys or sensitive tokens.
+
+## 10. APIs
+
+Mobile API includes meeting create/list/detail, segment upload, protected audio download, finish, process, status, transcript, speaker rename, latest release, and server sync.
+
+Web API includes current user, meeting list/detail/edit, transcript edit, process, speaker rename, export, search, sync, and latest release.
+
+Admin API includes providers, jobs, retry, releases, and search reindex.
+
+External API includes:
+
+```text
+GET /api/external/meetings
+GET /api/external/meetings/{meetingId}
+```
+
+## 11. Data Model
+
+Core tables:
+
+- `users`
+- `sessions`
+- `meetings`
+- `meeting_members`
+- `audio_segments`
+- `processing_jobs`
+- `transcript_segments`
+- `speakers`
+- `action_items`
+- `exports`
+- `apk_releases`
+- `app_config`
+- `audit_logs`
+
+The server stores the authoritative copy. ES/OpenSearch is optional and rebuildable.
+
+## 12. Status Machine
+
+User-facing statuses should be understandable:
+
+- Saving recording.
+- Waiting for network upload.
+- Uploaded, waiting for processing.
+- Detecting speech.
+- Transcribing.
+- Summarizing.
+- Ready.
+- Failed, retry available.
+
+Internal statuses include local recording, recorded, uploading, uploaded, queued, preprocessing, diarizing, transcribing, postprocessing, summarizing, ready, and failed.
+
+## 13. Security And Compliance
+
+- HTTPS everywhere.
+- Short-lived app/API tokens.
+- Authenticated access for audio and exports.
+- No anonymous public object storage.
+- APK download requires login or internal-network restriction.
+- Secrets are server-only.
+- Admin operations are audited.
+- Export watermarking can be added later.
+
+The source repository can be public if it contains no real secrets, runtime data, databases, caches, APK build artifacts, or customer meeting audio. Production deployment remains internal.
+
+## 14. Testing And Acceptance
+
+Recording reliability:
+
+- Long recording does not lose data.
+- Background/lock screen behavior follows policy.
+- App close saves the current segment.
+- Network loss does not affect local recording.
+- Network recovery uploads pending segments.
+
+Server processing:
+
+- One-hour meeting can be processed.
+- GPU concurrency is controlled.
+- Jobs survive worker restart in production architecture.
+- Failed segments are diagnosable and retryable.
+
+Login and permissions:
+
+- Unauthenticated users cannot access business pages.
+- Unauthorized users cannot read others' meetings.
+- Expired tokens require refresh or re-login.
+- Admin privileges are separately controlled.
+
+Web:
+
+- Search, edit transcript, batch rename speakers, export Word/PDF/Markdown/JSON/SRT, and download latest APK.
+
+## 15. Open-Source Reuse Conclusion
+
+Reuse components, not whole meeting apps:
+
+- Prefer Apache-2.0/MIT for production.
+- Treat GPL/AGPL projects as architecture references unless the company accepts license obligations.
+- Keep the recording path self-owned.
+- Reference Whishper's service split, but do not copy AGPL code.
+- Evaluate sherpa-onnx and whisper.cpp first for local ASR.

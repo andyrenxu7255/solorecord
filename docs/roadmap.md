@@ -22,3 +22,34 @@
 - 增加推送适配器：Hermes Agent、OpenClaw Agent、企业微信云文档、飞书云文档
 - 增加失败重试队列和推送状态日志
 - 增加本地加密存储 API Key
+
+## English
+
+# SoloRecord Roadmap
+
+## Covered By The Early MVP
+
+- Local meeting recording.
+- Local meeting JSON storage.
+- Configurable public transcription endpoint.
+- Configurable public LLM endpoint.
+- Speaker-segmented transcript data structure.
+- Role-based notes, meeting summary, and action-item data structures.
+- Generic Webhook push interface.
+
+## Suggested Next Enhancements
+
+- Add meeting title editing, search, and delete.
+- Add background recording service and foreground notification for lock-screen recording.
+- Add chunked/resumable audio upload to avoid large Base64 requests for long meetings.
+- Add local ASR gateway stages: format normalization, VAD, quality checks, and local model transcription.
+- Add configurable light denoise/dereverb after A/B tests with real recordings.
+- Add diarization and merge anonymous speaker timelines into meeting records.
+- Add vendor adapters: OpenAI-compatible, Alibaba Cloud, Volcengine, iFlytek, Tencent Cloud, DeepSeek-compatible.
+- Add push adapters: Hermes Agent, OpenClaw Agent, WeCom cloud docs, Feishu cloud docs.
+- Add retry queues and push status logs.
+- Add encrypted local API key storage if any client-side keys ever become unavoidable.
+
+## V0.7 Note
+
+V0.7 already includes many items from this roadmap: server-authoritative storage, Web/PC UI, APK publishing, rolling recording, mobile sync, protected server audio download, speaker rename, exports, provider configuration, local ASR command adapter, LLM adapter, external API, and optional ES/OpenSearch indexing.

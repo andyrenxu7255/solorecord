@@ -341,8 +341,8 @@ async function uploadRelease() {
     return;
   }
   const form = new FormData();
-  form.append("version_name", $("#releaseVersionName").value || "1.0.0");
-  form.append("version_code", $("#releaseVersionCode").value || "1");
+  form.append("version_name", $("#releaseVersionName").value || "0.7.0");
+  form.append("version_code", $("#releaseVersionCode").value || "7");
   form.append("release_notes", $("#releaseNotes").value || "");
   form.append("force_update", $("#forceUpdate").checked ? "true" : "false");
   form.append("file", file);

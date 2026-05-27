@@ -8,9 +8,9 @@ SoloRecord 是公司内部会议记录系统，用来通过 Android App 可靠�
 - 待办事项
 - 对 Hermes Agent、OpenClaw Agent、企业微信云文档、飞书云文档等外部系统的推送
 
-## 当前版本
+## 当前版本：V0.7
 
-这是面向公司内部使用的一体化会议记录系统，包含 Android App、服务端网关和 Web 管理/PC 端。
+这是面向公司内部使用的一体化会议记录系统，当前发布版为 V0.7，包含 Android App、服务端网关和 Web 管理/PC 端。
 
 - Android App：统一登录跳转与回跳、滚动分段录音、本地记录、本地播放、同步到服务器、重装后恢复服务器记录、查看转写/纪要/待办、批量修改角色名。
 - 服务端：登录会话、会议/音频/转写/角色/纪要/待办、ASR/LLM 配置、导出、APK 发布下载、Hermes/Webhook 转发。
@@ -34,6 +34,7 @@ SoloRecord 是公司内部会议记录系统，用来通过 Android App 可靠�
 - 群晖 SSO 与 ASR 架构：[docs/synology-bailian-architecture.md](docs/synology-bailian-architecture.md)
 - 开源调研：[docs/open-source-research.md](docs/open-source-research.md)
 - 安全审计：[docs/security-audit.md](docs/security-audit.md)
+- V0.7 发布说明：[docs/release-v0.7.md](docs/release-v0.7.md)
 
 ## 打开方式
 
@@ -132,3 +133,64 @@ python /opt/solorecord-asr/run_asr.py --audios-json {audio_json} --sample-rate {
 ```
 
 详见 `docs/deployment.md` 的 Local ASR Command Adapter。
+
+## 公开仓库边界
+
+本仓库可以公开共享源码和文档，但不能提交任何公司真实密钥、SSO secret、模型 key、Hermes token、ES 凭证、`server/.env`、运行数据、数据库、缓存、APK 构建产物或客户会议音频。生产部署仍按公司内部系统管理，外部访问由 HTTPS、SSO、服务器权限和内部网络策略控制。
+
+## English
+
+SoloRecord is an internal company meeting recorder. V0.7 is the first deployable release and includes an Android app, FastAPI server, Web admin/PC UI, documentation, and verification scripts.
+
+### What V0.7 Includes
+
+- Android app: SSO login handoff, rolling segmented recording, local records, playback, server sync, server record recovery after reinstall, transcript/summary/action-item viewing, and batch speaker rename.
+- Server: login sessions, meetings, audio segments, transcripts, speaker names, summaries, action items, ASR/LLM configuration, exports, APK publishing, Hermes/Webhook forwarding, external API, and optional ES/OpenSearch indexing.
+- Web app: PC upload, meeting review/editing, transcript editing, speaker rename, exports, model configuration, job management, and APK publishing.
+- Secrets are stored server-side. The APK only needs the server endpoint and a short-lived session token.
+
+### Quick Start
+
+Run the server:
+
+```powershell
+scripts\run-server.ps1
+```
+
+Open:
+
+```text
+http://127.0.0.1:8000
+```
+
+Build the Android debug APK:
+
+```powershell
+& 'C:\Users\Andy\.gradle\wrapper\dists\gradle-8.7-bin\bhs2wmbdwecv87pi65oeuq5iu\gradle-8.7\bin\gradle.bat' assembleDebug
+```
+
+### Documentation
+
+- Operations: [docs/human-ops/README.md](docs/human-ops/README.md)
+- Development: [docs/human-dev/README.md](docs/human-dev/README.md)
+- User manual: [docs/user/README.md](docs/user/README.md)
+- Agent maintenance: [AGENTS.md](AGENTS.md), [docs/agents/README.md](docs/agents/README.md), [llms.txt](llms.txt)
+- Release notes: [docs/release-v0.7.md](docs/release-v0.7.md)
+
+### Local ASR Integration
+
+After selecting `command` on the Web admin provider page, SoloRecord can call any local ASR script or binary as long as it prints standard JSON to stdout:
+
+```text
+python /opt/solorecord-asr/run_asr.py --audios-json {audio_json} --sample-rate {sample_rate}
+```
+
+See `docs/deployment.md` for the Local ASR Command Adapter details.
+
+### Public Repository Boundary
+
+The source code and documentation can be shared in a public repository, but real company secrets, SSO client secrets, model keys, Hermes tokens, ES credentials, `server/.env`, runtime data, databases, caches, APK build outputs, and customer meeting audio must never be committed. Production deployments remain internal systems protected by HTTPS, SSO, server-side authorization, and internal network policy.
+
+### Production Notes
+
+Before production, change `SOLO_SECRET_KEY`, disable demo login, configure HTTPS and Synology SSO, connect the local ASR/LLM providers, configure backups, publish the APK through the server, and verify that no secrets or runtime data are present in the public repository.

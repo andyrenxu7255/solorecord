@@ -32,7 +32,7 @@ from .schemas import (
 from .search_index import index_meeting
 from .utils import new_id, now_iso, row_to_dict, sha256_file
 
-app = FastAPI(title="SoloRecord Internal API", version="1.0.0")
+app = FastAPI(title="SoloRecord Internal API", version="0.7.0")
 settings = get_settings()
 
 app.add_middleware(

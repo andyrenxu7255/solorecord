@@ -441,3 +441,376 @@ scripts\smoke-e2e.ps1 -BaseUrl http://127.0.0.1:8000 -ExternalToken test-token
 ### 新增本地 ASR Runtime
 
 优先封装成命令行程序，保持 SoloRecord 只调用标准 JSON。这样后续替换模型不会影响业务 API。
+
+## English
+
+### Audience
+
+This manual is for engineers extending SoloRecord. It covers the server, Web UI, Android APK, data model, tests, and integration boundaries.
+
+### Repository Structure
+
+```text
+D:\solo\solorecord
+├── app/                         Native Android Java app
+├── server/
+│   ├── solorecord_server/        FastAPI server
+│   ├── static/                   Static Web admin UI
+│   ├── tests/                    Server tests
+│   ├── requirements.txt
+│   └── .env.example
+├── docs/                         Documentation
+├── scripts/                      Local run/test scripts
+├── Dockerfile
+├── docker-compose.yml
+└── README.md
+```
+
+### Technology Stack
+
+Server:
+
+- Python 3.12
+- FastAPI
+- SQLite by default
+- Local file storage
+- httpx for LLM, webhook, ES/OpenSearch
+- python-docx and reportlab for exports
+
+Web:
+
+- Static HTML/CSS/JavaScript
+- No build step
+- Served by FastAPI static routes
+
+Android:
+
+- Native Java
+- Gradle Android Plugin
+- MediaRecorder
+- Foreground Service notification
+- SharedPreferences for session data
+- Local JSON meeting cache
+
+### Server Modules
+
+```text
+server/solorecord_server/
+├── main.py              API routes and static mount
+├── db.py                SQLite schema and migrations
+├── auth.py              demo login, SSO, sessions, external tokens
+├── config.py            environment settings
+├── processing.py        ASR, summary, forwarding, indexing workflow
+├── asr_adapters.py      local ASR command adapter
+├── llm_adapters.py      LLM/Ollama/OpenAI-compatible adapters
+├── publisher.py         Hermes/Webhook forwarding
+├── repository.py        full meeting document aggregation
+├── search_index.py      ES/OpenSearch indexing
+├── exports.py           Markdown/JSON/SRT/DOCX/PDF exports
+├── schemas.py           Pydantic request models
+├── audit.py             audit logging
+└── utils.py             shared utilities
+```
+
+### Data Model
+
+Core tables:
+
+- `users`
+- `sessions`
+- `sso_states`
+- `meetings`
+- `meeting_members`
+- `audio_segments`
+- `processing_jobs`
+- `transcript_segments`
+- `speakers`
+- `action_items`
+- `exports`
+- `apk_releases`
+- `app_config`
+- `audit_logs`
+
+The server is authoritative. Android local data is cache and offline recording protection. Use `meeting_document(meeting_id)` from `repository.py` when returning a complete meeting document.
+
+### API Contract
+
+Mobile:
+
+```text
+GET  /api/mobile/config
+GET  /api/mobile/sync
+POST /api/mobile/meetings
+GET  /api/mobile/meetings
+GET  /api/mobile/meetings/{meetingId}
+POST /api/mobile/meetings/{meetingId}/segments
+POST /api/mobile/meetings/{meetingId}/segments-json
+GET  /api/mobile/meetings/{meetingId}/segments/{segmentNo}/audio
+POST /api/mobile/meetings/{meetingId}/finish
+POST /api/mobile/meetings/{meetingId}/process
+GET  /api/mobile/meetings/{meetingId}/status
+GET  /api/mobile/meetings/{meetingId}/transcript
+PUT  /api/mobile/meetings/{meetingId}/transcript
+POST /api/mobile/meetings/{meetingId}/speakers/rename
+GET  /api/mobile/releases/latest
+```
+
+Web:
+
+```text
+GET  /api/web/me
+GET  /api/web/meetings
+GET  /api/web/meetings/{meetingId}
+PATCH /api/web/meetings/{meetingId}
+GET  /api/web/meetings/{meetingId}/transcript
+PUT  /api/web/meetings/{meetingId}/transcript
+POST /api/web/meetings/{meetingId}/process
+POST /api/web/meetings/{meetingId}/speakers/rename
+POST /api/web/meetings/{meetingId}/exports
+GET  /api/web/search
+GET  /api/web/sync
+GET  /api/web/releases/latest
+```
+
+Admin:
+
+```text
+GET  /api/admin/providers
+PUT  /api/admin/providers
+GET  /api/admin/jobs
+POST /api/admin/jobs/{jobId}/retry
+POST /api/admin/releases
+POST /api/admin/search/reindex
+```
+
+External systems:
+
+```text
+GET /api/external/meetings
+GET /api/external/meetings/{meetingId}
+```
+
+External systems authenticate with bearer tokens from `SOLO_EXTERNAL_API_TOKENS`.
+
+### Authentication And Authorization
+
+Business APIs use:
+
+```text
+Authorization: Bearer <access_token>
+```
+
+The raw session token is returned to the client once. The server stores only its hash.
+
+Meeting authorization is enforced in `main.py` by `_assert_access(meeting_id, user, write=False)`:
+
+- admin can access all meetings.
+- meeting members can read.
+- owner/editor can write.
+
+The audio download endpoint uses the same authorization path. After APK reinstall, Android calls `GET /api/mobile/sync`, then downloads server audio through `audioSegments[].download_url`.
+
+### ASR Adapter
+
+The local ASR command adapter is in:
+
+```text
+server/solorecord_server/asr_adapters.py
+```
+
+Command template:
+
+```text
+python run_asr.py --audios-json {audio_json} --sample-rate {sample_rate}
+```
+
+stdout must be:
+
+```json
+{
+  "segments": [
+    {
+      "speaker_id": "SPEAKER_01",
+      "display_name": "Speaker 1",
+      "start_ms": 0,
+      "end_ms": 5200,
+      "text": "Transcript text",
+      "confidence": 0.91
+    }
+  ]
+}
+```
+
+The adapter does not execute through a shell. Add new placeholders explicitly in `_render_command`.
+
+### LLM Adapter
+
+LLM logic is in:
+
+```text
+server/solorecord_server/llm_adapters.py
+```
+
+Supported providers:
+
+- `mock`
+- `ollama`
+- `openai-compatible`
+- `internal`
+- `remote-qwen`
+
+The LLM response should parse as JSON:
+
+```json
+{
+  "summary": "Meeting summary",
+  "role_notes": "Notes by role",
+  "action_items": [
+    {"owner": "Alice", "task": "Prepare the quote", "due": "Next Monday", "status": "open"}
+  ]
+}
+```
+
+If the LLM fails, the system falls back to a mock summary so the processing loop remains usable.
+
+### ES/OpenSearch
+
+Indexing logic lives in:
+
+```text
+server/solorecord_server/search_index.py
+```
+
+Indexing runs after processing, meeting edits, transcript edits, speaker rename, and admin reindex. ES/OpenSearch is rebuildable search infrastructure, not the authoritative business store.
+
+### Web Development
+
+Files:
+
+```text
+server/static/index.html
+server/static/styles.css
+server/static/app.js
+```
+
+There is no build step. Refresh the browser after edits.
+
+Rules:
+
+- Render user input through `escapeHtml` or `escapeAttr`.
+- Never echo real saved secrets back to the browser.
+- Provider config changes usually require `index.html`, `app.js`, and `ProviderConfig`.
+
+### Android Development
+
+Entry point:
+
+```text
+app/src/main/java/com/solorecord/MainActivity.java
+```
+
+Key modules:
+
+```text
+net/RollingAudioRecorder.java      rolling segmented recording
+service/RecordingService.java      foreground recording notification
+storage/MeetingStore.java          local meeting cache
+storage/SessionStore.java          session and server endpoint
+net/SoloServerClient.java          server API client
+model/MeetingRecord.java           meeting model
+model/AudioSegment.java            audio segment model
+model/TranscriptSegment.java       transcript segment model
+```
+
+Current requirements:
+
+- Users must sign in before recording or viewing records.
+- One start/end cycle is one meeting.
+- Audio rotates every 5 minutes by default.
+- Closing the app stops recording and saves the last segment as far as possible.
+- Speaker rename updates all transcript rows with the same speaker id.
+- Main login uses server-side SSO with `solorecord://auth/callback`.
+- Server recovery calls `/api/mobile/sync` and keeps server audio download URLs.
+
+### Local Commands
+
+Server:
+
+```powershell
+scripts\run-server.ps1
+```
+
+Tests:
+
+```powershell
+scripts\run-tests.ps1
+```
+
+Android build:
+
+```powershell
+& 'C:\Users\Andy\.gradle\wrapper\dists\gradle-8.7-bin\bhs2wmbdwecv87pi65oeuq5iu\gradle-8.7\bin\gradle.bat' assembleDebug
+```
+
+APK output:
+
+```text
+app/build/outputs/apk/debug/app-debug.apk
+```
+
+### Test Coverage
+
+`server/tests/test_api.py` covers login, meeting create, audio upload, finish/process, transcript fetch, speaker rename, Markdown export, APK release publishing, mobile sync, external API token access, and protected server audio download.
+
+Runtime smoke:
+
+```powershell
+scripts\smoke-e2e.ps1 -BaseUrl http://127.0.0.1:8000 -ExternalToken test-token
+```
+
+Dependency audit:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip_audit -r server\requirements.txt --timeout 60
+```
+
+Extend tests whenever a new endpoint, state transition, or shared data contract is added.
+
+### Development Constraints
+
+- Do not put real ASR/LLM/SSO/Hermes secrets into the APK.
+- Do not commit real secrets or write them into docs.
+- Every server endpoint must enforce access control.
+- Web dynamic text must be escaped.
+- ES is only an index; persist business data to the database first.
+- Android recording reliability is more important than heavy on-device audio processing.
+
+### Common Change Paths
+
+New meeting field:
+
+1. Update `db.py` schema.
+2. Add a backward-compatible migration in `init_db`.
+3. Update `repository.py`.
+4. Update Web/Android display if visible.
+5. Update tests.
+
+New export format:
+
+1. Update `exports.py`.
+2. Add a Web button.
+3. Add a test assertion.
+
+New external system:
+
+- Prefer `publisher.py` for push.
+- Prefer `/api/external/*` for pull.
+- Use ES/OpenSearch for search.
+
+Do not let external systems read SQLite directly.
+
+New local ASR runtime:
+
+- Wrap it as a command-line program.
+- Keep SoloRecord calling standard JSON.
+- This keeps future model changes outside the business API.

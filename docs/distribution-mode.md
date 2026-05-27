@@ -38,3 +38,48 @@ SOLO_SERVER_ENDPOINT=https://record.example.com
 ```
 
 转写模型、大模型、Hermes、OpenClaw、企业微信云文档、飞书云文档等接口地址和密钥都保存在服务器。这样即使 APK 被反编译，也不会泄露模型或外部系统凭证。
+
+## English
+
+# Distribution Mode
+
+The original distribution-mode idea was to let end users only record, process, and push, without seeing meeting content inside the app.
+
+The current V0.7 implementation is fuller: signed-in users can view records, transcripts, summaries, action items, and audio playback in the Android app and Web UI. This file remains as a reference for a stricter internal-distribution mode.
+
+## User Experience
+
+- The home screen shows only current status: ready to record, recording, saved, processing, pushing, pushed.
+- No model configuration inside the app.
+- No meeting list.
+- No transcript, summary, or action-item body inside the app.
+- Results are automatically sent to the preconfigured target.
+
+## Data Retention
+
+The app stores locally:
+
+- Meeting ID
+- Title
+- Created time
+- Audio path
+- Status
+
+The app does not store locally:
+
+- Speaker-segmented transcript text
+- Role-based meeting notes
+- Meeting summary
+- Action items
+
+The processed result is held briefly in memory and pushed automatically. After a successful push, local status changes to `pushed`.
+
+## Preconfiguration Scope
+
+The APK build should only preconfigure the server endpoint:
+
+```text
+SOLO_SERVER_ENDPOINT=https://record.example.com
+```
+
+Transcription model, LLM, Hermes, OpenClaw, WeCom document, Feishu document, endpoints, and keys are stored on the server. If the APK is decompiled, model or external-system credentials are not exposed.

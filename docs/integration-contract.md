@@ -143,3 +143,150 @@ App 配置项：
 - `custom`
 
 对企业微信云文档和飞书云文档，建议让 Webhook 网关负责 OAuth、文档创建、权限控制和重试，SoloRecord 只负责发送标准会议 JSON。
+
+## English
+
+# SoloRecord Integration Contract
+
+SoloRecord reserves a generic HTTP integration contract for pushing meeting records to Hermes Agent, OpenClaw Agent, WeCom cloud documents, Feishu cloud documents, or custom internal programs.
+
+The current deployable architecture keeps secrets and forwarding logic on the server. The APK should not contain transcription keys, LLM keys, webhook tokens, or workspace credentials.
+
+## 1. Transcription Interface Reference
+
+Configuration fields:
+
+- `transcriptionEndpoint`
+- `transcriptionApiKey`
+- `transcriptionModel`
+
+Request shape:
+
+```json
+{
+  "model": "your-transcription-model",
+  "audio_file_name": "meeting_20260525_103000.m4a",
+  "audio_mime_type": "audio/mp4",
+  "audio_base64": "...",
+  "response_format": "speaker_segments_json",
+  "requirements": "Return speaker-segmented transcript data as segments: [{speaker,text,startMillis,endMillis}]."
+}
+```
+
+Authentication:
+
+```http
+Authorization: Bearer <transcriptionApiKey>
+```
+
+Recommended response:
+
+```json
+{
+  "segments": [
+    {
+      "speaker": "Alice",
+      "text": "Let's review the project progress first.",
+      "startMillis": 0,
+      "endMillis": 3600
+    }
+  ]
+}
+```
+
+If a vendor service cannot receive Base64 audio directly, deploy a small adapter gateway that converts SoloRecord JSON into the vendor protocol.
+
+## 2. LLM Interface Reference
+
+Configuration fields:
+
+- `llmEndpoint`
+- `llmApiKey`
+- `llmModel`
+
+OpenAI-compatible Chat Completions request:
+
+```json
+{
+  "model": "your-llm",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a meeting-summary assistant. Return JSON only, no Markdown."
+    },
+    {
+      "role": "user",
+      "content": "..."
+    }
+  ],
+  "temperature": 0.2
+}
+```
+
+Expected JSON content:
+
+```json
+{
+  "roleNotes": "Meeting notes grouped by speaker or role",
+  "summary": "Meeting summary",
+  "actionItems": [
+    {
+      "owner": "Bob",
+      "task": "Prepare next week's demo materials",
+      "due": "Friday",
+      "status": "open"
+    }
+  ]
+}
+```
+
+## 3. External Push Contract
+
+Configuration fields:
+
+- `webhookEndpoint`
+- `webhookApiKey`
+- `webhookTarget`
+
+Payload shape:
+
+```json
+{
+  "event": "solo_record.meeting.ready",
+  "target": "hermes",
+  "meeting": {
+    "id": "uuid",
+    "title": "Meeting 1",
+    "createdAtMillis": 1780000000000,
+    "status": "processed",
+    "roleNotes": "Notes by role",
+    "summary": "Meeting summary",
+    "transcriptSegments": [
+      {
+        "speaker": "Alice",
+        "text": "Let's review the project progress first.",
+        "startMillis": 0,
+        "endMillis": 3600
+      }
+    ],
+    "actionItems": [
+      {
+        "owner": "Bob",
+        "task": "Prepare next week's demo materials",
+        "due": "Friday",
+        "status": "open"
+      }
+    ]
+  }
+}
+```
+
+Suggested `webhookTarget` values:
+
+- `hermes`
+- `openclaw`
+- `wecom-doc`
+- `feishu-doc`
+- `custom`
+
+For WeCom and Feishu cloud documents, let the Webhook gateway handle OAuth, document creation, permissions, and retries. SoloRecord should send only standard meeting JSON.

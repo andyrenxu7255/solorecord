@@ -198,3 +198,184 @@ SoloRecord 是公司内部会议记录系统。你可以用手机录音，系统
 - 同步完成前不要卸载 App 或清理 App 数据。
 - 生成纪要后检查说话人和待办负责人。
 - 对外发送纪要前先人工确认敏感内容。
+
+## English
+
+### What This Is
+
+SoloRecord is an internal company meeting recorder. You can record meetings on an Android phone, sync recordings to the server, and receive transcripts, meeting summaries, and action items. You can also review, edit, search, and export records on the Web.
+
+### What You Need
+
+- Android phone.
+- Company unified login account.
+- SoloRecord server address.
+- APK distributed by the company.
+
+### Install The APK
+
+1. Open the SoloRecord Web page.
+2. Sign in.
+3. Open the App Download section.
+4. Download the Android APK.
+5. Install it on your phone.
+
+If Android blocks unknown-source installation, follow the company IT instructions.
+
+### Sign In
+
+Open the Login Status tab:
+
+1. Enter the server address.
+2. Tap Login.
+3. Complete company unified login in the browser.
+
+After sign-in, the top area shows the current user and server address. You cannot record or view records before signing in.
+
+Demo login is only for administrators and integration testing. For normal use, use the unified login button.
+
+### Recording
+
+Open the Recording tab:
+
+1. Tap Start Recording.
+2. Allow microphone permission on first use.
+3. Tap End Recording when the meeting is over.
+
+The app saves audio in rolling segments while recording. Long meetings are split into smaller files to reduce loss risk. If the app is closed, recording stops and the current segment is preserved as far as possible.
+
+### Bad Network
+
+Recordings are saved on the phone first. They sync to the server when the network is stable.
+
+You can tap:
+
+```text
+Sync latest meeting to server
+```
+
+If sync fails, retry later. Do not uninstall the app or clear app data before sync completes.
+
+### Records
+
+Open the Records tab:
+
+- View local meetings.
+- Tap Details.
+- View audio segments, transcript, summary, and action items.
+- Play local audio segments.
+
+If the app is reinstalled, local records disappear, but server records remain. Sign in again and tap server recovery to sync meetings you can access back to the phone. Server-side audio can be downloaded and played by permission.
+
+### Rename Speakers
+
+Transcript speakers may start as:
+
+```text
+Speaker 1
+Speaker 2
+```
+
+If you know who a speaker is:
+
+1. Enter the real name below that segment.
+2. Tap Apply to all segments for this role.
+
+The same speaker id is updated everywhere. For example, changing `Speaker 1` to `Alice` updates all matching transcript rows.
+
+### Summaries And Action Items
+
+The system generates:
+
+- Meeting summary
+- Notes by role
+- Action items
+
+Action items usually include:
+
+- Owner
+- Task
+- Due date
+- Status
+
+If the result is inaccurate, edit it on the Web.
+
+### Web Usage
+
+The SoloRecord Web app supports:
+
+- Login/logout
+- Meeting list
+- Search by title, summary, transcript, or keyword
+- Meeting details
+- Title editing
+- Summary editing
+- Transcript editing
+- Batch speaker rename
+- Export to Markdown, Word, PDF, JSON, and SRT
+- Android APK download
+
+Admins can also configure ASR/LLM providers, view jobs, retry failed jobs, and upload new APK versions.
+
+### Export Formats
+
+- Markdown: good for sharing or knowledge bases.
+- Word: good for formal documents.
+- PDF: good for archives.
+- JSON: good for system integration.
+- SRT: good for subtitles and timelines.
+
+### Common Statuses
+
+| Status | Meaning |
+| --- | --- |
+| Saved locally | Audio is saved on the phone but not fully processed |
+| Uploaded | Audio reached the server |
+| Queued | Waiting for server processing |
+| Preprocessing | Server is preparing audio |
+| Transcribing | Transcript is being generated |
+| Summarizing | Summary and action items are being generated |
+| Ready | Results are available |
+| Failed | Processing failed; retry or contact an admin |
+
+### FAQ
+
+Can I record offline?
+
+Yes. Audio is saved locally first. Transcription and summaries require server sync.
+
+Does recording continue after I close the app?
+
+The current design stops recording when the app is closed, to avoid accidental recording. The current segment is preserved as far as possible.
+
+Are records still available after reinstalling the app?
+
+Server records remain. Sign in again and recover records from the server. Unsynced local recordings may be lost if the app was uninstalled before sync.
+
+What if the speaker is wrong?
+
+Rename the role in record details and apply the change to all segments with the same speaker id.
+
+What if the summary is inaccurate?
+
+Check the transcript first. Fix transcript errors, then regenerate or edit the summary.
+
+What if I cannot find a meeting?
+
+Search by title, keyword, or transcript text on the Web. Also confirm you signed in with the same account.
+
+What if sync fails?
+
+Check phone network, server address, login state, and whether the server is reachable. Then retry sync.
+
+Why is login required?
+
+Meeting audio and summaries are internal company materials. Login confirms who you are and controls which meetings you can access.
+
+### Tips
+
+- Confirm you are signed in before important meetings.
+- Sync important meetings soon after they end.
+- Do not uninstall the app or clear app data before sync completes.
+- Review speaker names and action owners after summaries are generated.
+- Manually check sensitive content before sending summaries outside the meeting team.

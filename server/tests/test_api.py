@@ -163,14 +163,14 @@ def test_full_user_story_permissions_sync_export_and_release(tmp_path: Path) -> 
     release = client.post(
         "/api/admin/releases",
         headers=headers,
-        data={"version_name": "1.0.0", "version_code": "1", "release_notes": "first", "force_update": "false"},
+        data={"version_name": "0.7.0", "version_code": "7", "release_notes": "V0.7", "force_update": "false"},
         files={"file": ("app.apk", b"fake apk", "application/vnd.android.package-archive")},
     )
     assert release.status_code == 200
     latest = client.get("/api/web/releases/latest", headers=headers)
     assert latest.status_code == 200
-    assert latest.json()["release"]["version_name"] == "1.0.0"
-    download = client.get("/downloads/android/1.0.0/app.apk")
+    assert latest.json()["release"]["version_name"] == "0.7.0"
+    download = client.get("/downloads/android/0.7.0/app.apk")
     assert download.status_code == 200
     assert download.content == b"fake apk"
 

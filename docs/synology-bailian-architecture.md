@@ -1,3 +1,109 @@
+# 群晖 SSO + ASR 架构
+
+本文记录 SoloRecord 作为必须登录后才能使用的 APK 分发时，推荐采用的集成架构。
+
+## 核心决策
+
+不要把百炼/DashScope API key、本地 ASR 服务 secret、LLM key、群晖 client secret 或 Hermes 工作区 token 写进 APK。
+
+采用服务端网关。APK 只包含：
+
+- 网关基础 URL
+- 公开 App 标识
+- 非密钥功能开关
+
+网关保存：
+
+- 群晖 SSO/OIDC client secret，如协议需要。
+- ASR 凭证，无论是本地私有模型还是百炼/DashScope。
+- ASR 模型选择。
+- LLM API key 和会议纪要 prompt。
+- 对象存储凭证或 STS role。
+- Hermes/销售工作区转发凭证。
+- 重试队列状态。
+
+这是安全和运维稳定性的要求。手机只关注可靠录音、登录、播放和同步；网关/本地 ASR 服务负责音频预处理、ASR、会议纪要和转发。
+
+本地 ASR 音频处理流水线见 `docs/local-asr-pipeline.md`。
+
+## ASR 部署选择
+
+推荐目标架构：
+
+- APK 录音并上传滚动音频分段。
+- 网关验证群晖登录，并持有所有处理任务。
+- 本地/私有 ASR 服务执行 VAD、格式统一、可选降噪/去混响、可选说话人分离和转写。
+- LLM 服务生成会议纪要和具体到人的待办。
+- 网关将结构化结果转发到 Hermes/销售工作区。
+
+百炼/DashScope 可作为厂商适配器保留，但不应是唯一架构路径。如果使用 Bailian Qwen3-ASR-Flash-Filetrans，它不能直接读取手机本地私有文件，而是要求可访问的音频 URL，提交异步任务后轮询结果。
+
+## “离线转写”的含义
+
+对百炼/Qwen ASR，“offline”指非实时的云端文件转写，不是手机完全无网的端侧识别。
+
+推荐模型：
+
+- 长录音：`qwen3-asr-flash-filetrans`
+- 短录音：`qwen3-asr-flash`
+
+关键行为：
+
+- `qwen3-asr-flash-filetrans` 是异步任务。
+- 长音频需要通过可访问 URL 提供。
+- 调用方提交任务，获得 `task_id`，轮询任务端点，然后下载返回的 `transcription_url` 结果 JSON。
+- 结果 URL 通常是临时的，网关必须及时下载并持久化转写。
+- Qwen-ASR 当前不提供说话人分离；如果待办必须具体到人，需要由 LLM 根据上下文、参会人名单或人工修正 UI 推断。
+
+## URL + Key + Model ID 是否足够
+
+短音频原型可以用 endpoint + API key + model id 调 `qwen3-asr-flash`。
+
+生产 APK 不足够：
+
+- APK 密钥可被反编译提取。
+- 长音频转写需要音频托管、任务提交、轮询、结果下载、重试和转写归一化。
+- Native App 的群晖登录更适合由网关处理 OAuth/OIDC 保密部分。
+- Hermes 转发应在服务端完成，销售工作区凭证不能下发到手机。
+
+## 推荐运行流程
+
+1. 用户打开 APK。
+2. App 检查本地登录状态。
+3. 未登录时通过网关/OIDC 打开群晖 SSO。
+4. 网关验证群晖身份并返回 SoloRecord 会话 token。
+5. 用户点击开始录音。
+6. App 创建会议 session id 并启动前台录音服务。
+7. 服务按滚动分段写入本地文件。
+8. 用户结束录音，或 App 关闭触发服务停止。
+9. App 原子化保存当前分段，会议进入已录制状态。
+10. 网络稳定时上传缺失分段。
+11. 网关保存音频并启动 normalize、VAD、可选降噪/去混响、可选 diarization、ASR、转写合并。
+12. 云端 file-transcription 适配器由网关完成音频托管、提交、轮询和结果下载。
+13. 网关调用 LLM 生成纪要和待办。
+14. 网关转发结构化会议数据到 Hermes/销售工作区。
+15. App 同步状态并在记录页展示结果。
+
+## 当前项目实现说明
+
+当前代码已经包含：
+
+- Android 三页签：录音、记录、登录状态。
+- 前台录音通知和滚动本地音频分段。
+- 按一次开始/结束聚合的 `MeetingRecord` 与 `AudioSegment`。
+- 本地播放。
+- 服务端同步、转写、纪要、待办、导出、APK 发布下载、模型管理页。
+- 通过稳定 speaker id 批量改名。
+- 服务端群晖 SSO redirect/callback 骨架和 demo 登录兜底。
+
+正式扩大使用前建议：
+
+- 长会议上传从 Base64 JSON 改 multipart 或断点续传。
+- Android session token 改为 EncryptedSharedPreferences/Keystore。
+- 接入部署后的群晖 SSO 真实 endpoint。
+
+## English
+
 # Synology SSO + ASR Architecture
 
 This document records the recommended integration design for SoloRecord when it
