@@ -139,6 +139,13 @@ POST /api/admin/search/reindex
 
 ## 常见任务
 
+服务器运维 Agent 自动部署：
+
+- 先读 `docs/agents/README.md` 的“服务器运维 Agent 自动部署 Runbook”。
+- 向操作者收集 `SOLO_BASE_URL`、SSO、ASR、LLM、Hermes、ES、备份和 APK 分发信息。
+- 密钥只写入服务器本地 `server/.env` 或密钥管理系统，不写入 Git、文档或最终回复。
+- 自动完成部署、配置、APK 发布、健康检查和端到端 smoke 后再交付。
+
 新增服务端字段：
 
 1. 更新 `server/solorecord_server/db.py`。
@@ -332,6 +339,13 @@ POST /api/admin/search/reindex
 ```
 
 ## Common Tasks
+
+Server operations agent auto-deployment:
+
+- First read the "Server Operations Agent Auto-Deployment Runbook" in `docs/agents/README.md`.
+- Collect `SOLO_BASE_URL`, SSO, ASR, LLM, Hermes, ES, backup, and APK distribution inputs from the operator.
+- Store secrets only in server-local `server/.env` or a secret manager, never in Git, docs, or final responses.
+- Complete deployment, configuration, APK publishing, health checks, and end-to-end smoke before handoff.
 
 ### Add A Server Field
 

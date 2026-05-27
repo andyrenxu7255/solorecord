@@ -29,6 +29,7 @@
 ### 智能体维护
 
 - [智能体维护手册](docs/agents/README.md)：上下文摘要、安全任务模式、已知风险、文档维护规则。
+- 服务器运维 Agent 自动部署：见 [docs/agents/README.md](docs/agents/README.md) 的“服务器运维 Agent 自动部署 Runbook”，会向操作者收集 URL/key，写入服务器 `.env`，自动部署、发布 APK 并联调。
 
 ### 产品与架构参考
 
@@ -95,6 +96,7 @@ scripts\run-server.ps1
 ## Agent Maintenance
 
 - [Agent Maintenance Manual](docs/agents/README.md): Context summary, safe task patterns, known risks, documentation maintenance rules.
+- Server operations agent auto-deployment: see the "Server Operations Agent Auto-Deployment Runbook" in [docs/agents/README.md](docs/agents/README.md). It collects URLs/keys from the operator, writes server-local `.env`, deploys, publishes APK, and runs integration checks.
 
 ## Product And Architecture References
 

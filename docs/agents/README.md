@@ -77,6 +77,176 @@ http://127.0.0.1:8000/
 
 Docker smoke fallback 见 `docs/human-ops/README.md`。
 
+## 服务器运维 Agent 自动部署 Runbook
+
+本节面向服务器运维 Agent。目标是让 Agent 在操作者提供必要 URL/key 后，自动完成部署、配置、APK 发布和联调验收。
+
+### 交互原则
+
+- 只向操作者索取部署必需信息；缺省值可自动生成时，不要求人工提供。
+- 密钥只写入服务器本地 `server/.env`、密钥管理系统或部署平台 secret，不写入 Git、文档、终端总结或聊天回复。
+- Agent 可以回显“已配置/未配置/校验通过”，但不能回显原始 key、token、client secret、数据库密码。
+- 公开 GitHub Release APK 不包含真实服务器地址或密钥；公司内部分发 APK 只允许内置服务器地址。
+- 每次改配置后都要跑健康检查和 smoke，不允许只启动服务就结束。
+
+### 需要向操作者收集的信息
+
+先让操作者提供这些信息；没有的项标注“稍后配置”并使用 mock/demo 跑通：
+
+| 类别 | 必填 | 信息 |
+| --- | --- | --- |
+| 服务器 | 是 | SSH 地址、登录用户、部署目录、系统类型、是否有 Docker |
+| 对外访问 | 是 | `SOLO_BASE_URL`，例如 `https://record.example.com` |
+| TLS/反代 | 是 | Nginx/Caddy 方案、证书来源、ACME 邮箱或已有证书路径 |
+| SoloRecord 密钥 | 可自动生成 | `SOLO_SECRET_KEY`，建议 Agent 生成长随机值 |
+| Demo 登录 | 是 | 是否临时开启 `SOLO_ALLOW_DEMO_LOGIN`；生产应为 `false` |
+| 群晖 SSO | 生产必填 | issuer、client id、client secret、redirect URI、scope、authorize/token/userinfo/JWKS URL |
+| 本地 ASR | 可稍后 | provider、ASR 命令或服务地址、模型名、采样率、是否启用 diarization/denoise |
+| LLM | 可稍后 | provider、endpoint、model、API key |
+| Hermes/Webhook | 可稍后 | webhook URL、webhook token、目标工作区 |
+| 外部 API | 可自动生成 | Hermes/CRM 拉取用 bearer token 名称和值 |
+| ES/OpenSearch | 可稍后 | 是否启用、URL、index、API key 或 username/password |
+| 存储与备份 | 是 | `var/` 持久化路径、备份目录、保留天数 |
+| APK 分发 | 是 | 使用公开 Release APK，还是构建只内置服务器地址的内部分发 APK |
+
+如果操作者暂时没有群晖、ASR、LLM 或 Hermes 信息，Agent 应先部署 mock 闭环，并在最终结果中列出“待接入项”，但不能阻塞基础部署。
+
+### 自动部署步骤
+
+1. 检查服务器依赖：Docker、Docker Compose、磁盘空间、端口、DNS 和时间同步。
+2. 获取代码：clone 或 pull `https://github.com/andyrenxu7255/solorecord.git`，checkout `v0.7` 或指定 commit。
+3. 创建配置：复制 `server/.env.example` 为 `server/.env`，写入操作者提供的信息和自动生成的密钥。
+4. 创建持久化目录：确认 `var/`、`var/storage`、`var/apk` 在持久磁盘上。
+5. 启动服务：优先 `docker compose up -d --build solorecord`；若构建网络慢，使用 `docs/human-ops/README.md` 中的 mounted-source smoke fallback 验证。
+6. 配置反向代理和 HTTPS：确保 `SOLO_BASE_URL`、SSO 回调和下载地址都走 HTTPS。
+7. 运行健康检查：调用 `/api/health`、`/`、`/api/web/me` 匿名拒绝。
+8. 跑 smoke：使用 demo 登录或 SSO 测试账号执行 `scripts\smoke-e2e.ps1` 对应的服务器等价流程。
+9. 配置 Provider：通过 Web 管理端或 API 保存 ASR/LLM/Hermes/ES 配置；密钥字段留空表示保持不变。
+10. 发布 APK：如果选择内部分发，使用 `-PSOLO_SERVER_ENDPOINT=<SOLO_BASE_URL>` 构建 APK，再上传 `/api/admin/releases`。
+11. 端到端联调：测试统一登录、录音上传、转写/纪要、说话人改名、服务器恢复记录、服务器音频下载、外部 API 拉取。
+12. 输出交付摘要：只列 URL、版本、健康状态、已启用能力、待接入项和下一步，不输出任何密钥。
+
+### `server/.env` 写入规则
+
+必须写入或确认：
+
+```text
+SOLO_BASE_URL=https://record.example.com
+SOLO_SECRET_KEY=<generated-or-provided-secret>
+SOLO_ALLOW_DEMO_LOGIN=false
+SOLO_DATABASE_PATH=var/solorecord.db
+SOLO_STORAGE_DIR=var/storage
+SOLO_APK_DIR=var/apk
+SOLO_STATIC_DIR=server/static
+```
+
+群晖 SSO：
+
+```text
+SOLO_SSO_VERIFY_MODE=oidc
+SOLO_SSO_ISSUER=
+SOLO_SSO_CLIENT_ID=
+SOLO_SSO_CLIENT_SECRET=
+SOLO_SSO_REDIRECT_URI=https://record.example.com/api/auth/sso/callback
+SOLO_SSO_SCOPE=openid email
+SOLO_SSO_AUTHORIZE_URL=
+SOLO_SSO_TOKEN_URL=
+SOLO_SSO_USERINFO_URL=
+SOLO_SSO_JWKS_URL=
+```
+
+本地 ASR：
+
+```text
+SOLO_ASR_PROVIDER=command
+SOLO_ASR_COMMAND=python /opt/solorecord-asr/run_asr.py --audios-json {audio_json} --sample-rate {sample_rate}
+SOLO_TARGET_SAMPLE_RATE=16000
+SOLO_ENABLE_DIARIZATION=true
+SOLO_ENABLE_DENOISE=false
+```
+
+LLM：
+
+```text
+SOLO_LLM_PROVIDER=openai-compatible
+SOLO_LLM_ENDPOINT=
+SOLO_LLM_API_KEY=
+SOLO_LLM_MODEL=
+```
+
+外部系统和 ES：
+
+```text
+SOLO_HERMES_WEBHOOK_URL=
+SOLO_HERMES_WEBHOOK_TOKEN=
+SOLO_EXTERNAL_API_TOKENS=hermes:<long-random-token>
+SOLO_ES_ENABLED=false
+SOLO_ES_URL=
+SOLO_ES_INDEX=solorecord_meetings
+SOLO_ES_API_KEY=
+SOLO_ES_USERNAME=
+SOLO_ES_PASSWORD=
+```
+
+### APK 自动发布流程
+
+公开 GitHub Release APK：
+
+- 可直接下载安装。
+- 不内置真实服务器地址。
+- 用户首次打开后填写服务器地址。
+
+公司内部分发 APK：
+
+```powershell
+& 'C:\Users\Andy\.gradle\wrapper\dists\gradle-8.7-bin\bhs2wmbdwecv87pi65oeuq5iu\gradle-8.7\bin\gradle.bat' assembleDebug -PSOLO_SERVER_ENDPOINT=https://record.example.com
+```
+
+上传到服务器：
+
+```text
+POST /api/admin/releases
+version_name=0.7.0
+version_code=7
+release_notes=SoloRecord V0.7
+force_update=false
+file=@app-debug.apk
+```
+
+Agent 上传后必须检查：
+
+```text
+GET /api/web/releases/latest
+GET /downloads/android/0.7.0/app.apk
+```
+
+### 联调验收清单
+
+- Web 可打开，`/api/health` 返回 `ok`。
+- 未登录访问会议列表返回 401。
+- SSO 登录可回到 Web；Android 可回到 `solorecord://auth/callback`。
+- 管理员可配置 ASR/LLM/Hermes/ES，密钥不回显。
+- APK 已发布，下载链接可用。
+- Android 登录后可录音、结束、同步。
+- 服务器生成转写、纪要和待办；mock 模式下也必须有占位结果。
+- 说话人改名后，同 speaker id 全部替换。
+- APK 重装后可从 `/api/mobile/sync` 恢复服务器记录。
+- 恢复记录可按权限下载播放服务器音频。
+- 外部 API 用正确 token 可拉取会议，用错误 token 返回 401。
+- ES/OpenSearch 启用时，处理完成、编辑转写、改名后能索引或重建索引。
+- 备份任务已配置，且 `server/.env` 没有进入 Git 或镜像。
+
+### 故障处理顺序
+
+1. 服务起不来：查 Docker logs、`.env` 路径、端口占用、Python 依赖。
+2. Web 可开但登录失败：查 `SOLO_BASE_URL`、SSO redirect URI、反代 HTTPS Host、群晖 client secret。
+3. Android 回跳失败：查 manifest scheme、`redirect_after=solorecord://auth/callback`、浏览器是否拦截。
+4. 上传失败：查 token、`SOLO_BASE_URL`、反代 body size、`var/storage` 权限。
+5. 转写失败：查 ASR command 是否可执行、stdout 是否合法 JSON、`processing_jobs.error_message`。
+6. 纪要失败：查 LLM endpoint/model/key；必要时回退 mock。
+7. APK 下载失败：查 `apk_releases`、`var/apk` 文件、反代下载路径。
+8. 外部系统失败：查 `SOLO_EXTERNAL_API_TOKENS`、Hermes webhook URL/token、网络连通性。
+
 ## 上下文摘要
 
 用户目标：
@@ -253,6 +423,174 @@ http://127.0.0.1:8000/
 ```
 
 Docker smoke fallback is documented in `docs/human-ops/README.md`.
+
+### Server Operations Agent Auto-Deployment Runbook
+
+This section is for a server operations agent. The goal is to collect required URLs/keys from the operator, then automatically deploy, configure, publish the APK, and run integration checks.
+
+#### Interaction Rules
+
+- Ask only for information required for deployment. Generate defaults automatically when safe.
+- Store secrets only in server-local `server/.env`, a secret manager, or deployment-platform secrets. Never write them to Git, docs, summaries, or chat responses.
+- It is acceptable to report "configured", "missing", or "validated"; never echo raw keys, tokens, client secrets, or database passwords.
+- The public GitHub Release APK contains no real server URL or secret. The internal company APK may embed only the server URL.
+- After every config change, run health checks and smoke tests. Do not stop after merely starting containers.
+
+#### Information To Collect From The Operator
+
+| Category | Required | Information |
+| --- | --- | --- |
+| Server | Yes | SSH host, user, deploy directory, OS, Docker availability |
+| Public access | Yes | `SOLO_BASE_URL`, for example `https://record.example.com` |
+| TLS / reverse proxy | Yes | Nginx/Caddy choice, certificate source, ACME email or existing cert path |
+| SoloRecord secret | Can generate | `SOLO_SECRET_KEY`, preferably generated by the agent |
+| Demo login | Yes | Whether `SOLO_ALLOW_DEMO_LOGIN` is temporarily enabled; production should be `false` |
+| Synology SSO | Required for production | issuer, client id, client secret, redirect URI, scope, authorize/token/userinfo/JWKS URLs |
+| Local ASR | Can defer | provider, command or service URL, model, sample rate, diarization/denoise flags |
+| LLM | Can defer | provider, endpoint, model, API key |
+| Hermes/Webhook | Can defer | webhook URL, webhook token, target workspace |
+| External API | Can generate | bearer token names and values for Hermes/CRM pull access |
+| ES/OpenSearch | Can defer | enabled flag, URL, index, API key or username/password |
+| Storage and backup | Yes | persistent `var/` path, backup directory, retention |
+| APK distribution | Yes | public Release APK or internal APK rebuilt with the server URL |
+
+If Synology, ASR, LLM, or Hermes values are not ready, deploy the mock/demo loop first and list the missing integrations in the final handoff.
+
+#### Automated Deployment Steps
+
+1. Check server prerequisites: Docker, Compose, disk, ports, DNS, time sync.
+2. Clone or update `https://github.com/andyrenxu7255/solorecord.git`; checkout `v0.7` or the requested commit.
+3. Copy `server/.env.example` to `server/.env`; write operator-provided values and generated secrets.
+4. Create persistent directories for `var/`, `var/storage`, and `var/apk`.
+5. Start with `docker compose up -d --build solorecord`; if builds are slow, use the mounted-source smoke fallback in `docs/human-ops/README.md`.
+6. Configure HTTPS reverse proxy and confirm `SOLO_BASE_URL`, SSO callback, and downloads use HTTPS.
+7. Run health checks: `/api/health`, `/`, and anonymous 401 checks.
+8. Run smoke with demo login or an SSO test account.
+9. Save ASR/LLM/Hermes/ES provider settings through Web admin or API. Empty secret fields mean "keep unchanged".
+10. Publish APK. For internal distribution, rebuild with `-PSOLO_SERVER_ENDPOINT=<SOLO_BASE_URL>` and upload through `/api/admin/releases`.
+11. Run end-to-end integration: SSO, recording upload, transcript/summary, speaker rename, server recovery, protected audio download, external API pull.
+12. Return a handoff summary with URLs, version, health state, enabled capabilities, missing integrations, and next actions. Do not include secrets.
+
+#### `server/.env` Writing Rules
+
+Required baseline:
+
+```text
+SOLO_BASE_URL=https://record.example.com
+SOLO_SECRET_KEY=<generated-or-provided-secret>
+SOLO_ALLOW_DEMO_LOGIN=false
+SOLO_DATABASE_PATH=var/solorecord.db
+SOLO_STORAGE_DIR=var/storage
+SOLO_APK_DIR=var/apk
+SOLO_STATIC_DIR=server/static
+```
+
+Synology SSO:
+
+```text
+SOLO_SSO_VERIFY_MODE=oidc
+SOLO_SSO_ISSUER=
+SOLO_SSO_CLIENT_ID=
+SOLO_SSO_CLIENT_SECRET=
+SOLO_SSO_REDIRECT_URI=https://record.example.com/api/auth/sso/callback
+SOLO_SSO_SCOPE=openid email
+SOLO_SSO_AUTHORIZE_URL=
+SOLO_SSO_TOKEN_URL=
+SOLO_SSO_USERINFO_URL=
+SOLO_SSO_JWKS_URL=
+```
+
+Local ASR:
+
+```text
+SOLO_ASR_PROVIDER=command
+SOLO_ASR_COMMAND=python /opt/solorecord-asr/run_asr.py --audios-json {audio_json} --sample-rate {sample_rate}
+SOLO_TARGET_SAMPLE_RATE=16000
+SOLO_ENABLE_DIARIZATION=true
+SOLO_ENABLE_DENOISE=false
+```
+
+LLM:
+
+```text
+SOLO_LLM_PROVIDER=openai-compatible
+SOLO_LLM_ENDPOINT=
+SOLO_LLM_API_KEY=
+SOLO_LLM_MODEL=
+```
+
+External systems and ES:
+
+```text
+SOLO_HERMES_WEBHOOK_URL=
+SOLO_HERMES_WEBHOOK_TOKEN=
+SOLO_EXTERNAL_API_TOKENS=hermes:<long-random-token>
+SOLO_ES_ENABLED=false
+SOLO_ES_URL=
+SOLO_ES_INDEX=solorecord_meetings
+SOLO_ES_API_KEY=
+SOLO_ES_USERNAME=
+SOLO_ES_PASSWORD=
+```
+
+#### APK Publishing Flow
+
+Public GitHub Release APK:
+
+- Can be downloaded and installed directly.
+- Contains no real server URL.
+- User enters the server URL on first run.
+
+Internal company APK:
+
+```powershell
+& 'C:\Users\Andy\.gradle\wrapper\dists\gradle-8.7-bin\bhs2wmbdwecv87pi65oeuq5iu\gradle-8.7\bin\gradle.bat' assembleDebug -PSOLO_SERVER_ENDPOINT=https://record.example.com
+```
+
+Upload to server:
+
+```text
+POST /api/admin/releases
+version_name=0.7.0
+version_code=7
+release_notes=SoloRecord V0.7
+force_update=false
+file=@app-debug.apk
+```
+
+After upload, check:
+
+```text
+GET /api/web/releases/latest
+GET /downloads/android/0.7.0/app.apk
+```
+
+#### Integration Acceptance Checklist
+
+- Web opens and `/api/health` returns `ok`.
+- Anonymous meeting-list access returns 401.
+- SSO returns to Web; Android returns to `solorecord://auth/callback`.
+- Admin can configure ASR/LLM/Hermes/ES; secrets are masked.
+- APK is published and downloadable.
+- Android can sign in, record, stop, and sync.
+- Server generates transcript, summary, and action items; mock mode must still produce placeholder output.
+- Speaker rename updates all rows with the same speaker id.
+- APK reinstall recovery works through `/api/mobile/sync`.
+- Recovered records can download and play protected server audio.
+- External API accepts the correct token and rejects a wrong token with 401.
+- ES/OpenSearch indexes after processing/editing/rename when enabled.
+- Backups are configured, and `server/.env` is not in Git or images.
+
+#### Troubleshooting Order
+
+1. Service does not start: inspect Docker logs, `.env` paths, ports, and Python dependency install.
+2. Web opens but login fails: check `SOLO_BASE_URL`, SSO redirect URI, HTTPS Host forwarding, and Synology client secret.
+3. Android callback fails: check manifest scheme, `redirect_after=solorecord://auth/callback`, and browser interception.
+4. Upload fails: check token, `SOLO_BASE_URL`, reverse proxy body size, and `var/storage` permissions.
+5. ASR fails: check ASR command execution, valid JSON stdout, and `processing_jobs.error_message`.
+6. Summary fails: check LLM endpoint/model/key; fall back to mock if needed.
+7. APK download fails: check `apk_releases`, `var/apk` files, and reverse proxy download path.
+8. External integration fails: check `SOLO_EXTERNAL_API_TOKENS`, Hermes webhook URL/token, and network connectivity.
 
 ### User Goal Summary
 
