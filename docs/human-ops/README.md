@@ -360,12 +360,15 @@ App 重装后，本机缓存会清空，但服务器记录不丢失。用户重�
 
 弱网同步说明：
 
-- Android 先把录音滚动保存到本机私有目录，再同步服务器。
+- Android 先把录音连续采集为本机 WAV 滚动分段，再同步服务器。
+- 分段时长由 Web 管理页/服务端配置控制，默认约 5 分钟；相邻分段保留约 2 秒重叠，避免切段边界丢词。
 - 上传走 `POST /api/mobile/meetings/{meetingId}/segments` multipart 文件流，不再依赖整段 Base64 JSON。
+- 每个分段上传成功后，服务端会立即执行该段 ASR，并把阶段转写写入同一个会议记录；用户不需要等整场结束才看到转写。
 - 客户端本地保存分段上传账本；服务端确认某分段后，本地立刻标记为“已上传”。
 - 下次同步会跳过已上传分段，只补传未完成分段。
-- 这是分段级断点续传，不是单个文件的字节 offset 续传。当前 5 分钟左右一个分段，弱网失败时最多重传当前未确认分段。
+- 这是分段级断点续传，不是单个文件的字节 offset 续传。弱网失败时最多重传当前未确认分段。
 - `/finish` 可以重复调用；如果会议已有排队、运行中或已完成的处理任务，服务端会复用已有 job，避免手机弱网重试造成重复 ASR/LLM 消耗。
+- 如果所有分段已经完成在线阶段转写，结束会议时服务端会复用这些转写生成完整纪要和待办，不再重复跑整场 ASR。
 
 ## 数据目录
 
@@ -817,12 +820,15 @@ Users download APKs from the Web App Download page. After reinstall, users sign 
 
 Weak-network sync behavior:
 
-- Android writes rolling audio files to private local storage before sync.
+- Android writes continuous WAV rolling audio segments to private local storage before sync.
+- Segment duration is controlled by the Web/server configuration and defaults to about five minutes. Adjacent segments keep about two seconds of overlap to avoid losing words at segment boundaries.
 - Upload uses the multipart file endpoint `POST /api/mobile/meetings/{meetingId}/segments`, not whole-file Base64 JSON.
+- After each segment is accepted, the server immediately runs ASR for that segment and appends partial transcript rows to the same meeting record.
 - The client keeps a local per-segment upload ledger. After the server confirms a segment, it is immediately marked uploaded.
 - The next sync skips uploaded segments and sends only pending segments.
-- This is segment-level resume, not byte-offset resume inside a single file. With roughly five-minute rolling segments, retry cost is bounded to the current unconfirmed segment.
+- This is segment-level resume, not byte-offset resume inside a single file. Retry cost is bounded to the current unconfirmed segment.
 - `/finish` is retry-safe. If a queued, running, or completed processing job already exists, the server reuses that job instead of spending ASR/LLM again.
+- If all segments already have online partial transcripts, final finish reuses those rows to generate the full summary and action items instead of running whole-meeting ASR again.
 
 ### Data And Backup
 

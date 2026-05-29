@@ -65,6 +65,12 @@ public final class SoloServerClient {
         return records;
     }
 
+    public int fetchAudioSegmentMinutes(String serverEndpoint, String token) throws Exception {
+        JSONObject response = httpJsonClient.getJson(url(serverEndpoint, "/api/mobile/config"), token);
+        int minutes = response.optInt("segmentMinutes", 5);
+        return Math.max(1, Math.min(30, minutes));
+    }
+
     public MeetingRecord createMeeting(String serverEndpoint, String token, String title) throws Exception {
         JSONObject body = new JSONObject();
         body.put("title", title);
@@ -76,28 +82,61 @@ public final class SoloServerClient {
         return uploadAndFinishMeeting(serverEndpoint, token, record, null);
     }
 
+    public MeetingRecord uploadPendingSegments(
+            String serverEndpoint,
+            String token,
+            MeetingRecord record,
+            UploadProgressListener listener) throws Exception {
+        UploadContext context = ensureRemoteMeeting(serverEndpoint, token, record, listener);
+        MeetingRecord uploaded = uploadPendingSegmentsOnly(serverEndpoint, token, context.record, context.remoteId, listener);
+        MeetingRecord refreshed = getMeeting(serverEndpoint, token, context.remoteId);
+        return preserveLocalAudioPaths(refreshed, uploaded);
+    }
+
     public MeetingRecord uploadAndFinishMeeting(
             String serverEndpoint,
             String token,
             MeetingRecord record,
             UploadProgressListener listener) throws Exception {
+        UploadContext context = ensureRemoteMeeting(serverEndpoint, token, record, listener);
+        MeetingRecord uploaded = uploadPendingSegmentsOnly(serverEndpoint, token, context.record, context.remoteId, listener);
+        MeetingRecord finished = finishMeeting(serverEndpoint, token, context.remoteId);
+        return preserveLocalAudioPaths(finished, uploaded);
+    }
+
+    private UploadContext ensureRemoteMeeting(
+            String serverEndpoint,
+            String token,
+            MeetingRecord record,
+            UploadProgressListener listener) throws Exception {
         String remoteMeetingId = record.getId().startsWith("mtg_") ? record.getId() : "";
-        MeetingRecord remote = remoteMeetingId.isEmpty()
-                ? createMeeting(serverEndpoint, token, record.getTitle())
-                : getMeeting(serverEndpoint, token, remoteMeetingId);
         if (remoteMeetingId.isEmpty()) {
+            MeetingRecord remote = createMeeting(serverEndpoint, token, record.getTitle());
             record = record.withId(remote.getId(), "uploading");
             if (listener != null) {
                 listener.onRemoteMeetingReady(record);
             }
+            return new UploadContext(record, remote.getId());
         }
+        return new UploadContext(record, remoteMeetingId);
+    }
+
+    private MeetingRecord uploadPendingSegmentsOnly(
+            String serverEndpoint,
+            String token,
+            MeetingRecord record,
+            String remoteMeetingId,
+            UploadProgressListener listener) throws Exception {
         for (AudioSegment segment : record.getAudioSegments()) {
             if (segment.isUploaded()) {
                 continue;
             }
+            if (segment.isOpenRecording()) {
+                continue;
+            }
             File file = new File(segment.getPath());
             if (file.exists()) {
-                uploadSegment(serverEndpoint, token, remote.getId(), segment);
+                uploadSegment(serverEndpoint, token, remoteMeetingId, segment);
                 record = record.withSegmentUploadStatus(segment.getSegmentNo(), "uploaded");
                 if (listener != null) {
                     listener.onSegmentUploaded(record, segment.withUploadStatus("uploaded"));
@@ -106,8 +145,7 @@ public final class SoloServerClient {
                 throw new java.io.IOException("本地音频分段不可用：" + segment.getSegmentNo());
             }
         }
-        MeetingRecord finished = finishMeeting(serverEndpoint, token, remote.getId());
-        return preserveLocalAudioPaths(finished, record);
+        return record;
     }
 
     public MeetingRecord finishMeeting(String serverEndpoint, String token, String meetingId) throws Exception {
@@ -171,7 +209,7 @@ public final class SoloServerClient {
                 fields,
                 "file",
                 file,
-                "audio/mp4");
+                mimeTypeFor(file));
     }
 
     public File downloadSegment(String serverEndpoint, String token, AudioSegment segment, File outputDir) throws Exception {
@@ -182,7 +220,10 @@ public final class SoloServerClient {
         if (!outputDir.exists() && !outputDir.mkdirs()) {
             throw new Exception("无法创建音频缓存目录");
         }
-        File output = new File(outputDir, String.format("remote_part_%04d.m4a", segment.getSegmentNo()));
+        File output = new File(outputDir, String.format(
+                "remote_part_%04d%s",
+                segment.getSegmentNo(),
+                extensionFor(segment)));
         byte[] bytes = httpJsonClient.getBytes(url(serverEndpoint, downloadUrl), token);
         try (FileOutputStream stream = new FileOutputStream(output)) {
             stream.write(bytes);
@@ -302,6 +343,11 @@ public final class SoloServerClient {
                 merged.add(serverSegment);
             }
         }
+        for (AudioSegment localSegment : localRecord.getAudioSegments()) {
+            if (findSegment(merged, localSegment.getSegmentNo()) == null) {
+                merged.add(localSegment);
+            }
+        }
         if (merged.isEmpty()) {
             for (AudioSegment localSegment : localRecord.getAudioSegments()) {
                 merged.add(localSegment.withUploadStatus("uploaded"));
@@ -311,12 +357,36 @@ public final class SoloServerClient {
     }
 
     private AudioSegment findSegment(MeetingRecord record, int segmentNo) {
-        for (AudioSegment segment : record.getAudioSegments()) {
+        return findSegment(record.getAudioSegments(), segmentNo);
+    }
+
+    private AudioSegment findSegment(List<AudioSegment> segments, int segmentNo) {
+        for (AudioSegment segment : segments) {
             if (segment.getSegmentNo() == segmentNo) {
                 return segment;
             }
         }
         return null;
+    }
+
+    private String mimeTypeFor(File file) {
+        String name = file.getName().toLowerCase();
+        if (name.endsWith(".wav")) {
+            return "audio/wav";
+        }
+        if (name.endsWith(".m4a") || name.endsWith(".mp4")) {
+            return "audio/mp4";
+        }
+        return "application/octet-stream";
+    }
+
+    private String extensionFor(AudioSegment segment) {
+        String path = segment.getPath().toLowerCase();
+        String downloadUrl = segment.getDownloadUrl().toLowerCase();
+        if (path.endsWith(".wav") || downloadUrl.endsWith(".wav")) {
+            return ".wav";
+        }
+        return ".m4a";
     }
 
     private String url(String serverEndpoint, String path) {
@@ -378,6 +448,16 @@ public final class SoloServerClient {
 
         public String getReleaseNotes() {
             return releaseNotes;
+        }
+    }
+
+    private static final class UploadContext {
+        private final MeetingRecord record;
+        private final String remoteId;
+
+        UploadContext(MeetingRecord record, String remoteId) {
+            this.record = record;
+            this.remoteId = remoteId;
         }
     }
 }

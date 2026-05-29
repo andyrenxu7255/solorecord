@@ -12,7 +12,7 @@ SoloRecord 是公司内部会议记录系统，用来通过 Android App 可靠�
 
 这是面向公司内部使用的一体化会议记录系统，当前发布版为 V0.7，包含 Android App、服务端网关和 Web 管理/PC 端。
 
-- Android App：LDAP 登录、可选统一登录跳转与回跳、滚动分段录音、本地记录、本地播放、同步到服务器、重装后恢复服务器记录、查看转写/纪要/待办、批量修改角色名。
+- Android App：LDAP 登录、可选统一登录跳转与回跳、连续 WAV 滚动分段录音、约 2 秒分段重叠、本地记录、本地播放、分段自动上传、重装后恢复服务器记录、查看转写/纪要/待办、批量修改角色名。
 - 服务端：登录会话、会议/音频/转写/角色/纪要/待办、ASR/LLM 配置、导出、APK 发布下载、Hermes/Webhook 转发。
 - Web 端：PC 上传录音、会议查看编辑、角色重命名、导出、模型配置、任务管理、APK 发布。
 - 模型密钥保存在服务端，APK 默认只需要服务器地址和短期会话 token。
@@ -34,6 +34,7 @@ SoloRecord 是公司内部会议记录系统，用来通过 Android App 可靠�
 - 群晖 SSO 与 ASR 架构：[docs/synology-bailian-architecture.md](docs/synology-bailian-architecture.md)
 - 开源调研：[docs/open-source-research.md](docs/open-source-research.md)
 - 安全审计：[docs/security-audit.md](docs/security-audit.md)
+- 用户体验审计：[docs/ux-review-v0.7.md](docs/ux-review-v0.7.md)
 - V0.7 发布说明：[docs/release-v0.7.md](docs/release-v0.7.md)
 
 ## 打开方式
@@ -101,12 +102,13 @@ http://127.0.0.1:8000
 
 1. 用户在 App 登录。
 2. 点击“开始录音”，授权麦克风权限。
-3. 点击“结束录音”，会议音频会按分段保存在本地。
-4. 网络稳定后同步到服务器；同步采用分段级断点续传，已上传分段会在本地账本中标记，下次只补传未完成分段。
-5. 服务器执行 ASR、纪要整理、待办提取、外部系统转发和可选 ES/OpenSearch 索引。
-6. 用户在 App 或 Web 查看转写、纪要、待办，也可以改说话人名称、下载播放服务器音频和导出文件。
+3. 录音期间 App 连续采集音频并按服务器配置的时长滚动保存，默认约 5 分钟一段；相邻分段保留约 2 秒重叠，降低边界丢词风险。
+4. 在线时，每个分段完成后会自动上传并触发一次分段转写，阶段结果持续写回同一条会议记录。
+5. 点击“结束录音”后，最后一段也会保存并上传，然后服务端对整场会议生成完整转写、纪要、待办、外部系统转发和可选 ES/OpenSearch 索引。
+6. 网络不稳定时，同步采用分段级断点续传；已上传分段会在本地账本中标记，下次只补传未完成分段。
+7. 用户在 App 或 Web 查看转写、纪要、待办，也可以改说话人名称、下载播放服务器音频和导出文件。
 
-APK 体积较小是预期现象：它不内置 ASR/LLM 模型和三方重 SDK，只负责登录、录音、分段落盘、文件流式上传、播放和展示。当前上传边界是 5 分钟左右一个音频分段；如果网络中断，最多重传当前未确认分段，而不是整场会议。
+APK 体积较小是预期现象：它不内置 ASR/LLM 模型和三方重 SDK，只负责登录、录音、分段落盘、文件流式上传、播放和展示。当前上传边界默认是 5 分钟左右一个音频分段，可由服务端配置；如果网络中断，最多重传当前未确认分段，而不是整场会议。
 
 ## App 预配置
 
@@ -162,12 +164,12 @@ SoloRecord is an internal company meeting recorder. V0.7 is the first deployable
 
 ### What V0.7 Includes
 
-- Android app: LDAP login, optional SSO login handoff, rolling segmented recording, local records, playback, server sync, server record recovery after reinstall, transcript/summary/action-item viewing, and batch speaker rename.
+- Android app: LDAP login, optional SSO login handoff, continuous WAV rolling recording with about two seconds of overlap between adjacent segments, local records, playback, segment auto-upload, server record recovery after reinstall, transcript/summary/action-item viewing, and batch speaker rename.
 - Server: login sessions, meetings, audio segments, transcripts, speaker names, summaries, action items, ASR/LLM configuration, exports, APK publishing, Hermes/Webhook forwarding, external API, and optional ES/OpenSearch indexing.
 - Web app: PC upload, meeting review/editing, transcript editing, speaker rename, exports, model configuration, job management, and APK publishing.
 - Secrets are stored server-side. The APK only needs the server endpoint and a short-lived session token.
 - The public GitHub Release APK contains no real server URL or secret. Users can enter the server URL on first run; for company distribution, rebuild with `-PSOLO_SERVER_ENDPOINT=https://record.example.com` and publish that APK from the server Web admin.
-- The Android app records to local rolling audio files first and uses segment-level resume for upload. Confirmed segments are skipped on retry; only pending segments are uploaded again.
+- The Android app records to local rolling audio files first and uses segment-level resume for upload. Confirmed segments are skipped on retry; only pending segments are uploaded again. While online, each completed segment is uploaded and transcribed into the same meeting record before final summary processing.
 
 ### Quick Start
 
@@ -195,6 +197,7 @@ Build the Android debug APK:
 - Development: [docs/human-dev/README.md](docs/human-dev/README.md)
 - User manual: [docs/user/README.md](docs/user/README.md)
 - Agent maintenance: [AGENTS.md](AGENTS.md), [docs/agents/README.md](docs/agents/README.md), [llms.txt](llms.txt)
+- UX review: [docs/ux-review-v0.7.md](docs/ux-review-v0.7.md)
 - Release notes: [docs/release-v0.7.md](docs/release-v0.7.md)
 
 ### ASR Integration

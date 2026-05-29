@@ -45,12 +45,13 @@ import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_RECORD_AUDIO = 1001;
-    private static final long SEGMENT_ROTATE_INTERVAL_MS = 5 * 60 * 1000L;
+    private static final int DEFAULT_SEGMENT_MINUTES = 5;
 
     private final RollingAudioRecorder audioRecorder = new RollingAudioRecorder();
     private final SoloServerClient serverClient = new SoloServerClient();
     private final ExecutorService executorService = Executors.newSingleThreadExecutor();
     private final Handler segmentHandler = new Handler(Looper.getMainLooper());
+    private final Handler recordingUiHandler = new Handler(Looper.getMainLooper());
 
     private MeetingStore meetingStore;
     private SessionStore sessionStore;
@@ -66,6 +67,7 @@ public final class MainActivity extends Activity {
     private long recordingStartedAt;
     private String recordingMeetingId = "";
     private MediaPlayer mediaPlayer;
+    private boolean autoSyncRunning;
     private final Runnable segmentRotation = new Runnable() {
         @Override
         public void run() {
@@ -73,7 +75,17 @@ public final class MainActivity extends Activity {
                 return;
             }
             rotateRecordingSegment();
-            segmentHandler.postDelayed(this, SEGMENT_ROTATE_INTERVAL_MS);
+            segmentHandler.postDelayed(this, segmentRotateIntervalMillis());
+        }
+    };
+    private final Runnable recordingCheckpoint = new Runnable() {
+        @Override
+        public void run() {
+            if (!audioRecorder.isRecording()) {
+                return;
+            }
+            checkpointRecording(true);
+            recordingUiHandler.postDelayed(this, 5_000L);
         }
     };
 
@@ -88,6 +100,7 @@ public final class MainActivity extends Activity {
                 && !configuredServerEndpoint.isEmpty()) {
             sessionStore.setServerEndpoint(configuredServerEndpoint);
         }
+        recoverInterruptedRecordings();
         currentMeeting = meetingStore.loadLatestMetadata();
         buildShell();
         handleAuthCallback(getIntent());
@@ -105,10 +118,11 @@ public final class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         if (audioRecorder.isRecording()) {
-            stopRecording();
+            stopRecording(false);
         }
         releasePlayer();
         segmentHandler.removeCallbacks(segmentRotation);
+        recordingUiHandler.removeCallbacks(recordingCheckpoint);
         executorService.shutdownNow();
         super.onDestroy();
     }
@@ -160,6 +174,19 @@ public final class MainActivity extends Activity {
         root.addView(tabs, matchWrap());
 
         setContentView(root);
+    }
+
+    private void recoverInterruptedRecordings() {
+        try {
+            List<MeetingRecord> records = meetingStore.loadAll();
+            for (MeetingRecord record : records) {
+                if (record.openRecordingSegmentCount() > 0 || "local_recording".equals(record.getStatus())) {
+                    meetingStore.upsert(record.withClosedOpenAudioSegments());
+                }
+            }
+        } catch (IOException ignored) {
+            // Recovery is best effort; the record list remains readable even if one save fails.
+        }
     }
 
     private Button tabButton(String label, int tab) {
@@ -218,7 +245,8 @@ public final class MainActivity extends Activity {
             content.addView(login, spacedParams());
             return;
         }
-        addHint("点击开始后会立即保存本地音频。结束或关闭 App 时会停止录音，避免长时间未落盘。");
+        addHint("点击开始后会立即保存本地音频。当前按约 " + sessionStore.getAudioSegmentMinutes()
+                + " 分钟滚动分段，每个分段会带约 2 秒重叠；在线时分段完成后自动上传并补充阶段转写。");
 
         TextView state = cardText(audioRecorder.isRecording() ? "录音中" : "准备录音");
         content.addView(state, matchWrap());
@@ -236,7 +264,13 @@ public final class MainActivity extends Activity {
         content.addView(restoreButton, spacedParams());
 
         if (currentMeeting != null) {
+            if (audioRecorder.isRecording()) {
+                checkpointRecording(false);
+            }
             addMeetingSummary(currentMeeting);
+            if (currentMeeting.hasPendingLocalAudio()) {
+                addHint("仍有待上传音频分段，网络恢复后会继续补传。");
+            }
         }
     }
 
@@ -265,7 +299,7 @@ public final class MainActivity extends Activity {
             TextView title = text(record.getTitle(), 18, true);
             card.addView(title, matchWrap());
             card.addView(text(TimeFormat.display(record.getCreatedAtMillis()) + " · " + statusLabel(record.getStatus()), 13, false));
-            card.addView(text("音频分段：" + record.getAudioSegments().size(), 13, false));
+            card.addView(text(recordProgressText(record), 13, false));
 
             Button detail = secondaryButton("查看详情");
             detail.setOnClickListener(view -> renderRecordDetail(record));
@@ -347,6 +381,9 @@ public final class MainActivity extends Activity {
                     14,
                     true), matchWrap());
             String status = segment.isUploaded() ? "已上传" : "待上传";
+            if (segment.isOpenRecording()) {
+                status = "正在写入";
+            }
             card.addView(text(
                     (file.exists() ? file.getName() : "服务器音频或本机文件不可用") + " · " + status,
                     13,
@@ -458,7 +495,9 @@ public final class MainActivity extends Activity {
             meetingStore.upsert(currentMeeting);
             startRecordingService();
             audioRecorder.start(this, recordingMeetingId);
-            segmentHandler.postDelayed(segmentRotation, SEGMENT_ROTATE_INTERVAL_MS);
+            refreshMobileConfigAsync();
+            segmentHandler.postDelayed(segmentRotation, segmentRotateIntervalMillis());
+            recordingUiHandler.postDelayed(recordingCheckpoint, 1_000L);
             renderCurrentTab();
             toast("录音已开始");
         } catch (IOException exception) {
@@ -468,8 +507,13 @@ public final class MainActivity extends Activity {
     }
 
     private void stopRecording() {
+        stopRecording(true);
+    }
+
+    private void stopRecording(boolean submitAfterSave) {
         try {
             segmentHandler.removeCallbacks(segmentRotation);
+            recordingUiHandler.removeCallbacks(recordingCheckpoint);
             List<AudioSegment> segments = new ArrayList<>(audioRecorder.stop());
             stopRecordingService();
             MeetingRecord base = currentMeeting == null
@@ -488,11 +532,16 @@ public final class MainActivity extends Activity {
             MeetingRecord draft = base.withAudioSegments(segments, "local_recorded");
             currentMeeting = draft;
             meetingStore.upsert(draft);
-            renderCurrentTab();
-            toast("录音已保存");
+            if (submitAfterSave) {
+                renderCurrentTab();
+                toast("录音已保存");
+                syncMeeting(draft);
+            }
         } catch (IOException exception) {
             stopRecordingService();
-            toast(exception.getMessage());
+            if (submitAfterSave) {
+                toast(exception.getMessage());
+            }
         }
     }
 
@@ -502,12 +551,29 @@ public final class MainActivity extends Activity {
             if (currentMeeting != null) {
                 currentMeeting = currentMeeting.withAudioSegments(segments, "local_recording");
                 meetingStore.upsert(currentMeeting);
+                autoUploadCurrentMeeting(true);
                 if (currentTab == 0) {
                     renderCurrentTab();
                 }
             }
         } catch (IOException exception) {
             toast("分段保存失败：" + exception.getMessage());
+        }
+    }
+
+    private void checkpointRecording(boolean refreshUi) {
+        if (currentMeeting == null || !audioRecorder.isRecording()) {
+            return;
+        }
+        try {
+            List<AudioSegment> segments = new ArrayList<>(audioRecorder.checkpointOpenSegment());
+            currentMeeting = currentMeeting.withAudioSegments(segments, "local_recording");
+            meetingStore.upsert(currentMeeting);
+            if (refreshUi && currentTab == 0) {
+                renderCurrentTab();
+            }
+        } catch (IOException exception) {
+            toast("录音状态保存失败：" + exception.getMessage());
         }
     }
 
@@ -529,6 +595,12 @@ public final class MainActivity extends Activity {
             toast("请先录制会议");
             return;
         }
+        if (audioRecorder.isRecording()) {
+            checkpointRecording(true);
+            autoUploadCurrentMeeting(true);
+            toast("录音仍在继续，已尝试上传已完成分段");
+            return;
+        }
         syncMeeting(currentMeeting);
     }
 
@@ -540,13 +612,21 @@ public final class MainActivity extends Activity {
             return;
         }
         executorService.execute(() -> {
-            final String[] activeRecordId = {record.getId()};
+            MeetingRecord latestBeforeSync = meetingStore.findById(record.getId());
+            MeetingRecord working = latestBeforeSync == null ? record : latestBeforeSync.withAudioFrom(record);
+            if (!working.getId().startsWith("mtg_")) {
+                MeetingRecord remoteSuccessor = meetingStore.findRemoteSuccessor(record);
+                if (remoteSuccessor != null) {
+                    working = remoteSuccessor.withAudioFrom(working);
+                }
+            }
+            final String[] activeRecordId = {working.getId()};
             try {
-                String localId = record.getId();
+                String localId = working.getId();
                 MeetingRecord processed = serverClient.uploadAndFinishMeeting(
                         sessionStore.getServerEndpoint(),
                         sessionStore.getToken(),
-                        record,
+                        working,
                         new SoloServerClient.UploadProgressListener() {
                             @Override
                             public void onRemoteMeetingReady(MeetingRecord uploading) throws Exception {
@@ -572,9 +652,80 @@ public final class MainActivity extends Activity {
             } catch (Exception exception) {
                 MeetingRecord latest = meetingStore.findById(activeRecordId[0]);
                 runOnUiThread(() -> {
+                    autoSyncRunning = false;
                     currentMeeting = latest == null ? currentMeeting : latest;
                     toast("同步中断，已保留进度，下次会继续：" + exception.getMessage());
                     renderCurrentTab();
+                });
+            }
+        });
+    }
+
+    private void refreshMobileConfigAsync() {
+        if (!sessionStore.isLoggedIn()) {
+            return;
+        }
+        executorService.execute(() -> {
+            try {
+                int minutes = serverClient.fetchAudioSegmentMinutes(
+                        sessionStore.getServerEndpoint(),
+                        sessionStore.getToken());
+                sessionStore.setAudioSegmentMinutes(minutes);
+            } catch (Exception ignored) {
+                sessionStore.setAudioSegmentMinutes(DEFAULT_SEGMENT_MINUTES);
+            }
+        });
+    }
+
+    private void autoUploadCurrentMeeting(boolean refreshAfterUpload) {
+        if (!sessionStore.isLoggedIn() || currentMeeting == null || autoSyncRunning) {
+            return;
+        }
+        MeetingRecord record = currentMeeting;
+        if (!record.hasPendingLocalAudio()) {
+            return;
+        }
+        autoSyncRunning = true;
+        executorService.execute(() -> {
+            final String[] activeRecordId = {record.getId()};
+            try {
+                String localId = record.getId();
+                MeetingRecord uploaded = serverClient.uploadPendingSegments(
+                        sessionStore.getServerEndpoint(),
+                        sessionStore.getToken(),
+                        record,
+                        new SoloServerClient.UploadProgressListener() {
+                            @Override
+                            public void onRemoteMeetingReady(MeetingRecord uploading) throws Exception {
+                                activeRecordId[0] = uploading.getId();
+                                meetingStore.replace(localId, uploading);
+                                currentMeeting = uploading;
+                            }
+
+                            @Override
+                            public void onSegmentUploaded(MeetingRecord uploading, AudioSegment segment) throws Exception {
+                                activeRecordId[0] = uploading.getId();
+                                meetingStore.upsert(uploading);
+                                currentMeeting = uploading;
+                            }
+                        });
+                meetingStore.replace(localId, uploaded);
+                runOnUiThread(() -> {
+                    autoSyncRunning = false;
+                    currentMeeting = uploaded;
+                    if (refreshAfterUpload) {
+                        renderCurrentTab();
+                    }
+                });
+            } catch (Exception exception) {
+                MeetingRecord latest = meetingStore.findById(activeRecordId[0]);
+                runOnUiThread(() -> {
+                    autoSyncRunning = false;
+                    currentMeeting = latest == null ? currentMeeting : latest;
+                    if (refreshAfterUpload) {
+                        toast("自动上传中断，稍后会继续：" + exception.getMessage());
+                        renderCurrentTab();
+                    }
                 });
             }
         });
@@ -807,12 +958,20 @@ public final class MainActivity extends Activity {
         return normalizeServerEndpoint(endpoint) + value;
     }
 
+    private long segmentRotateIntervalMillis() {
+        return Math.max(1, sessionStore.getAudioSegmentMinutes()) * 60_000L;
+    }
+
     private void addMeetingSummary(MeetingRecord record) {
         LinearLayout card = card();
         card.addView(text(record.getTitle(), 18, true), matchWrap());
         card.addView(text(statusLabel(record.getStatus()), 14, false), matchWrap());
         card.addView(text("创建：" + TimeFormat.display(record.getCreatedAtMillis()), 13, false), matchWrap());
-        card.addView(text("音频分段：" + record.getAudioSegments().size(), 13, false), matchWrap());
+        card.addView(text(recordProgressText(record), 13, false), matchWrap());
+        if (audioRecorder.isRecording() && "local_recording".equals(record.getStatus())) {
+            long seconds = Math.max(0, (System.currentTimeMillis() - recordingStartedAt) / 1000);
+            card.addView(text("已录制：" + (seconds / 60) + " 分 " + (seconds % 60) + " 秒", 13, false), matchWrap());
+        }
         content.addView(card, spacedParams());
     }
 
@@ -894,6 +1053,12 @@ public final class MainActivity extends Activity {
         if ("queued".equals(status)) {
             return "排队中";
         }
+        if ("partial_ready".equals(status)) {
+            return "分段转写中";
+        }
+        if ("uploaded".equals(status) || "uploading".equals(status)) {
+            return "上传中";
+        }
         if ("preprocessing".equals(status)) {
             return "预处理";
         }
@@ -907,6 +1072,19 @@ public final class MainActivity extends Activity {
             return "本地已保存";
         }
         return status == null || status.isEmpty() ? "未知" : status;
+    }
+
+    private String recordProgressText(MeetingRecord record) {
+        int total = record.getAudioSegments().size();
+        int uploaded = record.uploadedAudioSegmentCount();
+        int pending = record.pendingUploadSegmentCount();
+        int open = record.openRecordingSegmentCount();
+        int transcripts = record.getTranscriptSegments().size();
+        return "音频分段：" + total
+                + " · 已上传：" + uploaded
+                + " · 待上传：" + pending
+                + (open > 0 ? " · 正在写入：" + open : "")
+                + " · 转写段落：" + transcripts;
     }
 
     private String time(long millis) {

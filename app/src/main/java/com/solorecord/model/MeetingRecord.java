@@ -211,12 +211,13 @@ public final class MeetingRecord {
 
     public MeetingRecord withAudioSegments(List<AudioSegment> segments, String newStatus) {
         String firstPath = segments == null || segments.isEmpty() ? audioPath : segments.get(0).getPath();
+        List<AudioSegment> merged = mergeUploadStatuses(segments);
         return new MeetingRecord(
                 id,
                 title,
                 createdAtMillis,
                 firstPath,
-                segments,
+                merged,
                 newStatus,
                 transcriptSegments,
                 roleNotes,
@@ -232,6 +233,25 @@ public final class MeetingRecord {
                 audioPath,
                 audioSegments,
                 newStatus,
+                transcriptSegments,
+                roleNotes,
+                summary,
+                actionItems);
+    }
+
+    public MeetingRecord withAudioFrom(MeetingRecord other) {
+        if (other == null) {
+            return this;
+        }
+        String mergedAudioPath = other.getAudioPath().isEmpty() ? audioPath : other.getAudioPath();
+        List<AudioSegment> mergedSegments = mergeAudioSegmentsByNumber(audioSegments, other.getAudioSegments());
+        return new MeetingRecord(
+                id,
+                title,
+                createdAtMillis,
+                mergedAudioPath,
+                mergedSegments,
+                status,
                 transcriptSegments,
                 roleNotes,
                 summary,
@@ -260,13 +280,66 @@ public final class MeetingRecord {
                 actionItems);
     }
 
+    public MeetingRecord withClosedOpenAudioSegments() {
+        boolean wasRecording = "local_recording".equals(status);
+        if (openRecordingSegmentCount() == 0 && !wasRecording) {
+            return this;
+        }
+        List<AudioSegment> updated = new ArrayList<>();
+        for (AudioSegment segment : audioSegments) {
+            updated.add(segment.isOpenRecording() ? segment.withUploadStatus("local") : segment);
+        }
+        String nextStatus = wasRecording ? "local_recorded" : status;
+        return new MeetingRecord(
+                id,
+                title,
+                createdAtMillis,
+                audioPath,
+                updated,
+                nextStatus,
+                transcriptSegments,
+                roleNotes,
+                summary,
+                actionItems);
+    }
+
     public boolean hasPendingLocalAudio() {
         for (AudioSegment segment : audioSegments) {
-            if (!segment.isUploaded() && !segment.getPath().isEmpty()) {
+            if (segment.isReadyForUpload()) {
                 return true;
             }
         }
         return false;
+    }
+
+    public int uploadedAudioSegmentCount() {
+        int count = 0;
+        for (AudioSegment segment : audioSegments) {
+            if (segment.isUploaded()) {
+                count += 1;
+            }
+        }
+        return count;
+    }
+
+    public int pendingUploadSegmentCount() {
+        int count = 0;
+        for (AudioSegment segment : audioSegments) {
+            if (segment.isReadyForUpload()) {
+                count += 1;
+            }
+        }
+        return count;
+    }
+
+    public int openRecordingSegmentCount() {
+        int count = 0;
+        for (AudioSegment segment : audioSegments) {
+            if (segment.isOpenRecording()) {
+                count += 1;
+            }
+        }
+        return count;
     }
 
     public MeetingRecord withSpeakerName(String speakerId, String displayName) {
@@ -310,6 +383,72 @@ public final class MeetingRecord {
             return Collections.emptyList();
         }
         return Collections.unmodifiableList(new ArrayList<>(items));
+    }
+
+    private List<AudioSegment> mergeUploadStatuses(List<AudioSegment> segments) {
+        if (segments == null) {
+            return Collections.emptyList();
+        }
+        List<AudioSegment> merged = new ArrayList<>();
+        for (AudioSegment next : segments) {
+            AudioSegment previous = findAudioSegment(next.getSegmentNo());
+            if (previous != null && previous.isUploaded()) {
+                merged.add(next.withUploadStatus(previous.getUploadStatus(), previous.getDownloadUrl()));
+            } else {
+                merged.add(next);
+            }
+        }
+        return merged;
+    }
+
+    private AudioSegment findAudioSegment(int segmentNo) {
+        for (AudioSegment segment : audioSegments) {
+            if (segment.getSegmentNo() == segmentNo) {
+                return segment;
+            }
+        }
+        return null;
+    }
+
+    private static List<AudioSegment> mergeAudioSegmentsByNumber(
+            List<AudioSegment> first,
+            List<AudioSegment> second) {
+        List<AudioSegment> merged = new ArrayList<>();
+        appendMissingAudioSegments(merged, first);
+        appendMissingAudioSegments(merged, second);
+        Collections.sort(merged, (left, right) -> left.getSegmentNo() - right.getSegmentNo());
+        return merged;
+    }
+
+    private static void appendMissingAudioSegments(List<AudioSegment> target, List<AudioSegment> source) {
+        if (source == null) {
+            return;
+        }
+        for (AudioSegment segment : source) {
+            if (findAudioSegment(target, segment.getSegmentNo()) == null) {
+                target.add(segment);
+            } else if (segment.isUploaded()) {
+                replaceAudioSegment(target, segment);
+            }
+        }
+    }
+
+    private static AudioSegment findAudioSegment(List<AudioSegment> segments, int segmentNo) {
+        for (AudioSegment segment : segments) {
+            if (segment.getSegmentNo() == segmentNo) {
+                return segment;
+            }
+        }
+        return null;
+    }
+
+    private static void replaceAudioSegment(List<AudioSegment> segments, AudioSegment replacement) {
+        for (int i = 0; i < segments.size(); i++) {
+            if (segments.get(i).getSegmentNo() == replacement.getSegmentNo()) {
+                segments.set(i, replacement);
+                return;
+            }
+        }
     }
 
     private static String safe(String value) {

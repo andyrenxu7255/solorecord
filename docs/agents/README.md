@@ -18,12 +18,13 @@ SoloRecord 已具备：
 
 - Android 三页签 App。
 - 登录门禁。
-- 滚动分段录音。
+- AudioRecord 连续 WAV 滚动分段录音。
+- 相邻录音分段约 2 秒重叠，分段时长由服务器配置，默认约 5 分钟。
 - 本地播放。
 - 服务端会议、音频、转写、纪要、待办。
 - Web 管理端。
 - APK 上传和下载。
-- Android 分段级断点续传：本地分段落盘，multipart 文件流上传，服务端确认后本地账本标记已上传，弱网重试只补传未完成分段。
+- Android 分段级断点续传：本地分段落盘，multipart 文件流上传，服务端确认后立即执行分段 ASR，并把阶段转写写回同一场会议；本地账本标记已上传，弱网重试只补传未完成分段。
 - LDAP 用户名密码登录；SSO 浏览器登录回跳到 Android：`solorecord://auth/callback` 仍保留。
 - APK 重装后从 `/api/mobile/sync` 恢复记录，并可按权限下载服务器音频分段。
 - 本地 ASR 命令适配器。
@@ -44,6 +45,7 @@ server/solorecord_server/repository.py
 server/solorecord_server/search_index.py
 server/static/app.js
 server/static/index.html
+server/static/styles.css
 app/src/main/java/com/solorecord/MainActivity.java
 app/src/main/java/com/solorecord/net/RollingAudioRecorder.java
 server/tests/test_api.py
@@ -265,6 +267,7 @@ GET /downloads/android/0.7.0/app.apk
 - 管理员可配置 ASR/LLM/Hermes/ES，密钥不回显。
 - APK 已发布，下载链接可用。
 - Android 登录后可录音、结束、同步。
+- 录音分段默认约 5 分钟，带约 2 秒重叠；在线时每段完成后上传并返回阶段转写。
 - 服务器生成转写、纪要和待办；mock 模式下也必须有占位结果。
 - 说话人改名后，同 speaker id 全部替换。
 - APK 重装后可从 `/api/mobile/sync` 恢复服务器记录。
@@ -279,7 +282,7 @@ GET /downloads/android/0.7.0/app.apk
 2. Web 可开但登录失败：查 `SOLO_BASE_URL`、SSO redirect URI、反代 HTTPS Host、群晖 client secret。
 3. Android 回跳失败：查 manifest scheme、`redirect_after=solorecord://auth/callback`、浏览器是否拦截。
 4. 上传失败：查 token、`SOLO_BASE_URL`、反代 body size、`var/storage` 权限。
-5. 弱网重复同步：确认 Android 本地 `audioSegments[].uploadStatus` 已持久化，`/segments` 返回 200 后下一次不应重复上传该分段；重复 `/finish` 应复用已有 job。
+5. 弱网重复同步：确认 Android 本地 `audioSegments[].uploadStatus` 已持久化，`/segments` 返回 200 后下一次不应重复上传该分段；重复上传同一分段只替换该分段的 `source_segment_no` 转写；重复 `/finish` 应复用已有 job。
 6. 转写失败：查 ASR command 是否可执行、stdout 是否合法 JSON、远程 STT endpoint/model/key、上游 HTTP 错误、`processing_jobs.error_message`。
 7. 纪要失败：查 LLM endpoint/model/key；必要时回退 mock。
 8. APK 下载失败：查 `apk_releases`、`var/apk` 文件、反代下载路径。
@@ -429,6 +432,7 @@ server/solorecord_server/repository.py
 server/solorecord_server/search_index.py
 server/static/app.js
 server/static/index.html
+server/static/styles.css
 app/src/main/java/com/solorecord/MainActivity.java
 app/src/main/java/com/solorecord/net/RollingAudioRecorder.java
 server/tests/test_api.py
@@ -651,6 +655,7 @@ GET /downloads/android/0.7.0/app.apk
 - Admin can configure ASR/LLM/Hermes/ES; secrets are masked.
 - APK is published and downloadable.
 - Android can sign in, record, stop, and sync.
+- Recording segments default to about five minutes with about two seconds of overlap; when online, each completed segment uploads and returns a partial transcript.
 - Server generates transcript, summary, and action items; mock mode must still produce placeholder output.
 - Speaker rename updates all rows with the same speaker id.
 - APK reinstall recovery works through `/api/mobile/sync`.
@@ -665,7 +670,7 @@ GET /downloads/android/0.7.0/app.apk
 2. Web opens but login fails: check `SOLO_BASE_URL`, SSO redirect URI, HTTPS Host forwarding, and Synology client secret.
 3. Android callback fails: check manifest scheme, `redirect_after=solorecord://auth/callback`, and browser interception.
 4. Upload fails: check token, `SOLO_BASE_URL`, reverse proxy body size, and `var/storage` permissions.
-5. Weak-network retry duplicates work: confirm Android persisted `audioSegments[].uploadStatus`; after `/segments` returns 200 the next sync should skip that segment. Repeated `/finish` should reuse the existing job.
+5. Weak-network retry duplicates work: confirm Android persisted `audioSegments[].uploadStatus`; after `/segments` returns 200 the next sync should skip that segment. Re-uploading the same segment should replace only transcript rows with that `source_segment_no`. Repeated `/finish` should reuse the existing job.
 6. ASR fails: check ASR command execution, valid JSON stdout, remote STT endpoint/model/key, upstream HTTP errors, and `processing_jobs.error_message`.
 7. Summary fails: check LLM endpoint/model/key; fall back to mock if needed.
 8. APK download fails: check `apk_releases`, `var/apk` files, and reverse proxy download path.

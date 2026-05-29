@@ -140,6 +140,8 @@ function renderMeetingDetail(data, transcriptSegments) {
   const meeting = data.meeting;
   const jobs = data.jobs || [];
   const actions = data.actionItems || [];
+  const audioSegments = data.audioSegments || [];
+  const uploadedAudio = audioSegments.filter((segment) => segment.upload_status === "uploaded").length;
   $("#meetingDetail").innerHTML = `
     <div>
       <input id="detailTitle" class="input" value="${escapeAttr(meeting.title)}">
@@ -155,6 +157,12 @@ function renderMeetingDetail(data, transcriptSegments) {
         <span>状态：${statusLabel(meeting.status)}</span>
         <span>版本：${meeting.version}</span>
       </div>
+      <div class="progress-strip">
+        <span>录音分段：${audioSegments.length}</span>
+        <span>已上传：${uploadedAudio}</span>
+        <span>转写段落：${transcriptSegments.length}</span>
+        <span>总时长：${formatTime(meeting.duration_ms || 0)}</span>
+      </div>
       <div class="summary-box">
         <h3>会议纪要</h3>
         <textarea id="detailSummary" class="input" rows="5">${escapeHtml(meeting.summary || "")}</textarea>
@@ -162,6 +170,10 @@ function renderMeetingDetail(data, transcriptSegments) {
       <div class="actions-box">
         <h3>待办</h3>
         ${actions.length ? actions.map((item) => `<p>${escapeHtml(item.owner)}：${escapeHtml(item.task)} <span class="status-pill">${escapeHtml(item.status)}</span></p>`).join("") : "<p class='hint'>暂无待办</p>"}
+      </div>
+      <h3>录音分段</h3>
+      <div class="audio-list">
+        ${audioSegments.map(renderAudioSegment).join("") || "<p class='hint'>暂无音频</p>"}
       </div>
       <h3>转写时间线</h3>
       <div id="transcriptList" class="transcript-list">
@@ -183,10 +195,26 @@ function renderMeetingDetail(data, transcriptSegments) {
   });
 }
 
+function renderAudioSegment(segment) {
+  return `
+    <div class="audio-segment">
+      <div>
+        <b>分段 ${segment.segment_no}</b>
+        <span>${formatTime(segment.start_ms || 0)} - ${formatTime(segment.end_ms || 0)}</span>
+      </div>
+      <span class="status-pill">${segment.upload_status === "uploaded" ? "已上传" : "待上传"}</span>
+    </div>
+  `;
+}
+
 function renderTranscriptRow(segment) {
+  const source = segment.source_segment_no ? `分段 ${segment.source_segment_no}` : "最终整理";
   return `
     <div class="transcript-row" data-id="${segment.id || ""}">
-      <div>${formatTime(segment.start_ms)}</div>
+      <div>
+        <b>${formatTime(segment.start_ms)}</b>
+        <span class="hint">${source}</span>
+      </div>
       <div>
         <input class="speaker-name" data-speaker="${escapeAttr(segment.speaker_id)}" value="${escapeAttr(segment.display_name || segment.speaker_id)}">
         <input class="speaker-id" type="hidden" value="${escapeAttr(segment.speaker_id)}">
@@ -400,6 +428,7 @@ function statusLabel(status) {
     local_recorded: "待上传",
     uploading: "上传中",
     uploaded: "已上传",
+    partial_ready: "分段转写中",
     queued: "排队中",
     preprocessing: "预处理",
     diarizing: "分离说话人",

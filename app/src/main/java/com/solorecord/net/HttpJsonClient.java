@@ -15,7 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 public final class HttpJsonClient {
-    private static final int TIMEOUT_MILLIS = 60_000;
+    private static final int TIMEOUT_MILLIS = 10 * 60_000;
     private static final int STREAM_BUFFER_BYTES = 64 * 1024;
 
     public JSONObject postJson(String endpoint, String apiKey, JSONObject body) throws IOException {

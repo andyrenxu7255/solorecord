@@ -318,6 +318,44 @@ button, input, textarea, select {
   background: #fbfcfe;
 }
 
+.progress-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.progress-strip span,
+.audio-segment {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fbfcfe;
+  padding: 10px 12px;
+}
+
+.audio-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.audio-segment {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.audio-segment div {
+  display: grid;
+  gap: 4px;
+}
+
+.audio-segment span:not(.status-pill) {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .job-item {
   border-bottom: 1px solid var(--line);
   padding: 10px 0;
@@ -414,5 +452,9 @@ button, input, textarea, select {
 
   .transcript-row {
     grid-template-columns: 1fr;
+  }
+
+  .progress-strip {
+    grid-template-columns: 1fr 1fr;
   }
 }

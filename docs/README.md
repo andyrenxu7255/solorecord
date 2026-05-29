@@ -20,6 +20,7 @@
 | [synology-bailian-architecture.md](synology-bailian-architecture.md) | 群晖 SSO、百炼/Qwen ASR、安全架构 |
 | [open-source-research.md](open-source-research.md) | 开源组件调研和许可证判断 |
 | [security-audit.md](security-audit.md) | 安全审计、已知风险和验证记录 |
+| [ux-review-v0.7.md](ux-review-v0.7.md) | 使用者视角体验审计和后续优化建议 |
 | [integration-contract.md](integration-contract.md) | 早期接口契约参考 |
 | [distribution-mode.md](distribution-mode.md) | 内部分发模式参考 |
 | [roadmap.md](roadmap.md) | 后续增强建议 |
@@ -69,6 +70,7 @@
 | [synology-bailian-architecture.md](synology-bailian-architecture.md) | Synology SSO, Bailian/Qwen ASR, security architecture |
 | [open-source-research.md](open-source-research.md) | Open-source component research and license guidance |
 | [security-audit.md](security-audit.md) | Security review, known risks, verification records |
+| [ux-review-v0.7.md](ux-review-v0.7.md) | User-perspective UX review and follow-up improvement ideas |
 | [integration-contract.md](integration-contract.md) | Early integration contract reference |
 | [distribution-mode.md](distribution-mode.md) | Internal distribution mode reference |
 | [roadmap.md](roadmap.md) | Follow-up enhancement ideas |

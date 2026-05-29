@@ -5,6 +5,7 @@ import android.content.SharedPreferences;
 
 public final class SessionStore {
     private static final String PREFS = "solo_session";
+    private static final int DEFAULT_AUDIO_SEGMENT_MINUTES = 5;
 
     private final SharedPreferences preferences;
 
@@ -18,6 +19,15 @@ public final class SessionStore {
 
     public void setServerEndpoint(String endpoint) {
         preferences.edit().putString("serverEndpoint", endpoint == null ? "" : endpoint.trim()).apply();
+    }
+
+    public int getAudioSegmentMinutes() {
+        return preferences.getInt("audioSegmentMinutes", DEFAULT_AUDIO_SEGMENT_MINUTES);
+    }
+
+    public void setAudioSegmentMinutes(int minutes) {
+        int safeMinutes = Math.max(1, Math.min(30, minutes));
+        preferences.edit().putInt("audioSegmentMinutes", safeMinutes).apply();
     }
 
     public String getToken() {

@@ -263,6 +263,9 @@ def test_full_user_story_permissions_sync_export_and_release(tmp_path: Path) -> 
     assert client.get("/api/web/meetings").status_code == 401
     assert client.get("/api/admin/providers", headers=user_headers).status_code == 403
     assert client.get("/api/external/meetings", headers={"Authorization": "Bearer wrong-token"}).status_code == 401
+    mobile_config = client.get("/api/mobile/config")
+    assert mobile_config.status_code == 200
+    assert mobile_config.json()["segmentMinutes"] == 5
     sso_app = client.get(
         "/api/auth/sso/start?redirect_after=solorecord://auth/callback",
         follow_redirects=False,
@@ -296,12 +299,36 @@ def test_full_user_story_permissions_sync_export_and_release(tmp_path: Path) -> 
         files={"file": ("part_0001.m4a", b"fake audio data", "audio/mp4")},
     )
     assert upload.status_code == 200
-    assert upload.json()["sizeBytes"] > 0
+    upload_data = upload.json()
+    assert upload_data["sizeBytes"] > 0
+    assert upload_data["partial"]["status"] == "succeeded"
+    partial_transcript = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers)
+    assert partial_transcript.status_code == 200
+    partial_segments = partial_transcript.json()["segments"]
+    assert len(partial_segments) == 1
+    assert partial_segments[0]["start_ms"] == 0
+    partial_detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers)
+    assert partial_detail.json()["meeting"]["status"] == "partial_ready"
+
+    second_audio = b"fake audio data second segment"
+    upload_second = client.post(
+        f"/api/mobile/meetings/{meeting_id}/segments",
+        headers=headers,
+        data={"segment_no": "2", "start_ms": "118000", "end_ms": "240000", "duration_ms": "122000"},
+        files={"file": ("part_0002.wav", second_audio, "audio/wav")},
+    )
+    assert upload_second.status_code == 200
+    assert upload_second.json()["partial"]["status"] == "succeeded"
+    partial_after_second = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers).json()
+    assert [item["start_ms"] for item in partial_after_second["segments"]] == [0, 118000]
     audio_denied = client.get(f"/api/mobile/meetings/{meeting_id}/segments/1/audio", headers=user_headers)
     assert audio_denied.status_code == 404
     audio_download = client.get(f"/api/mobile/meetings/{meeting_id}/segments/1/audio", headers=headers)
     assert audio_download.status_code == 200
     assert audio_download.content == b"fake audio data"
+    audio_second = client.get(f"/api/mobile/meetings/{meeting_id}/segments/2/audio", headers=headers)
+    assert audio_second.status_code == 200
+    assert audio_second.content == second_audio
 
     finish = client.post(f"/api/mobile/meetings/{meeting_id}/finish", headers=headers)
     assert finish.status_code == 200
@@ -316,8 +343,9 @@ def test_full_user_story_permissions_sync_export_and_release(tmp_path: Path) -> 
     transcript = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers)
     assert transcript.status_code == 200
     segments = transcript.json()["segments"]
-    assert segments
+    assert len(segments) == 2
     assert segments[0]["speaker_id"] == "SPEAKER_01"
+    assert segments[1]["start_ms"] == 118000
 
     rename = client.post(
         f"/api/web/meetings/{meeting_id}/speakers/rename",
@@ -366,6 +394,8 @@ def test_full_user_story_permissions_sync_export_and_release(tmp_path: Path) -> 
     assert "secret-llm-key" not in str(provider_config)
     assert provider_config["hermes_webhook_token_set"] is True
     assert "secret-hermes-token" not in str(provider_config)
+    mobile_config_after_save = client.get("/api/mobile/config")
+    assert mobile_config_after_save.json()["segmentMinutes"] == 5
 
     export = client.post(f"/api/web/meetings/{meeting_id}/exports?export_format=markdown", headers=headers)
     assert export.status_code == 200

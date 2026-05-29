@@ -45,7 +45,11 @@ SoloRecord 是公司内部会议记录系统。你可以用手机录音，系统
 2. 第一次使用时允许麦克风权限。
 3. 会议结束后点击“结束录音”。
 
-录音时系统会滚动保存音频。即使会议较长，也会按小段保存，减少意外丢失风险。
+录音时系统会滚动保存音频。即使会议较长，也会按小段保存，减少意外丢失风险。默认约 5 分钟一个分段，具体时长由服务器配置；相邻分段会保留约 2 秒重叠，减少分段边界丢词。
+
+录音中页面会显示音频分段数、已上传数、待上传数和正在写入的当前段。当前段也会定期写入本地索引，WAV 文件头会边录边刷新；如果系统异常关闭，已写入的部分更容易被本机保留下来。下次打开 App 时，异常中断的当前段会转成待上传分段。正常结束录音时，最后一段会先保存到本机，再提交服务器处理。
+
+如果录音时网络可用，每个分段完成后会自动上传到服务器，并返回该分段的阶段转写。你看到的仍然是同一条会议记录，转写内容会持续补充；点击结束录音后，系统再整理整场会议的完整纪要和待办。
 
 如果关闭 App，录音会停止，并尽量保存当前音频段。
 
@@ -147,6 +151,7 @@ SoloRecord 是公司内部会议记录系统。你可以用手机录音，系统
 | --- | --- |
 | 本地已保存 | 手机已经保存录音，还没完全处理 |
 | 已上传 | 音频已到服务器 |
+| 分段转写中 | 已有部分分段完成转写，完整会议仍在补充 |
 | 排队中 | 等待服务器处理 |
 | 预处理 | 服务器正在准备音频 |
 | 转写中 | 正在生成文字 |
@@ -248,7 +253,11 @@ Open the Recording tab:
 2. Allow microphone permission on first use.
 3. Tap End Recording when the meeting is over.
 
-The app saves audio in rolling segments while recording. Long meetings are split into smaller files to reduce loss risk. If the app is closed, recording stops and the current segment is preserved as far as possible.
+The app saves audio in rolling segments while recording. The default is about five minutes per segment, controlled by the server. Adjacent segments keep about two seconds of overlap to reduce boundary word loss. Long meetings are split into smaller files to reduce loss risk. If the app is closed, recording stops and the current segment is preserved as far as possible.
+
+During recording, the screen shows segment count, uploaded count, pending count, and the segment currently being written. The current segment is checkpointed into the local index, and the WAV header is refreshed while recording. If the system closes the app unexpectedly, already written audio is easier to recover. On next launch, the interrupted open segment becomes a pending upload segment. On normal stop, the last segment is saved locally before server processing starts.
+
+When the network is available, each completed segment is uploaded and transcribed into the same meeting record. The transcript keeps growing during the meeting. After you stop recording, the server produces the full meeting summary and action items.
 
 ### Bad Network
 
@@ -339,6 +348,7 @@ Admins can also configure ASR/LLM providers, view jobs, retry failed jobs, and u
 | --- | --- |
 | Saved locally | Audio is saved on the phone but not fully processed |
 | Uploaded | Audio reached the server |
+| Partial transcript | Some segments already have transcript text; the full meeting is still being completed |
 | Queued | Waiting for server processing |
 | Preprocessing | Server is preparing audio |
 | Transcribing | Transcript is being generated |

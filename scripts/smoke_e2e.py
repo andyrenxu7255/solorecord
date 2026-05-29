@@ -53,11 +53,39 @@ def main() -> int:
         headers=headers,
     )
     expect(upload, 200, "upload audio multipart")
-    assert upload.json()["sha256"] == hashlib.sha256(audio_bytes).hexdigest()
+    upload_payload = upload.json()
+    assert upload_payload["sha256"] == hashlib.sha256(audio_bytes).hexdigest()
+    assert upload_payload["partial"]["status"] == "succeeded"
+
+    partial = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers)
+    expect(partial, 200, "partial transcript after first segment")
+    assert len(partial.json()["segments"]) == 1, "expected first partial transcript"
+
+    second_audio = b"solo smoke audio second segment"
+    upload_second = client.post(
+        f"/api/mobile/meetings/{meeting_id}/segments",
+        data={
+            "segment_no": "2",
+            "start_ms": 118000,
+            "end_ms": 240000,
+            "duration_ms": 122000,
+        },
+        files={"file": ("part_0002.wav", second_audio, "audio/wav")},
+        headers=headers,
+    )
+    expect(upload_second, 200, "upload second overlapped segment")
+    assert upload_second.json()["partial"]["status"] == "succeeded"
+    partial_second = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers)
+    expect(partial_second, 200, "partial transcript after second segment")
+    starts = [item["start_ms"] for item in partial_second.json()["segments"]]
+    assert starts == [0, 118000], f"expected overlapped segment starts, got {starts}"
 
     audio = client.get(f"/api/mobile/meetings/{meeting_id}/segments/1/audio", headers=headers)
     expect(audio, 200, "audio download")
     assert audio.content == audio_bytes
+    audio_second = client.get(f"/api/mobile/meetings/{meeting_id}/segments/2/audio", headers=headers)
+    expect(audio_second, 200, "second audio download")
+    assert audio_second.content == second_audio
 
     finish = client.post(f"/api/mobile/meetings/{meeting_id}/finish", headers=headers)
     expect(finish, 200, "finish and process")
@@ -70,7 +98,7 @@ def main() -> int:
     transcript = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers)
     expect(transcript, 200, "transcript")
     segments = transcript.json()["segments"]
-    assert segments, "expected transcript segments"
+    assert len(segments) == 2, "expected both transcript segments"
     speaker_id = segments[0]["speaker_id"]
 
     rename = client.post(

@@ -36,6 +36,64 @@ def _current_asr_provider(default: str) -> str:
     return row["value"] if row else default
 
 
+def process_uploaded_segment(meeting_id: str, segment_no: int) -> dict:
+    settings = get_settings()
+    provider = _current_asr_provider(settings.asr_provider)
+    job_id = new_id("job")
+    with get_db() as db:
+        db.execute(
+            """
+            INSERT INTO processing_jobs
+            (id, meeting_id, type, status, current_stage, progress, asr_provider, created_at, updated_at)
+            VALUES (?, ?, 'segment_transcribe', 'running', 'transcribing', 20, ?, ?, ?)
+            """,
+            (job_id, meeting_id, provider, now_iso(), now_iso()),
+        )
+        audio_row = db.execute(
+            "SELECT * FROM audio_segments WHERE meeting_id = ? AND segment_no = ?",
+            (meeting_id, segment_no),
+        ).fetchone()
+    if not audio_row:
+        return {"jobId": job_id, "status": "failed", "segments": []}
+    try:
+        segments = _transcribe_rows(meeting_id, [audio_row], offset_single=True)
+        _replace_transcript_for_segment(meeting_id, segment_no, segments)
+        with get_db() as db:
+            db.execute(
+                """
+                UPDATE meetings
+                SET status='partial_ready', updated_at=?, version=version+1
+                WHERE id=? AND status NOT IN ('ready', 'failed')
+                """,
+                (now_iso(), meeting_id),
+            )
+            db.execute(
+                """
+                UPDATE processing_jobs
+                SET status='succeeded', current_stage='partial_ready', progress=100, finished_at=?, updated_at=?
+                WHERE id=?
+                """,
+                (now_iso(), now_iso(), job_id),
+            )
+        try:
+            index_meeting(meeting_id)
+        except Exception:
+            pass
+        return {"jobId": job_id, "status": "succeeded", "segments": segments}
+    except Exception as exc:
+        with get_db() as db:
+            db.execute(
+                """
+                UPDATE processing_jobs
+                SET status='failed', current_stage='failed', error_code='SEGMENT_PROCESSING_FAILED',
+                    error_message=?, finished_at=?, updated_at=?
+                WHERE id=?
+                """,
+                (str(exc), now_iso(), now_iso(), job_id),
+            )
+        return {"jobId": job_id, "status": "failed", "segments": [], "error": str(exc)}
+
+
 def process_transcription_job(job_id: str) -> None:
     with get_db() as db:
         job = db.execute("SELECT * FROM processing_jobs WHERE id = ?", (job_id,)).fetchone()
@@ -56,8 +114,9 @@ def process_transcription_job(job_id: str) -> None:
         )
 
     try:
-        segments = _transcribe(meeting_id)
-        _replace_transcript(meeting_id, segments)
+        segments, reused_partial = _transcribe_or_reuse_partial(meeting_id)
+        if not reused_partial:
+            _replace_transcript(meeting_id, segments)
         summary, role_notes, actions = _summarize(segments)
         with get_db() as db:
             db.execute(
@@ -146,10 +205,6 @@ def process_transcription_job(job_id: str) -> None:
 
 
 def _transcribe(meeting_id: str) -> list[dict]:
-    settings = get_settings()
-    runtime = _runtime_options()
-    asr_provider = runtime.get("asr_provider", settings.asr_provider)
-    asr_command = runtime.get("asr_command", settings.asr_command)
     with get_db() as db:
         audio_rows = db.execute(
             "SELECT * FROM audio_segments WHERE meeting_id = ? ORDER BY segment_no",
@@ -167,42 +222,108 @@ def _transcribe(meeting_id: str) -> list[dict]:
                 "flags": ["missing_audio"],
             }
         ]
+    return _transcribe_rows(meeting_id, audio_rows, offset_single=False)
 
+
+def _transcribe_or_reuse_partial(meeting_id: str) -> tuple[list[dict], bool]:
+    with get_db() as db:
+        audio_count = db.execute(
+            "SELECT COUNT(*) AS count FROM audio_segments WHERE meeting_id = ?",
+            (meeting_id,),
+        ).fetchone()["count"]
+        covered_segments = db.execute(
+            """
+            SELECT COUNT(DISTINCT source_segment_no) AS count
+            FROM transcript_segments
+            WHERE meeting_id = ? AND source_segment_no IS NOT NULL
+            """,
+            (meeting_id,),
+        ).fetchone()["count"]
+        rows = db.execute(
+            """
+            SELECT * FROM transcript_segments
+            WHERE meeting_id = ? AND source_segment_no IS NOT NULL
+            ORDER BY start_ms, source_segment_no
+            """,
+            (meeting_id,),
+        ).fetchall()
+    if audio_count and covered_segments >= audio_count:
+        return [_transcript_row_to_segment(row) for row in rows], True
+    return _transcribe(meeting_id), False
+
+
+def _transcribe_rows(meeting_id: str, audio_rows: list, offset_single: bool) -> list[dict]:
+    settings = get_settings()
+    runtime = _runtime_options()
+    asr_provider = runtime.get("asr_provider", settings.asr_provider)
+    asr_command = runtime.get("asr_command", settings.asr_command)
     if asr_provider == "command" and asr_command:
-        return transcribe_with_command(
+        segments = transcribe_with_command(
             asr_command,
             [row["storage_path"] for row in audio_rows],
             meeting_id,
             runtime,
         )
+        if offset_single and len(audio_rows) == 1:
+            return _offset_segments(segments, int(audio_rows[0]["start_ms"] or 0))
+        return segments
     if asr_provider in {"openai-compatible", "remote-stt", "funasr"}:
-        return transcribe_with_openai_compatible(
-            runtime.get("asr_endpoint", settings.asr_endpoint),
-            runtime.get("asr_api_key", settings.asr_api_key),
-            runtime.get("asr_model", settings.asr_model),
-            [row["storage_path"] for row in audio_rows],
-        )
+        segments: list[dict] = []
+        for row in audio_rows:
+            row_segments = transcribe_with_openai_compatible(
+                runtime.get("asr_endpoint", settings.asr_endpoint),
+                runtime.get("asr_api_key", settings.asr_api_key),
+                runtime.get("asr_model", settings.asr_model),
+                [row["storage_path"]],
+            )
+            segments.extend(_offset_segments(row_segments, int(row["start_ms"] or 0)))
+        return segments
 
     result: list[dict] = []
-    cursor = 0
     speakers = [("SPEAKER_01", "发言人 1"), ("SPEAKER_02", "发言人 2")]
     for index, row in enumerate(audio_rows):
         duration = int(row["duration_ms"] or 180000)
         speaker_id, display_name = speakers[index % len(speakers)]
         file_name = Path(row["file_name"]).name
+        start_ms = int(row["start_ms"] or 0)
         result.append(
             {
                 "speaker_id": speaker_id,
                 "display_name": display_name,
-                "start_ms": cursor,
-                "end_ms": cursor + duration,
+                "start_ms": start_ms,
+                "end_ms": start_ms + duration,
                 "text": f"已接收音频分段 {row['segment_no']}（{file_name}）。本地 ASR 未配置时先生成占位转写，部署模型后可重新转写。",
                 "confidence": 0.55,
                 "flags": ["mock_asr"],
             }
         )
-        cursor += duration
     return result
+
+
+def _transcript_row_to_segment(row) -> dict:
+    return {
+        "speaker_id": row["speaker_id"],
+        "display_name": row["display_name"],
+        "start_ms": int(row["start_ms"]),
+        "end_ms": int(row["end_ms"]),
+        "text": row["text"],
+        "confidence": row["confidence"],
+        "flags": [],
+    }
+
+
+def _offset_segments(segments: list[dict], offset_ms: int) -> list[dict]:
+    if offset_ms <= 0:
+        return segments
+    shifted: list[dict] = []
+    for segment in segments:
+        item = dict(segment)
+        original_start = int(segment.get("start_ms", 0))
+        original_end = int(segment.get("end_ms", original_start))
+        item["start_ms"] = original_start + offset_ms
+        item["end_ms"] = original_end + offset_ms
+        shifted.append(item)
+    return shifted
 
 
 def _runtime_options() -> dict:
@@ -225,40 +346,66 @@ def _runtime_options() -> dict:
 def _replace_transcript(meeting_id: str, segments: list[dict]) -> None:
     with get_db() as db:
         db.execute("DELETE FROM transcript_segments WHERE meeting_id = ?", (meeting_id,))
-        seen_speakers: dict[str, str] = {}
-        for segment in segments:
-            speaker_id = segment["speaker_id"]
-            display_name = segment.get("display_name") or speaker_id
-            seen_speakers[speaker_id] = display_name
-            db.execute(
-                """
-                INSERT INTO transcript_segments
-                (id, meeting_id, version, speaker_id, display_name, start_ms, end_ms, text, confidence, flags, created_at)
-                VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    new_id("seg"),
-                    meeting_id,
-                    speaker_id,
-                    display_name,
-                    int(segment["start_ms"]),
-                    int(segment["end_ms"]),
-                    segment["text"],
-                    segment.get("confidence"),
-                    "[]",
-                    now_iso(),
-                ),
-            )
-        for speaker_id, display_name in seen_speakers.items():
-            db.execute(
-                """
-                INSERT INTO speakers (id, meeting_id, speaker_id, display_name, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(meeting_id, speaker_id)
-                DO UPDATE SET display_name=excluded.display_name, updated_at=excluded.updated_at
-                """,
-                (new_id("spk"), meeting_id, speaker_id, display_name, now_iso(), now_iso()),
-            )
+        _insert_transcript_segments(db, meeting_id, segments, 1, None)
+
+
+def _replace_transcript_for_segment(meeting_id: str, segment_no: int, segments: list[dict]) -> None:
+    with get_db() as db:
+        meeting = db.execute("SELECT version FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
+        version = int(meeting["version"] if meeting else 1) + 1
+        db.execute(
+            """
+            DELETE FROM transcript_segments
+            WHERE meeting_id = ? AND source_segment_no = ?
+            """,
+            (meeting_id, segment_no),
+        )
+        _insert_transcript_segments(db, meeting_id, segments, version, segment_no)
+
+
+def _insert_transcript_segments(
+    db,
+    meeting_id: str,
+    segments: list[dict],
+    version: int,
+    source_segment_no: int | None,
+) -> None:
+    seen_speakers: dict[str, str] = {}
+    for segment in segments:
+        speaker_id = segment["speaker_id"]
+        display_name = segment.get("display_name") or speaker_id
+        seen_speakers[speaker_id] = display_name
+        db.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_segment_no, speaker_id, display_name, start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                new_id("seg"),
+                meeting_id,
+                version,
+                source_segment_no,
+                speaker_id,
+                display_name,
+                int(segment["start_ms"]),
+                int(segment["end_ms"]),
+                segment["text"],
+                segment.get("confidence"),
+                "[]",
+                now_iso(),
+            ),
+        )
+    for speaker_id, display_name in seen_speakers.items():
+        db.execute(
+            """
+            INSERT INTO speakers (id, meeting_id, speaker_id, display_name, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(meeting_id, speaker_id)
+            DO UPDATE SET display_name=excluded.display_name, updated_at=excluded.updated_at
+            """,
+            (new_id("spk"), meeting_id, speaker_id, display_name, now_iso(), now_iso()),
+        )
 
 
 def _summarize(segments: list[dict]) -> tuple[str, str, list[dict]]:

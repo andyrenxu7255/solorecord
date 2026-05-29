@@ -94,6 +94,25 @@ public final class MeetingStore {
         return null;
     }
 
+    public MeetingRecord findRemoteSuccessor(MeetingRecord localRecord) {
+        if (localRecord == null) {
+            return null;
+        }
+        for (MeetingRecord record : loadAll()) {
+            if (!record.getId().startsWith("mtg_")) {
+                continue;
+            }
+            if (!record.getTitle().equals(localRecord.getTitle())) {
+                continue;
+            }
+            long gap = Math.abs(record.getCreatedAtMillis() - localRecord.getCreatedAtMillis());
+            if (gap <= 24L * 60L * 60L * 1000L) {
+                return record;
+            }
+        }
+        return null;
+    }
+
     public void saveMetadataOnly(MeetingRecord record) throws IOException {
         upsert(new MeetingRecord(
                 record.getId(),

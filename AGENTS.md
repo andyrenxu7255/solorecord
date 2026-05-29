@@ -198,7 +198,7 @@ GET  /api/auth/sso/callback
 - 开发：`docs/human-dev/README.md`
 - 用户：`docs/user/README.md`
 - 智能体：`docs/agents/README.md`、`llms.txt`
-- 参考：`docs/meeting-app-prd-v2.md`、`docs/deployment.md`、`docs/data-storage-and-es.md`、`docs/local-asr-pipeline.md`、`docs/synology-bailian-architecture.md`、`docs/open-source-research.md`、`docs/security-audit.md`
+- 参考：`docs/meeting-app-prd-v2.md`、`docs/deployment.md`、`docs/data-storage-and-es.md`、`docs/local-asr-pipeline.md`、`docs/synology-bailian-architecture.md`、`docs/open-source-research.md`、`docs/security-audit.md`、`docs/ux-review-v0.7.md`
 
 ## English
 
@@ -452,3 +452,4 @@ Reference:
 - `docs/synology-bailian-architecture.md`
 - `docs/open-source-research.md`
 - `docs/security-audit.md`
+- `docs/ux-review-v0.7.md`

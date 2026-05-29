@@ -15,7 +15,9 @@ APK 默认不承担重 VAD、降噪、说话人分离或 ASR。手机硬件和 A
 ### APK
 
 - 用前台服务录音。
-- 将音频滚动分段写入本地存储。
+- 使用连续采集写 WAV 滚动分段到本地存储。
+- 相邻录音分段保留约 2 秒重叠，防止分段边界丢词。
+- 当前写入段定期保存到本地索引，WAV 头部边录边刷新；异常关闭后下次启动转为待上传分段。
 - 用户停止或关闭 App 时安全停止。
 - 用同一个 meeting id 聚合一次开始/结束周期内的所有分段。
 - 网络稳定后上传缺失分段；已被服务端确认的分段不重复上传。
@@ -38,7 +40,7 @@ APK 默认不承担重 VAD、降噪、说话人分离或 ASR。手机硬件和 A
 
 ### A. 必做：分段与质量控制
 
-- APK 滚动分段，例如每 3 到 5 分钟一个文件。
+- APK 滚动分段，默认约 5 分钟一个文件，可由服务器配置。
 - 服务端 VAD 去掉静音和明显非人声片段。
 - 将音频统一到 ASR 模型要求的采样率、声道、采样精度和容器。
 - 做基础响度、爆音和裁剪检测。
@@ -47,16 +49,16 @@ APK 默认不承担重 VAD、降噪、说话人分离或 ASR。手机硬件和 A
 推荐默认：
 
 ```text
-APK 输入：m4a/aac，优先 mono，16 kHz 或 48 kHz 均可
+APK 输入：wav/pcm，mono，16 kHz，分段间约 2 秒重叠
 ASR 标准输入：wav/pcm，mono，采样率按模型要求
-APK 滚动分段：3-5 分钟
+APK 滚动分段：默认约 5 分钟，可配置
 VAD speech chunk：10-30 秒，带少量重叠
 Overlap：300-800 ms，降低边界丢词
 ```
 
 APK 滚动分段是可靠性边界；VAD chunk 是 ASR 处理边界。两者相关，但不是同一概念。
 
-上传可靠性边界也是 APK 滚动分段。SoloRecord 当前实现的是分段级断点续传：一个分段上传成功后本地账本标记为 `uploaded`，弱网重试时跳过；如果单个分段上传中途断开，则重新上传该分段。只要保持 3 到 5 分钟分段，重传成本可控，且避免了手机端维护复杂字节 offset 状态。
+上传可靠性边界也是 APK 滚动分段。SoloRecord 当前实现的是分段级断点续传：一个分段上传成功后，本地账本标记为 `uploaded`，服务端立即对该段执行 ASR 并把阶段转写写入同一场会议；弱网重试时跳过已上传分段。如果单个分段上传中途断开，则重新上传该分段。只要保持几分钟级分段，重传成本可控，且避免了手机端维护复杂字节 offset 状态。
 
 ### B. 常做：轻量降噪/去混响
 
@@ -119,7 +121,9 @@ license. See `docs/open-source-research.md` for the open-source comparison.
 ### APK
 
 - Records audio in a foreground service.
-- Writes rolling segments to local storage.
+- Writes continuous WAV rolling segments to local storage.
+- Keeps about two seconds of overlap between adjacent recording segments to avoid boundary word loss.
+- Periodically checkpoints the open segment into the local index and refreshes the WAV header during recording; next launch converts interrupted open segments into pending uploads.
 - Stops safely on user stop or app close.
 - Keeps a meeting id that groups all segments from one start/end cycle.
 - Uploads missing segments when the network is stable; server-confirmed segments are not sent again.
@@ -144,7 +148,7 @@ license. See `docs/open-source-research.md` for the open-source comparison.
 
 Required steps:
 
-- Rolling file segmentation from the APK, for example every 3 to 5 minutes.
+- Rolling file segmentation from the APK, defaulting to about five minutes and configurable from the server.
 - Server-side VAD to remove silence and obvious non-speech sections before ASR.
 - Audio format normalization to the ASR model's expected sample rate, channels,
   sample width, and container.
@@ -155,9 +159,9 @@ Required steps:
 Practical default:
 
 ```text
-Input from APK: m4a/aac, mono preferred, 16 kHz or 48 kHz acceptable
+Input from APK: wav/pcm, mono, 16 kHz, with about two seconds of overlap between adjacent segments
 Normalized ASR input: wav/pcm, mono, model-specific sample rate
-Rolling segment size: 3-5 minutes
+Rolling segment size: about five minutes by default, configurable
 VAD speech chunk: 10-30 seconds with small overlap
 Overlap: 300-800 ms to reduce boundary word loss
 ```
@@ -167,9 +171,10 @@ processing boundary. They are related but should not be the same concept.
 
 The upload reliability boundary is also the APK rolling segment. SoloRecord uses
 segment-level resume: once a segment is accepted by the server, the local ledger
-marks it `uploaded` and retries skip it. If the network drops midway through one
-segment, that segment is uploaded again. Keeping segments around three to five
-minutes bounds retry cost without adding byte-offset state on the phone.
+marks it `uploaded`, the server immediately transcribes that segment into the
+same meeting record, and retries skip it. If the network drops midway through
+one segment, that segment is uploaded again. Keeping segments at a few minutes
+bounds retry cost without adding byte-offset state on the phone.
 
 ### B. Common: light denoise and dereverb
 

@@ -81,7 +81,19 @@ public final class AudioSegment {
         return "uploaded".equals(uploadStatus);
     }
 
+    public boolean isOpenRecording() {
+        return "local_recording".equals(uploadStatus);
+    }
+
+    public boolean isReadyForUpload() {
+        return !isUploaded() && !isOpenRecording() && !path.isEmpty();
+    }
+
     public AudioSegment withUploadStatus(String status) {
         return new AudioSegment(segmentNo, path, startMillis, endMillis, status, downloadUrl);
+    }
+
+    public AudioSegment withUploadStatus(String status, String newDownloadUrl) {
+        return new AudioSegment(segmentNo, path, startMillis, endMillis, status, newDownloadUrl);
     }
 }

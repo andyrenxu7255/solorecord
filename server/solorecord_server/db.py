@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS transcript_segments (
     id TEXT PRIMARY KEY,
     meeting_id TEXT NOT NULL,
     version INTEGER NOT NULL DEFAULT 1,
+    source_segment_no INTEGER,
     speaker_id TEXT NOT NULL,
     display_name TEXT NOT NULL,
     start_ms INTEGER NOT NULL,
@@ -191,6 +192,11 @@ def init_db() -> None:
         columns = [row["name"] for row in connection.execute("PRAGMA table_info(app_config)").fetchall()]
         if "secret" not in columns:
             connection.execute("ALTER TABLE app_config ADD COLUMN secret INTEGER NOT NULL DEFAULT 0")
+        transcript_columns = [
+            row["name"] for row in connection.execute("PRAGMA table_info(transcript_segments)").fetchall()
+        ]
+        if "source_segment_no" not in transcript_columns:
+            connection.execute("ALTER TABLE transcript_segments ADD COLUMN source_segment_no INTEGER")
 
 
 @contextmanager

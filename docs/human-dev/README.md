@@ -43,7 +43,8 @@ Android：
 
 - 原生 Java
 - Gradle Android Plugin
-- MediaRecorder 录音
+- AudioRecord 连续采集，WAV 滚动分段落盘
+- 当前写入段定期写入本地索引，WAV 头部边录边刷新
 - Foreground Service 通知
 - SharedPreferences 保存会话信息
 - 本地 JSON 保存会议缓存
@@ -187,14 +188,22 @@ _assert_access(meeting_id, user, write=False)
 音频下载接口同样走 `_assert_access`。Android 重装后通过 `GET /api/mobile/sync`
 恢复会议列表，再按 `audioSegments[].download_url` 下载服务器音频分段。
 
-Android 上传采用分段级断点续传：
+Android 录音和上传采用连续录音、重叠分段、分段级断点续传：
 
+- 录音端使用 `AudioRecord` 连续采集 16 kHz mono PCM16，并写成 WAV。
+- 默认按服务器 `/api/mobile/config.segmentMinutes` 滚动分段，当前默认约 5 分钟。
+- 相邻分段保留约 2 秒音频重叠，降低切分边界丢词风险。
+- 当前写入中的分段会以 `local_recording` 状态定期写入本地 JSON 索引，上传逻辑会跳过该状态，等分段关闭后再补传；App 下次启动会把异常遗留的开放段转为待上传状态。
 - 录音分段先写入 App 私有目录。
 - 客户端创建远端 meeting 后立即把本地记录 id 替换为服务端 id。
 - 每个分段通过 multipart 文件流上传到 `/api/mobile/meetings/{meetingId}/segments`。
-- 服务端确认后，客户端马上将该分段 `uploadStatus` 写为 `uploaded`。
+- 服务端确认后会立即触发 `segment_transcribe` 分段转写，并把阶段结果写入同一场会议的 `transcript_segments`。
+- 客户端马上将该分段 `uploadStatus` 写为 `uploaded`，再刷新服务器会议内容。
 - 重试同步时跳过已上传分段，只上传本地账本中仍未完成的分段。
 - `/finish` 是可重试接口；已有 queued/running/succeeded job 时返回同一个 job id。
+- 如果所有音频分段已经在线分段转写完成，`/finish` 会复用现有阶段转写生成整场纪要和待办，避免重复消耗 ASR。
+
+`transcript_segments.source_segment_no` 用于分段重传时只替换该来源分段的阶段转写。不要用时间范围删除相邻段落，因为相邻分段存在约 2 秒重叠。
 
 `/segments-json` 仍保留作兼容和简单测试入口，Android 主流程不再使用它上传长会议音频。
 
@@ -627,12 +636,20 @@ The audio download endpoint uses the same authorization path. After APK reinstal
 
 Android upload uses segment-level resume:
 
+- Recording uses `AudioRecord` continuous 16 kHz mono PCM16 capture and writes WAV rolling segments.
+- Segment duration comes from `/api/mobile/config.segmentMinutes`; the default is about five minutes.
+- Adjacent segments keep about two seconds of overlap to reduce boundary word loss.
+- The open segment is periodically stored in the local JSON index with `local_recording`; upload skips that state until the segment is closed, and next launch converts interrupted open segments into pending uploads.
 - Recording segments are written to the app-private directory first.
 - After the remote meeting is created, the client persists the server meeting id locally.
 - Each segment is uploaded as a multipart file to `/api/mobile/meetings/{meetingId}/segments`.
-- After server acknowledgement, the client immediately stores `uploadStatus=uploaded` for that segment.
+- After server acknowledgement, the server runs a `segment_transcribe` job and writes partial transcript rows into the same meeting.
+- The client immediately stores `uploadStatus=uploaded` for that segment, then refreshes the server meeting content.
 - Retry sync skips uploaded segments and sends only pending local segments.
 - `/finish` is retry-safe and returns the existing queued/running/succeeded job id when one already exists.
+- If all uploaded audio segments already have online partial transcripts, `/finish` reuses those rows for the full summary and action items instead of spending ASR again.
+
+`transcript_segments.source_segment_no` lets retries replace only the transcript rows from that segment. Do not delete by timestamp range because adjacent segments intentionally overlap by about two seconds.
 
 `/segments-json` remains for compatibility and simple tests. The Android main flow no longer uses it for long meeting audio.
 

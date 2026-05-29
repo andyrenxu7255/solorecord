@@ -19,7 +19,7 @@ from .auth import (
 from .config import get_settings
 from .db import get_db, init_db
 from .exports import create_export
-from .processing import enqueue_transcription
+from .processing import enqueue_transcription, process_uploaded_segment
 from .repository import list_documents_for_external, list_documents_for_user, meeting_document
 from .schemas import (
     LdapLoginRequest,
@@ -125,10 +125,11 @@ def me(user: CurrentUser) -> dict:
 
 @app.get("/api/mobile/config")
 def mobile_config() -> dict:
+    values = _config_values()
     return {
         "appName": settings.app_name,
         "serverTime": now_iso(),
-        "segmentMinutes": settings.audio_segment_minutes,
+        "segmentMinutes": int(values.get("audio_segment_minutes", settings.audio_segment_minutes)),
         "features": {
             "speakerRename": True,
             "exports": ["markdown", "json", "srt", "docx", "pdf"],
@@ -268,8 +269,10 @@ async def upload_segment(
              duration_ms, start_ms, end_ms, upload_status, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'uploaded', ?)
             ON CONFLICT(meeting_id, segment_no)
-            DO UPDATE SET storage_path=excluded.storage_path, size_bytes=excluded.size_bytes,
-                sha256=excluded.sha256, duration_ms=excluded.duration_ms, end_ms=excluded.end_ms,
+            DO UPDATE SET file_name=excluded.file_name, storage_path=excluded.storage_path,
+                mime_type=excluded.mime_type, size_bytes=excluded.size_bytes,
+                sha256=excluded.sha256, duration_ms=excluded.duration_ms,
+                start_ms=excluded.start_ms, end_ms=excluded.end_ms,
                 upload_status='uploaded'
             """,
             (
@@ -292,7 +295,13 @@ async def upload_segment(
             (now_iso(), end_ms, meeting_id),
         )
     audit(user["id"], "audio.upload", "meeting", meeting_id, {"segment_no": segment_no})
-    return {"segmentNo": segment_no, "sha256": digest, "sizeBytes": path.stat().st_size}
+    partial = process_uploaded_segment(meeting_id, segment_no)
+    return {
+        "segmentNo": segment_no,
+        "sha256": digest,
+        "sizeBytes": path.stat().st_size,
+        "partial": partial,
+    }
 
 
 @app.post("/api/mobile/meetings/{meeting_id}/segments-json")
@@ -318,8 +327,10 @@ def upload_segment_json(meeting_id: str, request: SegmentJsonUpload, user: Curre
              duration_ms, start_ms, end_ms, upload_status, created_at)
             VALUES (?, ?, ?, ?, ?, 'audio/mp4', ?, ?, ?, ?, ?, 'uploaded', ?)
             ON CONFLICT(meeting_id, segment_no)
-            DO UPDATE SET storage_path=excluded.storage_path, size_bytes=excluded.size_bytes,
-                sha256=excluded.sha256, duration_ms=excluded.duration_ms, end_ms=excluded.end_ms,
+            DO UPDATE SET file_name=excluded.file_name, storage_path=excluded.storage_path,
+                mime_type=excluded.mime_type, size_bytes=excluded.size_bytes,
+                sha256=excluded.sha256, duration_ms=excluded.duration_ms,
+                start_ms=excluded.start_ms, end_ms=excluded.end_ms,
                 upload_status='uploaded'
             """,
             (
@@ -341,7 +352,13 @@ def upload_segment_json(meeting_id: str, request: SegmentJsonUpload, user: Curre
             (now_iso(), request.end_ms, meeting_id),
         )
     audit(user["id"], "audio.upload_json", "meeting", meeting_id, {"segment_no": request.segment_no})
-    return {"segmentNo": request.segment_no, "sha256": digest, "sizeBytes": path.stat().st_size}
+    partial = process_uploaded_segment(meeting_id, request.segment_no)
+    return {
+        "segmentNo": request.segment_no,
+        "sha256": digest,
+        "sizeBytes": path.stat().st_size,
+        "partial": partial,
+    }
 
 
 @app.post("/api/mobile/meetings/{meeting_id}/finish")
