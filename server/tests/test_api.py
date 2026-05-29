@@ -215,6 +215,26 @@ def test_ldap_lookup_bind_mode_uses_found_dn(tmp_path: Path) -> None:
         settings.ldap_lookup_bind_password = original_lookup_password
 
 
+def test_remote_stt_adapter_normalizes_text_response(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    import solorecord_server.asr_adapters as asr_adapters
+
+    audio = tmp_path / "sample.m4a"
+    audio.write_bytes(b"fake audio")
+    with patch("httpx.Client.post") as post:
+        post.return_value.status_code = 200
+        post.return_value.json.return_value = {"text": "这是远程 STT 返回的文本"}
+        post.return_value.raise_for_status.return_value = None
+        segments = asr_adapters.transcribe_with_openai_compatible(
+            "http://asr.example.com/v1",
+            "test-key",
+            "funasr-paraformer-zh",
+            [str(audio)],
+        )
+    assert segments[0]["text"] == "这是远程 STT 返回的文本"
+    assert post.call_args.kwargs["data"]["model"] == "funasr-paraformer-zh"
+
+
 def test_full_user_story_permissions_sync_export_and_release(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)

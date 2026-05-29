@@ -593,6 +593,9 @@ def get_providers(user: CurrentUser) -> dict:
         "config": {
             "asr_provider": values.get("asr_provider", settings.asr_provider),
             "asr_command": values.get("asr_command", settings.asr_command),
+            "asr_endpoint": values.get("asr_endpoint", settings.asr_endpoint),
+            "asr_api_key_set": bool(values.get("asr_api_key") or settings.asr_api_key),
+            "asr_model": values.get("asr_model", settings.asr_model),
             "llm_provider": values.get("llm_provider", settings.llm_provider),
             "llm_endpoint": values.get("llm_endpoint", settings.llm_endpoint),
             "llm_api_key_set": bool(values.get("llm_api_key") or settings.llm_api_key),
@@ -618,7 +621,7 @@ def update_providers(request: ProviderConfig, user: CurrentUser) -> dict:
     existing = _config_values()
     with get_db() as db:
         for key, value in values.items():
-            is_secret = key in {"llm_api_key", "hermes_webhook_token", "external_api_tokens"}
+            is_secret = key in {"asr_api_key", "llm_api_key", "hermes_webhook_token", "external_api_tokens"}
             if is_secret and not str(value).strip():
                 continue
             stored_value = str(value).lower() if isinstance(value, bool) else str(value)

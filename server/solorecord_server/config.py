@@ -55,6 +55,9 @@ class Settings(BaseSettings):
 
     asr_provider: str = "mock"
     asr_command: str = ""
+    asr_endpoint: str = ""
+    asr_api_key: str = ""
+    asr_model: str = ""
     asr_timeout_seconds: int = 3600
     audio_segment_minutes: int = 5
     target_sample_rate: int = 16000

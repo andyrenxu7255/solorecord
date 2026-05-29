@@ -53,6 +53,9 @@ class ActionItemIn(BaseModel):
 class ProviderConfig(BaseModel):
     asr_provider: str = "mock"
     asr_command: str = ""
+    asr_endpoint: str = ""
+    asr_api_key: str = ""
+    asr_model: str = ""
     llm_provider: str = "mock"
     llm_endpoint: str = ""
     llm_api_key: str = ""

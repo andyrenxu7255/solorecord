@@ -307,6 +307,10 @@ async function loadAdmin() {
     const config = providers.config;
     $("#asrProvider").value = config.asr_provider || "mock";
     $("#asrCommand").value = config.asr_command || "";
+    $("#asrEndpoint").value = config.asr_endpoint || "";
+    $("#asrApiKey").value = "";
+    $("#asrApiKey").placeholder = config.asr_api_key_set ? "已保存，留空保持不变" : "可选";
+    $("#asrModel").value = config.asr_model || "";
     $("#llmProvider").value = config.llm_provider || "mock";
     $("#llmEndpoint").value = config.llm_endpoint || "";
     $("#llmApiKey").value = "";
@@ -345,6 +349,9 @@ async function saveProviders() {
     body: JSON.stringify({
       asr_provider: $("#asrProvider").value,
       asr_command: $("#asrCommand").value,
+      asr_endpoint: $("#asrEndpoint").value,
+      asr_api_key: $("#asrApiKey").value,
+      asr_model: $("#asrModel").value,
       llm_provider: $("#llmProvider").value,
       llm_endpoint: $("#llmEndpoint").value,
       llm_api_key: $("#llmApiKey").value,

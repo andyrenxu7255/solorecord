@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from .asr_adapters import transcribe_with_command
+from .asr_adapters import transcribe_with_command, transcribe_with_openai_compatible
 from .config import get_settings
 from .db import get_db
 from .llm_adapters import LlmAdapterError, llm_options_from_settings_and_db, summarize_with_llm
@@ -175,6 +175,13 @@ def _transcribe(meeting_id: str) -> list[dict]:
             meeting_id,
             runtime,
         )
+    if asr_provider in {"openai-compatible", "remote-stt", "funasr"}:
+        return transcribe_with_openai_compatible(
+            runtime.get("asr_endpoint", settings.asr_endpoint),
+            runtime.get("asr_api_key", settings.asr_api_key),
+            runtime.get("asr_model", settings.asr_model),
+            [row["storage_path"] for row in audio_rows],
+        )
 
     result: list[dict] = []
     cursor = 0
@@ -206,6 +213,9 @@ def _runtime_options() -> dict:
     return {
         "asr_provider": values.get("asr_provider", settings.asr_provider),
         "asr_command": values.get("asr_command", settings.asr_command),
+        "asr_endpoint": values.get("asr_endpoint", settings.asr_endpoint),
+        "asr_api_key": values.get("asr_api_key", settings.asr_api_key),
+        "asr_model": values.get("asr_model", settings.asr_model),
         "target_sample_rate": int(values.get("target_sample_rate", settings.target_sample_rate)),
         "enable_diarization": values.get("enable_diarization", str(settings.enable_diarization)).lower() == "true",
         "enable_denoise": values.get("enable_denoise", str(settings.enable_denoise)).lower() == "true",

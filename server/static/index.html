@@ -97,10 +97,18 @@
                 <option value="sherpa-onnx">sherpa-onnx</option>
                 <option value="whisper.cpp">whisper.cpp</option>
                 <option value="command">命令行适配器</option>
+                <option value="openai-compatible">OpenAI 兼容 STT</option>
+                <option value="funasr">FunASR 兼容服务</option>
                 <option value="remote-qwen">远程 Qwen API</option>
               </select>
               <label>ASR 命令</label>
               <input id="asrCommand" class="input" placeholder="可选，例如 python run_asr.py {audio}">
+              <label>ASR Endpoint</label>
+              <input id="asrEndpoint" class="input" placeholder="例如 http://127.0.0.1:7860/v1">
+              <label>ASR API Key</label>
+              <input id="asrApiKey" class="input" type="password" placeholder="留空表示保持现有密钥">
+              <label>ASR Model</label>
+              <input id="asrModel" class="input" placeholder="例如 funasr-paraformer-zh">
               <label>LLM 提供方</label>
               <select id="llmProvider" class="input">
                 <option value="mock">mock</option>

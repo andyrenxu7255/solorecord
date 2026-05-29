@@ -3,11 +3,41 @@ import shlex
 import subprocess
 from pathlib import Path
 
+import httpx
+
 from .config import get_settings
 
 
 class AsrAdapterError(RuntimeError):
     pass
+
+
+def transcribe_with_openai_compatible(
+    endpoint: str,
+    api_key: str,
+    model: str,
+    audio_paths: list[str],
+) -> list[dict]:
+    base = endpoint.rstrip("/")
+    if not base or not model:
+        raise AsrAdapterError("ASR endpoint/model is missing")
+    existing_paths = [Path(path) for path in audio_paths if Path(path).exists()]
+    if not existing_paths:
+        raise AsrAdapterError("No uploaded audio files are available for ASR")
+    headers = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    segments: list[dict] = []
+    cursor_ms = 0
+    for path in existing_paths:
+        result = _post_transcription(base, headers, model, path)
+        parsed = _segments_from_remote_result(result, cursor_ms)
+        if parsed:
+            segments.extend(parsed)
+            cursor_ms = max(cursor_ms, max(item["end_ms"] for item in parsed))
+    if not segments:
+        raise AsrAdapterError("ASR service returned no transcript text")
+    return segments
 
 
 def transcribe_with_command(
@@ -38,6 +68,83 @@ def transcribe_with_command(
         message = completed.stderr.strip() or completed.stdout.strip() or f"exit {completed.returncode}"
         raise AsrAdapterError(f"ASR command failed: {message[:1000]}")
     return _parse_segments(completed.stdout)
+
+
+def _post_transcription(base: str, headers: dict[str, str], model: str, path: Path) -> dict:
+    url = f"{base}/audio/transcriptions"
+    data = {"model": model, "response_format": "json"}
+    try:
+        with path.open("rb") as audio:
+            files = {"file": (path.name, audio, "application/octet-stream")}
+            with httpx.Client(timeout=get_settings().asr_timeout_seconds) as client:
+                response = client.post(url, headers=headers, data=data, files=files)
+        if response.status_code == 404:
+            with path.open("rb") as audio:
+                files = {"audio": (path.name, audio, "application/octet-stream")}
+                with httpx.Client(timeout=get_settings().asr_timeout_seconds) as client:
+                    response = client.post(f"{base}/asr", headers=headers, data=data, files=files)
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise AsrAdapterError(f"ASR HTTP request failed: {exc}") from exc
+    try:
+        payload = response.json()
+    except json.JSONDecodeError as exc:
+        raise AsrAdapterError("ASR HTTP response must be JSON") from exc
+    if not isinstance(payload, dict):
+        raise AsrAdapterError("ASR HTTP response JSON must be an object")
+    return payload
+
+
+def _segments_from_remote_result(payload: dict, offset_ms: int) -> list[dict]:
+    if isinstance(payload.get("segments"), list):
+        return _normalize_segments(payload["segments"], offset_ms)
+    if isinstance(payload.get("result"), list):
+        return _normalize_segments(payload["result"], offset_ms)
+    text = str(
+        payload.get("text")
+        or payload.get("transcript")
+        or payload.get("result")
+        or payload.get("data")
+        or ""
+    ).strip()
+    if not text:
+        return []
+    return [
+        {
+            "speaker_id": "SPEAKER_01",
+            "display_name": "发言人 1",
+            "start_ms": offset_ms,
+            "end_ms": offset_ms + 1000,
+            "text": text,
+            "confidence": payload.get("confidence"),
+            "flags": [],
+        }
+    ]
+
+
+def _normalize_segments(raw_segments: list, offset_ms: int) -> list[dict]:
+    normalized: list[dict] = []
+    for index, item in enumerate(raw_segments):
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or item.get("sentence") or item.get("value") or "").strip()
+        if not text:
+            continue
+        speaker_id = str(item.get("speaker_id") or item.get("speaker") or "SPEAKER_01").strip()
+        start_ms = offset_ms + _millis(item, "start_ms", "startMillis", "start", default=index * 1000)
+        end_ms = offset_ms + _millis(item, "end_ms", "endMillis", "end", default=start_ms + 1000 - offset_ms)
+        normalized.append(
+            {
+                "speaker_id": speaker_id or "SPEAKER_01",
+                "display_name": str(item.get("display_name") or item.get("speaker_name") or speaker_id or "发言人 1"),
+                "start_ms": max(0, start_ms),
+                "end_ms": max(max(0, start_ms), end_ms),
+                "text": text,
+                "confidence": item.get("confidence"),
+                "flags": item.get("flags", []),
+            }
+        )
+    return normalized
 
 
 def _render_command(command_template: str, audio_paths: list[str], meeting_id: str, options: dict) -> list[str]:
