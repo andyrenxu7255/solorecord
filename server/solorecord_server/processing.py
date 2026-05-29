@@ -6,6 +6,7 @@ from .db import get_db
 from .llm_adapters import LlmAdapterError, llm_options_from_settings_and_db, summarize_with_llm
 from .publisher import publish_meeting
 from .search_index import index_meeting
+from .transcripts import archive_transcript_rows
 from .utils import new_id, now_iso
 
 
@@ -345,6 +346,7 @@ def _runtime_options() -> dict:
 
 def _replace_transcript(meeting_id: str, segments: list[dict]) -> None:
     with get_db() as db:
+        archive_transcript_rows(db, meeting_id, None, "system", "transcribe_replace")
         db.execute("DELETE FROM transcript_segments WHERE meeting_id = ?", (meeting_id,))
         _insert_transcript_segments(db, meeting_id, segments, 1, None)
 
@@ -353,6 +355,7 @@ def _replace_transcript_for_segment(meeting_id: str, segment_no: int, segments: 
     with get_db() as db:
         meeting = db.execute("SELECT version FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
         version = int(meeting["version"] if meeting else 1) + 1
+        archive_transcript_rows(db, meeting_id, segment_no, "system", "segment_retranscribe")
         db.execute(
             """
             DELETE FROM transcript_segments
@@ -361,7 +364,6 @@ def _replace_transcript_for_segment(meeting_id: str, segment_no: int, segments: 
             (meeting_id, segment_no),
         )
         _insert_transcript_segments(db, meeting_id, segments, version, segment_no)
-
 
 def _insert_transcript_segments(
     db,

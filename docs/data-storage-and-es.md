@@ -12,6 +12,7 @@
 - `meeting_members`：哪些登录用户可读/可写会议。
 - `audio_segments`：上传音频分段元数据和存储路径。
 - `transcript_segments`：带时间戳的转写行、稳定 speaker id、显示名、置信度、标记。
+- `transcript_segment_history`：转写被重新处理或人工替换前的历史归档，用于审计和企业知识平台追溯。
 - `speakers`：每场会议修正后的说话人名称映射。
 - `action_items`：从会议中提取的负责人、任务、截止时间、状态。
 - `processing_jobs`：ASR/LLM/索引/转发进度和失败信息。
@@ -30,6 +31,17 @@ GET /api/mobile/meetings/{meetingId}/segments/{segmentNo}/audio
 来重建本地记录。
 
 音频下载接口使用同一套会议读取权限。重装后的 APK 可按需下载服务器音频分段播放，而不是暴露原始存储路径。
+
+## 转写持久化与删除规则
+
+转写内容是会议后续知识整理的原始证据层，必须先持久化到服务端数据库。Web 或 App 上看到的是当前可见版本，但被重处理或人工替换前，旧转写行会归档到 `transcript_segment_history`。
+
+规则：
+
+- 非 admin 用户可以修正转写文本和说话人名称，但不能删除转写段。
+- admin 可以通过完整转写更新删除段落；删除前旧段落仍会归档。
+- 分段重传/重转写只替换对应 `source_segment_no` 的当前行，并把旧行归档。
+- 外部系统不得直接读取 SQLite 或音频文件路径，必须走服务端 API。
 
 ## 登录用户记录
 
@@ -64,6 +76,15 @@ Authorization: Bearer replace-with-long-random-token
 ```
 
 响应包含会议元数据、owner、members、转写段、说话人映射、待办和合并后的 `searchText`。
+
+企业知识平台或知识整理 Agent 推荐调用专用转写接口：
+
+```http
+GET /api/external/meetings/{meetingId}/transcript?include_history=true
+Authorization: Bearer replace-with-long-random-token
+```
+
+响应包含当前转写版本、结构化段落、纯文本 `plain_text`、说话人映射、音频分段证据、待办、`searchText`，以及可选历史归档 `history`。知识平台可以用当前段落生成知识条目，用历史归档做审计和冲突追溯。
 
 ## ES/OpenSearch
 
@@ -114,6 +135,9 @@ Server-side stored data:
 - `audio_segments`: uploaded audio segment metadata and storage path.
 - `transcript_segments`: timestamped transcript rows, stable speaker id,
   display name, confidence, flags.
+- `transcript_segment_history`: archived transcript rows captured before
+  reprocessing or manual replacement, used for audit and enterprise knowledge
+  traceability.
 - `speakers`: corrected speaker-name mapping per meeting.
 - `action_items`: owner/task/due/status extracted from the meeting.
 - `processing_jobs`: ASR/LLM/index/forwarding progress and failures.
@@ -135,6 +159,24 @@ and rebuild its local records from the server.
 The audio endpoint requires the same meeting read permission. It lets a
 reinstalled APK download a server-side audio segment on demand before playback,
 instead of exposing raw storage paths directly.
+
+## Transcript Persistence And Deletion Rules
+
+Transcripts are the evidence layer for downstream knowledge extraction, so they
+must be persisted in the server database first. Web and Android show the current
+visible version, but rows replaced by reprocessing or manual edits are archived
+into `transcript_segment_history`.
+
+Rules:
+
+- Non-admin users can correct transcript text and speaker names, but cannot
+  delete transcript segments.
+- Admin users can remove segments through a full transcript update; previous
+  rows are still archived first.
+- Segment re-upload/re-transcription replaces only rows with the matching
+  `source_segment_no`, and archives the previous rows.
+- External systems must use server APIs instead of reading SQLite or raw audio
+  paths directly.
 
 ## Login User Recording
 
@@ -189,6 +231,19 @@ Authorization: Bearer replace-with-long-random-token
 
 The response contains meeting metadata, owner, members, transcript segments,
 speaker mappings, action items, and merged `searchText`.
+
+Enterprise knowledge platforms or knowledge-maintenance agents should call the
+dedicated transcript endpoint:
+
+```http
+GET /api/external/meetings/{meetingId}/transcript?include_history=true
+Authorization: Bearer replace-with-long-random-token
+```
+
+The response includes the current transcript version, structured segments,
+`plain_text`, speaker mappings, audio-segment evidence, action items,
+`searchText`, and optional archived `history`. Knowledge agents can use current
+segments for extraction and history for audit/conflict tracing.
 
 ## ES/OpenSearch
 

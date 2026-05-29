@@ -356,6 +356,42 @@ def test_full_user_story_permissions_sync_export_and_release(tmp_path: Path) -> 
     transcript_after = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers).json()
     assert transcript_after["segments"][0]["display_name"] == "张三"
 
+    sales_user = client.get("/api/web/me", headers=user_headers).json()["user"]
+    with db.get_db() as conn:
+        conn.execute(
+            "INSERT INTO meeting_members (meeting_id, user_id, role) VALUES (?, ?, 'editor')",
+            (meeting_id, sales_user["id"]),
+        )
+
+    user_trim = client.put(
+        f"/api/web/meetings/{meeting_id}/transcript",
+        headers=user_headers,
+        json={"version": transcript_after["version"], "segments": transcript_after["segments"][:1]},
+    )
+    assert user_trim.status_code == 403
+
+    edited_segments = transcript_after["segments"]
+    edited_segments[0]["text"] = "双方确认报价，并安排下周推进合同。"
+    edit_transcript = client.put(
+        f"/api/web/meetings/{meeting_id}/transcript",
+        headers=headers,
+        json={"version": transcript_after["version"], "segments": edited_segments},
+    )
+    assert edit_transcript.status_code == 200
+    assert edit_transcript.json()["segments"][0]["text"] == "双方确认报价，并安排下周推进合同。"
+
+    knowledge_transcript = client.get(
+        f"/api/external/meetings/{meeting_id}/transcript?include_history=true",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert knowledge_transcript.status_code == 200
+    knowledge_data = knowledge_transcript.json()
+    assert knowledge_data["client"] == "hermes"
+    assert knowledge_data["transcript"]["segment_count"] == 2
+    assert "双方确认报价" in knowledge_data["transcript"]["plain_text"]
+    assert len(knowledge_data["transcript"]["history"]) >= 2
+    assert knowledge_data["transcript"]["history"][0]["archive_reason"] == "user_update"
+
     update = client.patch(
         f"/api/web/meetings/{meeting_id}",
         headers=headers,
@@ -428,3 +464,14 @@ def test_full_user_story_permissions_sync_export_and_release(tmp_path: Path) -> 
     assert external.status_code == 200
     assert external.json()["client"] == "hermes"
     assert external.json()["items"][0]["meeting"]["title"] == "客户复盘会"
+
+    admin_trim = client.put(
+        f"/api/web/meetings/{meeting_id}/transcript",
+        headers=headers,
+        json={
+            "version": edit_transcript.json()["version"],
+            "segments": edit_transcript.json()["segments"][:1],
+        },
+    )
+    assert admin_trim.status_code == 200
+    assert len(admin_trim.json()["segments"]) == 1

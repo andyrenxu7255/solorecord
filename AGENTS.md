@@ -6,6 +6,7 @@
 - 服务端是权威数据源。Android 本地数据只是缓存和离线录音保护。
 - ES/OpenSearch 只是可选索引层。业务数据必须先写入数据库。
 - 所有会议读写接口都必须做权限校验。
+- 转写内容是企业知识整理的原始证据层，必须服务端持久化；非 admin 不允许删除转写段，替换/重处理前必须归档历史。
 - Web 动态文本必须转义后渲染。
 - Android 录音可靠性优先于端侧音频重处理。
 - 不要删除用户改动或生成数据，除非用户明确要求。
@@ -132,6 +133,7 @@ POST /api/mobile/meetings/{meetingId}/speakers/rename
 ```text
 GET /api/external/meetings
 GET /api/external/meetings/{meetingId}
+GET /api/external/meetings/{meetingId}/transcript
 ```
 
 管理：
@@ -191,6 +193,7 @@ GET  /api/auth/sso/callback
 - 拉取走 `/api/external/*`。
 - 搜索走 ES/OpenSearch。
 - 不要让外部系统直接读取 SQLite。
+- 企业知识平台 Agent 读取转写走 `/api/external/meetings/{meetingId}/transcript?include_history=true`；不要绕过 API 读数据库或文件。
 
 ## 文档地图
 
@@ -210,6 +213,7 @@ GET  /api/auth/sso/callback
 - Server is the authoritative data source. Android local data is cache/offline recording protection.
 - ES/OpenSearch is an optional index only. Always persist business data to DB first.
 - Every meeting read/write endpoint must enforce access control.
+- Transcripts are the evidence layer for enterprise knowledge agents. Persist them server-side; non-admin users must not delete transcript segments, and replacements/reprocessing must archive prior rows first.
 - Web dynamic text must be escaped before rendering.
 - Android recording reliability has priority over on-device audio processing.
 - Do not remove user changes or generated data unless explicitly requested.
@@ -352,6 +356,7 @@ External integration:
 ```text
 GET /api/external/meetings
 GET /api/external/meetings/{meetingId}
+GET /api/external/meetings/{meetingId}/transcript
 ```
 
 Admin:
@@ -423,6 +428,7 @@ Use one of:
 - ES/OpenSearch for full-text search.
 
 Do not let external systems read SQLite directly.
+Enterprise knowledge agents should read transcripts through `/api/external/meetings/{meetingId}/transcript?include_history=true`; never bypass the API to read SQLite or files directly.
 
 ## Documentation Map
 

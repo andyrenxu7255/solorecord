@@ -30,7 +30,7 @@ def meeting_document(meeting_id: str) -> dict:
             (meeting_id,),
         ).fetchall()
         transcript_segments = db.execute(
-            "SELECT * FROM transcript_segments WHERE meeting_id = ? ORDER BY start_ms",
+            "SELECT * FROM transcript_segments WHERE meeting_id = ? ORDER BY start_ms, id",
             (meeting_id,),
         ).fetchall()
         speakers = db.execute(
@@ -77,6 +77,47 @@ def meeting_document(meeting_id: str) -> dict:
             if part
         ),
     }
+
+
+def transcript_document(meeting_id: str, include_history: bool = False) -> dict:
+    document = meeting_document(meeting_id)
+    if not document:
+        return {}
+    current_segments = document["transcriptSegments"]
+    current_text = "\n".join(
+        f"[{_time(row['start_ms'])}] {row['display_name']}: {row['text']}" for row in current_segments
+    )
+    result = {
+        "meeting": document["meeting"],
+        "owner": document["owner"],
+        "members": document["members"],
+        "speakers": document["speakers"],
+        "transcript": {
+            "version": document["meeting"]["version"],
+            "segments": current_segments,
+            "plain_text": current_text,
+            "segment_count": len(current_segments),
+            "immutable_notice": (
+                "Current transcript rows are persisted server-side. Replacements archive prior rows "
+                "into transcript_segment_history for audit and knowledge-agent traceability."
+            ),
+        },
+        "audioSegments": document["audioSegments"],
+        "actionItems": document["actionItems"],
+        "searchText": document["searchText"],
+    }
+    if include_history:
+        with get_db() as db:
+            rows = db.execute(
+                """
+                SELECT * FROM transcript_segment_history
+                WHERE meeting_id = ?
+                ORDER BY archived_at, start_ms, original_segment_id
+                """,
+                (meeting_id,),
+            ).fetchall()
+        result["transcript"]["history"] = [row_to_dict(row) for row in rows]
+    return result
 
 
 def list_documents_for_user(user_id: str, limit: int = 100, offset: int = 0) -> list[dict]:

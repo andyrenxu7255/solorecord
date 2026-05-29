@@ -112,6 +112,26 @@ CREATE TABLE IF NOT EXISTS transcript_segments (
     FOREIGN KEY(meeting_id) REFERENCES meetings(id)
 );
 
+CREATE TABLE IF NOT EXISTS transcript_segment_history (
+    id TEXT PRIMARY KEY,
+    original_segment_id TEXT NOT NULL,
+    meeting_id TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    source_segment_no INTEGER,
+    speaker_id TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    start_ms INTEGER NOT NULL,
+    end_ms INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    confidence REAL,
+    flags TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    archived_at TEXT NOT NULL,
+    archived_by_user_id TEXT NOT NULL DEFAULT 'system',
+    archive_reason TEXT NOT NULL,
+    FOREIGN KEY(meeting_id) REFERENCES meetings(id)
+);
+
 CREATE TABLE IF NOT EXISTS speakers (
     id TEXT PRIMARY KEY,
     meeting_id TEXT NOT NULL,

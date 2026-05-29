@@ -1,4 +1,6 @@
-from pydantic import BaseModel, Field
+import json
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class LoginRequest(BaseModel):
@@ -31,11 +33,25 @@ class TranscriptSegmentIn(BaseModel):
     id: str | None = None
     speaker_id: str = "SPEAKER_01"
     display_name: str = "发言人 1"
+    source_segment_no: int | None = None
     start_ms: int = 0
     end_ms: int = 0
     text: str
     confidence: float | None = None
     flags: list[str] = Field(default_factory=list)
+
+    @field_validator("flags", mode="before")
+    @classmethod
+    def normalize_flags(cls, value):
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return [value]
+            return parsed if isinstance(parsed, list) else [str(parsed)]
+        return value
 
 
 class TranscriptUpdate(BaseModel):

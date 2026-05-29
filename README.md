@@ -13,9 +13,10 @@ SoloRecord 是公司内部会议记录系统，用来通过 Android App 可靠�
 这是面向公司内部使用的一体化会议记录系统，当前发布版为 V0.7，包含 Android App、服务端网关和 Web 管理/PC 端。
 
 - Android App：LDAP 登录、可选统一登录跳转与回跳、连续 WAV 滚动分段录音、约 2 秒分段重叠、本地记录、本地播放、分段自动上传、重装后恢复服务器记录、查看转写/纪要/待办、批量修改角色名。
-- 服务端：登录会话、会议/音频/转写/角色/纪要/待办、ASR/LLM 配置、导出、APK 发布下载、Hermes/Webhook 转发。
+- 服务端：登录会话、会议/音频/转写/转写历史/角色/纪要/待办、ASR/LLM 配置、导出、APK 发布下载、Hermes/Webhook 转发、外部知识平台读取接口。
 - Web 端：PC 上传录音、会议查看编辑、角色重命名、导出、模型配置、任务管理、APK 发布。
 - 模型密钥保存在服务端，APK 默认只需要服务器地址和短期会话 token。
+- 转写是企业知识整理的原始证据层，当前版本和历史归档都持久化在服务端；非 admin 不能删除转写段，知识平台 Agent 通过外部 API 拉取。
 
 ## 文档入口
 
@@ -166,6 +167,7 @@ SoloRecord is an internal company meeting recorder. V0.7 is the first deployable
 
 - Android app: LDAP login, optional SSO login handoff, continuous WAV rolling recording with about two seconds of overlap between adjacent segments, local records, playback, segment auto-upload, server record recovery after reinstall, transcript/summary/action-item viewing, and batch speaker rename.
 - Server: login sessions, meetings, audio segments, transcripts, speaker names, summaries, action items, ASR/LLM configuration, exports, APK publishing, Hermes/Webhook forwarding, external API, and optional ES/OpenSearch indexing.
+- Transcript persistence: current transcript rows and archived history are stored server-side; non-admin users cannot delete transcript segments, and enterprise knowledge agents read transcript evidence through the external API.
 - Web app: PC upload, meeting review/editing, transcript editing, speaker rename, exports, model configuration, job management, and APK publishing.
 - Secrets are stored server-side. The APK only needs the server endpoint and a short-lived session token.
 - The public GitHub Release APK contains no real server URL or secret. Users can enter the server URL on first run; for company distribution, rebuild with `-PSOLO_SERVER_ENDPOINT=https://record.example.com` and publish that APK from the server Web admin.

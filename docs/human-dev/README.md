@@ -153,6 +153,7 @@ POST /api/admin/search/reindex
 ```text
 GET /api/external/meetings
 GET /api/external/meetings/{meetingId}
+GET /api/external/meetings/{meetingId}/transcript
 ```
 
 外部系统用 `SOLO_EXTERNAL_API_TOKENS` 中配置的 bearer token。
@@ -204,6 +205,8 @@ Android 录音和上传采用连续录音、重叠分段、分段级断点续传
 - 如果所有音频分段已经在线分段转写完成，`/finish` 会复用现有阶段转写生成整场纪要和待办，避免重复消耗 ASR。
 
 `transcript_segments.source_segment_no` 用于分段重传时只替换该来源分段的阶段转写。不要用时间范围删除相邻段落，因为相邻分段存在约 2 秒重叠。
+
+转写是企业知识平台的原始证据层。服务端使用 `transcript_segment_history` 归档被重处理或人工替换前的旧行。非 admin 用户更新转写时不能减少段落数；admin 可以删除段落，但删除前同样归档。知识平台 Agent 应通过 `/api/external/meetings/{meetingId}/transcript?include_history=true` 拉取当前转写和历史，不要直接读 SQLite。
 
 `/segments-json` 仍保留作兼容和简单测试入口，Android 主流程不再使用它上传长会议音频。
 
@@ -612,6 +615,7 @@ External systems:
 ```text
 GET /api/external/meetings
 GET /api/external/meetings/{meetingId}
+GET /api/external/meetings/{meetingId}/transcript
 ```
 
 External systems authenticate with bearer tokens from `SOLO_EXTERNAL_API_TOKENS`.
@@ -650,6 +654,13 @@ Android upload uses segment-level resume:
 - If all uploaded audio segments already have online partial transcripts, `/finish` reuses those rows for the full summary and action items instead of spending ASR again.
 
 `transcript_segments.source_segment_no` lets retries replace only the transcript rows from that segment. Do not delete by timestamp range because adjacent segments intentionally overlap by about two seconds.
+
+Transcripts are the evidence layer for enterprise knowledge platforms. The
+server archives rows replaced by reprocessing or manual edits in
+`transcript_segment_history`. Non-admin transcript updates cannot reduce segment
+count; admin users may remove rows, but previous rows are still archived first.
+Knowledge agents should pull `/api/external/meetings/{meetingId}/transcript?include_history=true`
+instead of reading SQLite directly.
 
 `/segments-json` remains for compatibility and simple tests. The Android main flow no longer uses it for long meeting audio.
 

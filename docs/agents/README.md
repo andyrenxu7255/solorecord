@@ -310,6 +310,8 @@ GET /downloads/android/0.7.0/app.apk
 - 不要把 `server/.env` 内容复制进文档或回答。
 - 不要把 ES 当成唯一存储。
 - 不要绕过 `_assert_access` 暴露会议数据。
+- 转写是知识平台的原始证据层。外部知识整理 Agent 只能通过 `/api/external/meetings/{meetingId}/transcript?include_history=true` 拉取，不能直接读 SQLite、`var/` 或音频文件路径。
+- 非 admin 不允许删除转写段；转写重处理、分段重传或人工替换前必须保留 `transcript_segment_history`。
 - 不要在 Web 使用未转义的动态 HTML。
 - 不要让 Android 端承担重 ASR/降噪/说话人分离。
 - 不要直接复制 GPL/AGPL 项目的源代码。
@@ -699,6 +701,12 @@ The repository can be public only if no real secrets, runtime data, databases, c
 - Do not copy `server/.env` values into docs or answers.
 - Do not treat ES/OpenSearch as the only storage layer.
 - Do not expose meeting data without `_assert_access`.
+- Transcripts are the evidence layer for knowledge platforms. External
+  knowledge agents must pull `/api/external/meetings/{meetingId}/transcript?include_history=true`
+  and must not read SQLite, `var/`, or raw audio paths directly.
+- Non-admin users must not delete transcript segments. Reprocessing, segment
+  retry, or manual replacement must preserve prior rows in
+  `transcript_segment_history`.
 - Do not render unescaped dynamic HTML in the Web UI.
 - Do not make Android responsible for heavy ASR, denoise, or diarization.
 - Do not directly copy GPL/AGPL project source code.

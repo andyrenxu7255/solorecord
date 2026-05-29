@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,7 +21,7 @@ from .config import get_settings
 from .db import get_db, init_db
 from .exports import create_export
 from .processing import enqueue_transcription, process_uploaded_segment
-from .repository import list_documents_for_external, list_documents_for_user, meeting_document
+from .repository import list_documents_for_external, list_documents_for_user, meeting_document, transcript_document
 from .schemas import (
     LdapLoginRequest,
     LoginRequest,
@@ -32,6 +33,7 @@ from .schemas import (
     TranscriptUpdate,
 )
 from .search_index import index_meeting
+from .transcripts import archive_transcript_rows
 from .utils import new_id, now_iso, row_to_dict, sha256_file
 
 app = FastAPI(title="SoloRecord Internal API", version="0.7.0")
@@ -432,26 +434,38 @@ def update_transcript(meeting_id: str, request: TranscriptUpdate, user: CurrentU
         meeting = db.execute("SELECT version FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
         if request.version != meeting["version"]:
             raise HTTPException(status_code=409, detail="Transcript version changed, please reload")
+        current_count = db.execute(
+            "SELECT COUNT(*) AS count FROM transcript_segments WHERE meeting_id = ?",
+            (meeting_id,),
+        ).fetchone()["count"]
+        if user.get("role") != "admin" and len(request.segments) < current_count:
+            raise HTTPException(
+                status_code=403,
+                detail="Only admin can remove transcript segments; edit text or speaker names instead",
+            )
         next_version = request.version + 1
+        archive_transcript_rows(db, meeting_id, None, user["id"], "user_update")
         db.execute("DELETE FROM transcript_segments WHERE meeting_id = ?", (meeting_id,))
         for item in request.segments:
             db.execute(
                 """
                 INSERT INTO transcript_segments
-                (id, meeting_id, version, speaker_id, display_name, start_ms, end_ms, text, confidence, flags, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, meeting_id, version, source_segment_no, speaker_id, display_name,
+                 start_ms, end_ms, text, confidence, flags, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     item.id or new_id("seg"),
                     meeting_id,
                     next_version,
+                    item.source_segment_no,
                     item.speaker_id,
                     item.display_name,
                     item.start_ms,
                     item.end_ms,
                     item.text,
                     item.confidence,
-                    "[]",
+                    json.dumps(item.flags, ensure_ascii=False),
                     now_iso(),
                 ),
             )
@@ -509,6 +523,18 @@ def external_meetings(client: ExternalClient, limit: int = 100, offset: int = 0)
 @app.get("/api/external/meetings/{meeting_id}")
 def external_meeting(meeting_id: str, client: ExternalClient) -> dict:
     document = meeting_document(meeting_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    return {"client": client["client"], **document}
+
+
+@app.get("/api/external/meetings/{meeting_id}/transcript")
+def external_meeting_transcript(
+    meeting_id: str,
+    client: ExternalClient,
+    include_history: bool = False,
+) -> dict:
+    document = transcript_document(meeting_id, include_history=include_history)
     if not document:
         raise HTTPException(status_code=404, detail="Meeting not found")
     return {"client": client["client"], **document}
@@ -717,7 +743,6 @@ def _try_index(meeting_id: str) -> None:
         index_meeting(meeting_id)
     except Exception:
         pass
-
 
 static_path = settings.static_dir
 if static_path.exists():
