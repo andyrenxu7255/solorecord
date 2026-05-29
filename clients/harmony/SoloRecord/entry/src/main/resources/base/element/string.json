@@ -1,0 +1,20 @@
+{
+  "string": [
+    {
+      "name": "app_name",
+      "value": "SoloRecord"
+    },
+    {
+      "name": "module_desc",
+      "value": "SoloRecord HarmonyOS client"
+    },
+    {
+      "name": "entry_desc",
+      "value": "SoloRecord"
+    },
+    {
+      "name": "microphone_reason",
+      "value": "SoloRecord needs microphone access to record meetings."
+    }
+  ]
+}

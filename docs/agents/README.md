@@ -23,7 +23,8 @@ SoloRecord 已具备：
 - 本地播放。
 - 服务端会议、音频、转写、纪要、待办。
 - Web 管理端。
-- APK 上传和下载。
+- Android/Windows/macOS/iOS/HarmonyOS 终端应用上传和下载。
+- Windows Electron 客户端、iOS WKWebView 外壳、macOS Electron/SwiftUI 外壳、HarmonyOS Web 外壳工程。
 - Android 分段级断点续传：本地分段落盘，multipart 文件流上传，服务端确认后立即执行分段 ASR，并把阶段转写写回同一场会议；本地账本标记已上传，弱网重试只补传未完成分段。
 - LDAP 用户名密码登录；SSO 浏览器登录回跳到 Android：`solorecord://auth/callback` 仍保留。
 - APK 重装后从 `/api/mobile/sync` 恢复记录，并可按权限下载服务器音频分段。
@@ -82,14 +83,14 @@ Docker smoke fallback 见 `docs/human-ops/README.md`。
 
 ## 服务器运维 Agent 自动部署 Runbook
 
-本节面向服务器运维 Agent。目标是让 Agent 在操作者提供必要 URL/key 后，自动完成部署、配置、APK 发布和联调验收。
+本节面向服务器运维 Agent。目标是让 Agent 在操作者提供必要 URL/key 后，自动完成部署、配置、终端应用发布和联调验收。
 
 ### 交互原则
 
 - 只向操作者索取部署必需信息；缺省值可自动生成时，不要求人工提供。
 - 密钥只写入服务器本地 `server/.env`、密钥管理系统或部署平台 secret，不写入 Git、文档、终端总结或聊天回复。
 - Agent 可以回显“已配置/未配置/校验通过”，但不能回显原始 key、token、client secret、数据库密码。
-- 公开 GitHub Release APK 不包含真实服务器地址或密钥；公司内部分发 APK 只允许内置服务器地址。
+- 公开 GitHub Release 终端包不包含真实服务器地址或密钥；公司内部分发包只允许内置服务器地址。
 - 每次改配置后都要跑健康检查和 smoke，不允许只启动服务就结束。
 
 ### 需要向操作者收集的信息
@@ -111,7 +112,7 @@ Docker smoke fallback 见 `docs/human-ops/README.md`。
 | 外部 API | 可自动生成 | Hermes/CRM 拉取用 bearer token 名称和值 |
 | ES/OpenSearch | 可稍后 | 是否启用、URL、index、API key 或 username/password |
 | 存储与备份 | 是 | `var/` 持久化路径、备份目录、保留天数 |
-| APK 分发 | 是 | 使用公开 Release APK，还是构建只内置服务器地址的内部分发 APK |
+| 终端应用分发 | 是 | 需要 Android、Windows、macOS、iOS、HarmonyOS 哪些平台；使用公开 Release 包，还是构建只内置服务器地址的内部分发包 |
 
 如果操作者暂时没有群晖、ASR、LLM 或 Hermes 信息，Agent 应先部署 mock 闭环，并在最终结果中列出“待接入项”，但不能阻塞基础部署。
 
@@ -126,7 +127,7 @@ Docker smoke fallback 见 `docs/human-ops/README.md`。
 7. 运行健康检查：调用 `/api/health`、`/`、`/api/web/me` 匿名拒绝。
 8. 跑 smoke：使用 LDAP 测试账号、demo 登录或 SSO 测试账号执行 `scripts\smoke-e2e.ps1` 对应的服务器等价流程。
 9. 配置 Provider：通过 Web 管理端或 API 保存 ASR/LLM/Hermes/ES 配置；密钥字段留空表示保持不变。
-10. 发布 APK：如果选择内部分发，使用 `-PSOLO_SERVER_ENDPOINT=<SOLO_BASE_URL>` 构建 APK，再上传 `/api/admin/releases`。
+10. 发布终端应用：Android 使用 `-PSOLO_SERVER_ENDPOINT=<SOLO_BASE_URL>` 构建 APK；Windows 使用 `clients/desktop` 构建 portable ZIP；macOS/iOS/HarmonyOS 在对应构建机签名出包；全部通过 `/api/admin/releases` 上传并设置 `platform`。
 11. 端到端联调：测试 LDAP 登录、录音上传、弱网重试只补传未完成分段、转写/纪要、说话人改名、服务器恢复记录、服务器音频下载、外部 API 拉取。
 12. 输出交付摘要：只列 URL、版本、健康状态、已启用能力、待接入项和下一步，不输出任何密钥。
 
@@ -227,7 +228,7 @@ SOLO_ES_USERNAME=
 SOLO_ES_PASSWORD=
 ```
 
-### APK 自动发布流程
+### 终端应用自动发布流程
 
 公开 GitHub Release APK：
 
@@ -245,6 +246,7 @@ SOLO_ES_PASSWORD=
 
 ```text
 POST /api/admin/releases
+platform=android
 version_name=0.7.0
 version_code=7
 release_notes=SoloRecord V0.7
@@ -259,13 +261,32 @@ GET /api/web/releases/latest
 GET /downloads/android/0.7.0/app.apk
 ```
 
+Windows 发布：
+
+```powershell
+cd clients\desktop
+npm install
+$env:SOLO_SERVER_URL="<SOLO_BASE_URL>"
+npm run pack
+npm run portable:win
+```
+
+上传 `clients/desktop/release/SoloRecord-0.7.0-windows-x64.zip`，表单字段 `platform=windows`。如果构建机具备 Windows 符号链接权限，也可以尝试 `npm run dist:win` 生成 NSIS 安装 EXE。
+
+macOS/iOS/HarmonyOS 发布：
+
+- macOS：在 macOS 构建机用 `clients/desktop` 出 DMG，或用 `clients/macos` 的 SwiftUI 外壳签名出包，`platform=macos`。
+- iOS：用 Xcode 导入 `clients/ios`，配置 `SoloRecordServerURL`、证书和 Provisioning Profile，导出 IPA，`platform=ios`。
+- HarmonyOS：用 DevEco Studio 打开 `clients/harmony/SoloRecord`，配置 `DEFAULT_SERVER_URL` 和签名，导出 HAP，`platform=harmony`。
+- 任何端都不能写入模型、LDAP、SSO、Hermes、ES 密钥。
+
 ### 联调验收清单
 
 - Web 可打开，`/api/health` 返回 `ok`。
 - 未登录访问会议列表返回 401。
 - SSO 登录可回到 Web；Android 可回到 `solorecord://auth/callback`。
 - 管理员可配置 ASR/LLM/Hermes/ES，密钥不回显。
-- APK 已发布，下载链接可用。
+- 所需终端应用已发布，下载链接可用。
 - Android 登录后可录音、结束、同步。
 - 录音分段默认约 5 分钟，带约 2 秒重叠；在线时每段完成后上传并返回阶段转写。
 - 服务器生成转写、纪要和待办；mock 模式下也必须有占位结果。
@@ -285,14 +306,14 @@ GET /downloads/android/0.7.0/app.apk
 5. 弱网重复同步：确认 Android 本地 `audioSegments[].uploadStatus` 已持久化，`/segments` 返回 200 后下一次不应重复上传该分段；重复上传同一分段只替换该分段的 `source_segment_no` 转写；重复 `/finish` 应复用已有 job。
 6. 转写失败：查 ASR command 是否可执行、stdout 是否合法 JSON、远程 STT endpoint/model/key、上游 HTTP 错误、`processing_jobs.error_message`。
 7. 纪要失败：查 LLM endpoint/model/key；必要时回退 mock。
-8. APK 下载失败：查 `apk_releases`、`var/apk` 文件、反代下载路径。
+8. 终端应用下载失败：查 `apk_releases`、`var/apk` 文件、`platform`、反代下载路径。
 9. 外部系统失败：查 `SOLO_EXTERNAL_API_TOKENS`、Hermes webhook URL/token、网络连通性。
 
 ## 上下文摘要
 
 用户目标：
 
-- APK 和生产服务面向公司内部使用，不做公开分发；源码仓库可公开，但不能包含真实密钥、运行数据、数据库、APK 构建产物或客户会议音频。
+- 终端应用和生产服务面向公司内部使用，不做公开分发；源码仓库可公开，但不能包含真实密钥、运行数据、数据库、终端构建产物或客户会议音频。
 - 通过群晖统一登录后才能使用。
 - App 录音可靠优先。
 - 每次开始/结束归为一条会议记录。
@@ -306,7 +327,7 @@ GET /downloads/android/0.7.0/app.apk
 
 ## 不要做
 
-- 不要把模型 key 写进 APK。
+- 不要把模型 key 写进 APK、EXE、DMG、IPA 或 HAP。
 - 不要把 `server/.env` 内容复制进文档或回答。
 - 不要把 ES 当成唯一存储。
 - 不要绕过 `_assert_access` 暴露会议数据。
@@ -343,7 +364,7 @@ Android 改动：
 
 - 确认登录门禁。
 - 确认录音不会因 UI 改动丢失。
-- 编译 APK。
+- 编译对应终端应用。
 
 ## 已知风险
 
@@ -364,7 +385,7 @@ Android 改动：
 - 获取转写
 - 说话人改名
 - 导出
-- 发布 APK
+- 发布终端应用
 - 移动端同步
 - 受权限保护的音频分段下载
 - 外部 API
@@ -412,7 +433,8 @@ SoloRecord currently includes:
 - Local playback.
 - Server-side meetings, audio, transcripts, summaries, and action items.
 - Web admin UI.
-- APK upload/download.
+- Android/Windows/macOS/iOS/HarmonyOS client upload/download.
+- Windows Electron client, iOS WKWebView shell, macOS Electron/SwiftUI shell, and HarmonyOS Web shell projects.
 - Android segment-level upload resume: recording segments are stored locally, uploaded as multipart files, marked uploaded after server acknowledgement, and skipped on retry.
 - LDAP username/password login. Browser SSO returning to Android through `solorecord://auth/callback` remains available.
 - APK reinstall recovery through `/api/mobile/sync`, including permission-protected server audio download.
@@ -471,14 +493,14 @@ Docker smoke fallback is documented in `docs/human-ops/README.md`.
 
 ### Server Operations Agent Auto-Deployment Runbook
 
-This section is for a server operations agent. The goal is to collect required URLs/keys from the operator, then automatically deploy, configure, publish the APK, and run integration checks.
+This section is for a server operations agent. The goal is to collect required URLs/keys from the operator, then automatically deploy, configure, publish client packages, and run integration checks.
 
 #### Interaction Rules
 
 - Ask only for information required for deployment. Generate defaults automatically when safe.
 - Store secrets only in server-local `server/.env`, a secret manager, or deployment-platform secrets. Never write them to Git, docs, summaries, or chat responses.
 - It is acceptable to report "configured", "missing", or "validated"; never echo raw keys, tokens, client secrets, or database passwords.
-- The public GitHub Release APK contains no real server URL or secret. The internal company APK may embed only the server URL.
+- Public GitHub Release client packages contain no real server URL or secret. Internal company packages may embed only the server URL.
 - After every config change, run health checks and smoke tests. Do not stop after merely starting containers.
 
 #### Information To Collect From The Operator
@@ -498,7 +520,7 @@ This section is for a server operations agent. The goal is to collect required U
 | External API | Can generate | bearer token names and values for Hermes/CRM pull access |
 | ES/OpenSearch | Can defer | enabled flag, URL, index, API key or username/password |
 | Storage and backup | Yes | persistent `var/` path, backup directory, retention |
-| APK distribution | Yes | public Release APK or internal APK rebuilt with the server URL |
+| Client distribution | Yes | Required platforms: Android, Windows, macOS, iOS, HarmonyOS; public Release packages or internal packages rebuilt with the server URL |
 
 If Synology, ASR, LLM, or Hermes values are not ready, deploy the mock/demo loop first and list the missing integrations in the final handoff.
 
@@ -513,7 +535,7 @@ If Synology, ASR, LLM, or Hermes values are not ready, deploy the mock/demo loop
 7. Run health checks: `/api/health`, `/`, and anonymous 401 checks.
 8. Run smoke with an LDAP test account, demo login, or an SSO test account.
 9. Save ASR/LLM/Hermes/ES provider settings through Web admin or API. Empty secret fields mean "keep unchanged".
-10. Publish APK. For internal distribution, rebuild with `-PSOLO_SERVER_ENDPOINT=<SOLO_BASE_URL>` and upload through `/api/admin/releases`.
+10. Publish client packages. For Android, rebuild with `-PSOLO_SERVER_ENDPOINT=<SOLO_BASE_URL>`; for Windows, build the `clients/desktop` portable ZIP; for macOS/iOS/HarmonyOS, use the matching official build machine. Upload all packages through `/api/admin/releases` with `platform`.
 11. Run end-to-end integration: LDAP login, recording upload, weak-network retry that sends only pending segments, transcript/summary, speaker rename, server recovery, protected audio download, external API pull.
 12. Return a handoff summary with URLs, version, health state, enabled capabilities, missing integrations, and next actions. Do not include secrets.
 
@@ -617,7 +639,7 @@ SOLO_ES_USERNAME=
 SOLO_ES_PASSWORD=
 ```
 
-#### APK Publishing Flow
+#### Client Publishing Flow
 
 Public GitHub Release APK:
 
@@ -635,6 +657,7 @@ Upload to server:
 
 ```text
 POST /api/admin/releases
+platform=android
 version_name=0.7.0
 version_code=7
 release_notes=SoloRecord V0.7
@@ -649,13 +672,32 @@ GET /api/web/releases/latest
 GET /downloads/android/0.7.0/app.apk
 ```
 
+Windows:
+
+```powershell
+cd clients\desktop
+npm install
+$env:SOLO_SERVER_URL="<SOLO_BASE_URL>"
+npm run pack
+npm run portable:win
+```
+
+Upload `clients/desktop/release/SoloRecord-0.7.0-windows-x64.zip` with `platform=windows`. If the build machine has Windows symlink privileges, `npm run dist:win` can generate an NSIS installer EXE.
+
+macOS/iOS/HarmonyOS:
+
+- macOS: build a DMG from `clients/desktop` on macOS, or sign the SwiftUI shell in `clients/macos`; upload with `platform=macos`.
+- iOS: use Xcode with `clients/ios`, configure `SoloRecordServerURL`, certificates, and provisioning, export IPA, upload with `platform=ios`.
+- HarmonyOS: use DevEco Studio with `clients/harmony/SoloRecord`, configure `DEFAULT_SERVER_URL` and signing, export HAP, upload with `platform=harmony`.
+- No client package may contain ASR, LLM, LDAP, SSO, Hermes, ES, or external secrets.
+
 #### Integration Acceptance Checklist
 
 - Web opens and `/api/health` returns `ok`.
 - Anonymous meeting-list access returns 401.
 - SSO returns to Web; Android returns to `solorecord://auth/callback`.
 - Admin can configure ASR/LLM/Hermes/ES; secrets are masked.
-- APK is published and downloadable.
+- Required client packages are published and downloadable.
 - Android can sign in, record, stop, and sync.
 - Recording segments default to about five minutes with about two seconds of overlap; when online, each completed segment uploads and returns a partial transcript.
 - Server generates transcript, summary, and action items; mock mode must still produce placeholder output.
@@ -675,7 +717,7 @@ GET /downloads/android/0.7.0/app.apk
 5. Weak-network retry duplicates work: confirm Android persisted `audioSegments[].uploadStatus`; after `/segments` returns 200 the next sync should skip that segment. Re-uploading the same segment should replace only transcript rows with that `source_segment_no`. Repeated `/finish` should reuse the existing job.
 6. ASR fails: check ASR command execution, valid JSON stdout, remote STT endpoint/model/key, upstream HTTP errors, and `processing_jobs.error_message`.
 7. Summary fails: check LLM endpoint/model/key; fall back to mock if needed.
-8. APK download fails: check `apk_releases`, `var/apk` files, and reverse proxy download path.
+8. Client download fails: check `apk_releases`, `var/apk` files, `platform`, and reverse proxy download path.
 9. External integration fails: check `SOLO_EXTERNAL_API_TOKENS`, Hermes webhook URL/token, and network connectivity.
 
 ### User Goal Summary
@@ -693,11 +735,11 @@ The user wants an internal company system with:
 - Protected server audio download for recovered records.
 - External data access for other apps, preferably with optional ES/OpenSearch.
 
-The repository can be public only if no real secrets, runtime data, databases, caches, APK build artifacts, or customer meeting audio are committed. Production deployments remain internal.
+The repository can be public only if no real secrets, runtime data, databases, caches, client build artifacts, or customer meeting audio are committed. Production deployments remain internal.
 
 ### Do Not
 
-- Do not put model keys in the APK.
+- Do not put model keys in APK, EXE, DMG, IPA, or HAP packages.
 - Do not copy `server/.env` values into docs or answers.
 - Do not treat ES/OpenSearch as the only storage layer.
 - Do not expose meeting data without `_assert_access`.
@@ -738,7 +780,7 @@ Android change:
 
 - Confirm login gating.
 - Confirm recording cannot lose data due to UI changes.
-- Build the APK.
+- Build the relevant client package.
 
 ### Known Risks
 

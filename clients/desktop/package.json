@@ -1,0 +1,55 @@
+{
+  "name": "solorecord-desktop",
+  "version": "0.7.0",
+  "description": "SoloRecord desktop client wrapper",
+  "main": "src/main.js",
+  "author": "SoloRecord",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "portable:win": "powershell -ExecutionPolicy Bypass -File scripts/make-portable.ps1 -Version 0.7.0",
+    "dist:win": "electron-builder --win nsis --x64",
+    "dist:mac": "electron-builder --mac dmg --x64 --arm64"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/andyrenxu7255/solorecord.git",
+    "directory": "clients/desktop"
+  },
+  "build": {
+    "appId": "com.solorecord.desktop",
+    "productName": "SoloRecord",
+    "artifactName": "SoloRecord-${version}-${os}-${arch}.${ext}",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "src/main.js"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": true
+    }
+  },
+  "devDependencies": {
+    "electron": "37.3.1",
+    "electron-builder": "26.0.12"
+  }
+}

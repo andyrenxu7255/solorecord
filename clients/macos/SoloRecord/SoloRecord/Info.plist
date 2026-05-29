@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDisplayName</key>
+  <string>SoloRecord</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.solorecord.macos</string>
+  <key>CFBundleName</key>
+  <string>SoloRecord</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.7.0</string>
+  <key>CFBundleVersion</key>
+  <string>7</string>
+  <key>SoloRecordServerURL</key>
+  <string>http://127.0.0.1:8000</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>SoloRecord needs microphone access to record meetings.</string>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsArbitraryLoads</key>
+    <false/>
+    <key>NSExceptionDomains</key>
+    <dict>
+      <key>127.0.0.1</key>
+      <dict>
+        <key>NSExceptionAllowsInsecureHTTPLoads</key>
+        <true/>
+      </dict>
+    </dict>
+  </dict>
+</dict>
+</plist>

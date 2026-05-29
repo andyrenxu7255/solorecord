@@ -10,11 +10,12 @@ SoloRecord 是公司内部会议记录系统，用来通过 Android App 可靠�
 
 ## 当前版本：V0.7
 
-这是面向公司内部使用的一体化会议记录系统，当前发布版为 V0.7，包含 Android App、服务端网关和 Web 管理/PC 端。
+这是面向公司内部使用的一体化会议记录系统，当前发布版为 V0.7，包含 Android App、服务端网关、Web 管理/PC 端，以及 Windows/macOS/iOS/HarmonyOS 终端外壳工程。
 
 - Android App：LDAP 登录、可选统一登录跳转与回跳、连续 WAV 滚动分段录音、约 2 秒分段重叠、本地记录、本地播放、分段自动上传、重装后恢复服务器记录、查看转写/纪要/待办、批量修改角色名。
-- 服务端：登录会话、会议/音频/转写/转写历史/角色/纪要/待办、ASR/LLM 配置、导出、APK 发布下载、Hermes/Webhook 转发、外部知识平台读取接口。
-- Web 端：PC 上传录音、会议查看编辑、角色重命名、导出、模型配置、任务管理、APK 发布。
+- 服务端：登录会话、会议/音频/转写/转写历史/角色/纪要/待办、ASR/LLM 配置、导出、多平台终端发布下载、Hermes/Webhook 转发、外部知识平台读取接口。
+- Web 端：PC 实时录音、PC 上传录音、会议查看编辑、角色重命名、导出、模型配置、任务管理、多平台终端发布。
+- 多平台客户端：Windows Electron 可运行包，macOS Electron/SwiftUI 外壳，iOS WKWebView 外壳，HarmonyOS Web 外壳。iOS/macOS/HarmonyOS 签名安装包需在对应官方构建机生成。
 - 模型密钥保存在服务端，APK 默认只需要服务器地址和短期会话 token。
 - 转写是企业知识整理的原始证据层，当前版本和历史归档都持久化在服务端；非 admin 不能删除转写段，知识平台 Agent 通过外部 API 拉取。
 
@@ -36,6 +37,7 @@ SoloRecord 是公司内部会议记录系统，用来通过 Android App 可靠�
 - 开源调研：[docs/open-source-research.md](docs/open-source-research.md)
 - 安全审计：[docs/security-audit.md](docs/security-audit.md)
 - 用户体验审计：[docs/ux-review-v0.7.md](docs/ux-review-v0.7.md)
+- 多终端客户端：[docs/multi-platform-clients.md](docs/multi-platform-clients.md)
 - V0.7 发布说明：[docs/release-v0.7.md](docs/release-v0.7.md)
 
 ## 打开方式
@@ -71,6 +73,7 @@ http://127.0.0.1:8000
 - 服务端主流程测试通过
 - API/Web smoke 测试通过
 - Android `assembleDebug` 通过，包含滚动录音改动
+- Windows Electron `win-unpacked/SoloRecord.exe` 启动 smoke 通过，portable ZIP 已生成
 - APK 输出：`app/build/outputs/apk/debug/app-debug.apk`
 
 ## 接口约定
@@ -107,7 +110,9 @@ http://127.0.0.1:8000
 4. 在线时，每个分段完成后会自动上传并触发一次分段转写，阶段结果持续写回同一条会议记录。
 5. 点击“结束录音”后，最后一段也会保存并上传，然后服务端对整场会议生成完整转写、纪要、待办、外部系统转发和可选 ES/OpenSearch 索引。
 6. 网络不稳定时，同步采用分段级断点续传；已上传分段会在本地账本中标记，下次只补传未完成分段。
-7. 用户在 App 或 Web 查看转写、纪要、待办，也可以改说话人名称、下载播放服务器音频和导出文件。
+7. 用户在 App、Web 或桌面客户端查看转写、纪要、待办，也可以改说话人名称、下载播放服务器音频和导出文件。
+
+Windows、macOS、iOS、HarmonyOS 终端共享服务器 Web 体验。Android 仍是长会议最可靠的采集端；桌面和 WebView 端可直接录音或补传文件，录音能力取决于系统 WebView/浏览器麦克风权限。
 
 APK 体积较小是预期现象：它不内置 ASR/LLM 模型和三方重 SDK，只负责登录、录音、分段落盘、文件流式上传、播放和展示。当前上传边界默认是 5 分钟左右一个音频分段，可由服务端配置；如果网络中断，最多重传当前未确认分段，而不是整场会议。
 
@@ -161,14 +166,15 @@ python /opt/solorecord-asr/run_asr.py --audios-json {audio_json} --sample-rate {
 
 ## English
 
-SoloRecord is an internal company meeting recorder. V0.7 is the first deployable release and includes an Android app, FastAPI server, Web admin/PC UI, documentation, and verification scripts.
+SoloRecord is an internal company meeting recorder. V0.7 is the first deployable release and includes an Android app, FastAPI server, Web admin/PC UI, Windows/macOS/iOS/HarmonyOS client shells, documentation, and verification scripts.
 
 ### What V0.7 Includes
 
 - Android app: LDAP login, optional SSO login handoff, continuous WAV rolling recording with about two seconds of overlap between adjacent segments, local records, playback, segment auto-upload, server record recovery after reinstall, transcript/summary/action-item viewing, and batch speaker rename.
-- Server: login sessions, meetings, audio segments, transcripts, speaker names, summaries, action items, ASR/LLM configuration, exports, APK publishing, Hermes/Webhook forwarding, external API, and optional ES/OpenSearch indexing.
+- Server: login sessions, meetings, audio segments, transcripts, speaker names, summaries, action items, ASR/LLM configuration, exports, multi-platform client publishing, Hermes/Webhook forwarding, external API, and optional ES/OpenSearch indexing.
 - Transcript persistence: current transcript rows and archived history are stored server-side; non-admin users cannot delete transcript segments, and enterprise knowledge agents read transcript evidence through the external API.
-- Web app: PC upload, meeting review/editing, transcript editing, speaker rename, exports, model configuration, job management, and APK publishing.
+- Web app: PC live recording, file upload, meeting review/editing, transcript editing, speaker rename, exports, model configuration, job management, and multi-platform client publishing.
+- Multi-platform clients: Windows Electron package, macOS Electron/SwiftUI shell, iOS WKWebView shell, and HarmonyOS Web shell. Signed iOS/macOS/HarmonyOS packages require their official build machines.
 - Secrets are stored server-side. The APK only needs the server endpoint and a short-lived session token.
 - The public GitHub Release APK contains no real server URL or secret. Users can enter the server URL on first run; for company distribution, rebuild with `-PSOLO_SERVER_ENDPOINT=https://record.example.com` and publish that APK from the server Web admin.
 - The Android app records to local rolling audio files first and uses segment-level resume for upload. Confirmed segments are skipped on retry; only pending segments are uploaded again. While online, each completed segment is uploaded and transcribed into the same meeting record before final summary processing.
@@ -200,6 +206,7 @@ Build the Android debug APK:
 - User manual: [docs/user/README.md](docs/user/README.md)
 - Agent maintenance: [AGENTS.md](AGENTS.md), [docs/agents/README.md](docs/agents/README.md), [llms.txt](llms.txt)
 - UX review: [docs/ux-review-v0.7.md](docs/ux-review-v0.7.md)
+- Multi-platform clients: [docs/multi-platform-clients.md](docs/multi-platform-clients.md)
 - Release notes: [docs/release-v0.7.md](docs/release-v0.7.md)
 
 ### ASR Integration

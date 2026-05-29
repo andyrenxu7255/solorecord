@@ -1,7 +1,7 @@
 from pathlib import Path
 import json
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -38,6 +38,15 @@ from .utils import new_id, now_iso, row_to_dict, sha256_file
 
 app = FastAPI(title="SoloRecord Internal API", version="0.7.0")
 settings = get_settings()
+
+SUPPORTED_RELEASE_PLATFORMS = {"android", "windows", "macos", "ios", "harmony"}
+PLATFORM_FILE_NAMES = {
+    "android": "solorecord.apk",
+    "windows": "SoloRecord-Setup.exe",
+    "macos": "SoloRecord.dmg",
+    "ios": "SoloRecord.ipa",
+    "harmony": "SoloRecord.hap",
+}
 
 app.add_middleware(
     CORSMiddleware,
@@ -587,19 +596,29 @@ def search(q: str, user: CurrentUser) -> dict:
 
 @app.get("/api/mobile/releases/latest")
 @app.get("/api/web/releases/latest")
-def latest_release(user: CurrentUser) -> dict:
+def latest_release(user: CurrentUser, platform: str = Query("android")) -> dict:
+    platform = _normalize_release_platform(platform)
     with get_db() as db:
-        row = db.execute("SELECT * FROM apk_releases ORDER BY version_code DESC LIMIT 1").fetchone()
+        row = db.execute(
+            """
+            SELECT * FROM apk_releases
+            WHERE platform = ?
+            ORDER BY version_code DESC, created_at DESC
+            LIMIT 1
+            """,
+            (platform,),
+        ).fetchone()
     if not row:
         return {"release": None}
     release = row_to_dict(row)
-    release["downloadUrl"] = f"/downloads/android/{release['version_name']}/app.apk"
+    release["downloadUrl"] = _release_download_url(release)
     return {"release": release}
 
 
 @app.post("/api/admin/releases")
 async def upload_release(
     user: CurrentUser,
+    platform: str = Form("android"),
     version_name: str = Form(...),
     version_code: int = Form(...),
     release_notes: str = Form(""),
@@ -607,9 +626,11 @@ async def upload_release(
     file: UploadFile = File(...),
 ) -> dict:
     require_admin(user)
-    release_dir = settings.apk_dir / version_name
+    platform = _normalize_release_platform(platform)
+    release_dir = settings.apk_dir / platform / version_name
     release_dir.mkdir(parents=True, exist_ok=True)
-    path = release_dir / "app.apk"
+    safe_name = Path(file.filename or PLATFORM_FILE_NAMES[platform]).name
+    path = release_dir / safe_name
     with path.open("wb") as output:
         while chunk := await file.read(1024 * 1024):
             output.write(chunk)
@@ -619,26 +640,66 @@ async def upload_release(
         db.execute(
             """
             INSERT INTO apk_releases
-            (id, version_name, version_code, file_name, storage_path, sha256, release_notes, force_update, created_at)
-            VALUES (?, ?, ?, 'app.apk', ?, ?, ?, ?, ?)
+            (id, platform, version_name, version_code, file_name, storage_path, content_type,
+             sha256, release_notes, force_update, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (release_id, version_name, version_code, str(path), digest, release_notes, 1 if force_update else 0, now_iso()),
+            (
+                release_id,
+                platform,
+                version_name,
+                version_code,
+                safe_name,
+                str(path),
+                file.content_type or _release_media_type(platform),
+                digest,
+                release_notes,
+                1 if force_update else 0,
+                now_iso(),
+            ),
         )
-    audit(user["id"], "release.upload", "release", release_id)
-    return {"id": release_id, "sha256": digest}
+    audit(user["id"], "release.upload", "release", release_id, {"platform": platform})
+    return {
+        "id": release_id,
+        "platform": platform,
+        "sha256": digest,
+        "downloadUrl": f"/downloads/{platform}/{version_name}/{safe_name}",
+    }
 
 
 @app.get("/downloads/android/{version}/app.apk")
 def download_apk(version: str) -> FileResponse:
+    return _download_release("android", version, "app.apk")
+
+
+@app.get("/downloads/{platform}/{version}/{file_name}")
+def download_release(platform: str, version: str, file_name: str) -> FileResponse:
+    return _download_release(platform, version, file_name)
+
+
+def _download_release(platform: str, version: str, file_name: str) -> FileResponse:
     # Internal deployments may also restrict this path at Nginx/VPN level.
+    platform = _normalize_release_platform(platform)
     with get_db() as db:
         row = db.execute(
-            "SELECT * FROM apk_releases WHERE version_name = ? ORDER BY version_code DESC LIMIT 1",
-            (version,),
+            """
+            SELECT * FROM apk_releases
+            WHERE platform = ? AND version_name = ?
+            ORDER BY version_code DESC, created_at DESC
+            LIMIT 1
+            """,
+            (platform, version),
         ).fetchone()
     if not row or not Path(row["storage_path"]).exists():
-        raise HTTPException(status_code=404, detail="APK not found")
-    return FileResponse(row["storage_path"], filename="solorecord.apk", media_type="application/vnd.android.package-archive")
+        raise HTTPException(status_code=404, detail="Release artifact not found")
+    stored_name = row["file_name"] or PLATFORM_FILE_NAMES[platform]
+    if file_name not in {stored_name, "app.apk"}:
+        raise HTTPException(status_code=404, detail="Release artifact not found")
+    return FileResponse(
+        row["storage_path"],
+        filename=stored_name,
+        media_type=row["content_type"] or _release_media_type(platform),
+    )
 
 
 @app.get("/api/admin/providers")
@@ -743,6 +804,45 @@ def _try_index(meeting_id: str) -> None:
         index_meeting(meeting_id)
     except Exception:
         pass
+
+
+def _normalize_release_platform(platform: str) -> str:
+    value = (platform or "android").strip().lower()
+    aliases = {
+        "apk": "android",
+        "android-apk": "android",
+        "win": "windows",
+        "win32": "windows",
+        "exe": "windows",
+        "darwin": "macos",
+        "mac": "macos",
+        "osx": "macos",
+        "ios-ipa": "ios",
+        "openharmony": "harmony",
+        "harmonyos": "harmony",
+        "hap": "harmony",
+    }
+    value = aliases.get(value, value)
+    if value not in SUPPORTED_RELEASE_PLATFORMS:
+        raise HTTPException(status_code=400, detail="Unsupported release platform")
+    return value
+
+
+def _release_download_url(release: dict) -> str:
+    platform = _normalize_release_platform(str(release.get("platform") or "android"))
+    if platform == "android":
+        return f"/downloads/android/{release['version_name']}/app.apk"
+    return f"/downloads/{platform}/{release['version_name']}/{release['file_name']}"
+
+
+def _release_media_type(platform: str) -> str:
+    return {
+        "android": "application/vnd.android.package-archive",
+        "windows": "application/vnd.microsoft.portable-executable",
+        "macos": "application/x-apple-diskimage",
+        "ios": "application/octet-stream",
+        "harmony": "application/octet-stream",
+    }.get(platform, "application/octet-stream")
 
 static_path = settings.static_dir
 if static_path.exists():

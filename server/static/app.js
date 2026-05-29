@@ -4,6 +4,29 @@ const state = {
   meetings: [],
   selectedMeetingId: "",
   selectedTranscriptVersion: 1,
+  selectedDownloadPlatform: "android",
+  recorder: {
+    mediaRecorder: null,
+    stream: null,
+    meetingId: "",
+    startedAt: 0,
+    segmentStartedAt: 0,
+    segmentNo: 0,
+    chunks: [],
+    timer: null,
+    segmentMs: 5 * 60 * 1000,
+    uploads: [],
+    mimeType: "",
+    continueAfterStop: false,
+  },
+};
+
+const PLATFORM_LABELS = {
+  android: "Android APK",
+  windows: "Windows EXE",
+  macos: "macOS DMG",
+  ios: "iOS IPA",
+  harmony: "HarmonyOS HAP",
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -37,6 +60,7 @@ function setView(name) {
   $$(".view").forEach((view) => view.classList.toggle("active", view.id === `view-${name}`));
   if (name === "downloads") loadRelease();
   if (name === "admin") loadAdmin();
+  if (name === "recorder") loadRecorderConfig();
 }
 
 function showLogin() {
@@ -309,23 +333,231 @@ async function createAndUpload() {
   await selectMeeting(meetingId);
 }
 
+async function loadRecorderConfig() {
+  try {
+    const data = await api("/api/mobile/config");
+    state.recorder.segmentMs = Math.max(1, Number(data.segmentMinutes || 5)) * 60 * 1000;
+  } catch (error) {
+    state.recorder.segmentMs = 5 * 60 * 1000;
+  }
+  renderRecorderSegments();
+}
+
+async function startWebRecording() {
+  if (!state.token) {
+    showLogin();
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+    toast("当前客户端不支持浏览器录音，请使用文件补传或 Android App");
+    return;
+  }
+  await loadRecorderConfig();
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const title = $("#recordMeetingTitle").value.trim() || `会议录音 ${new Date().toLocaleString()}`;
+  const meeting = await api("/api/web/meetings", {
+    method: "POST",
+    body: JSON.stringify({ title, started_at: new Date().toISOString() }),
+  });
+  const mimeType = pickRecorderMimeType();
+  const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+  Object.assign(state.recorder, {
+    mediaRecorder: recorder,
+    stream,
+    meetingId: meeting.meeting.id,
+    startedAt: Date.now(),
+    segmentStartedAt: Date.now(),
+    segmentNo: 0,
+    chunks: [],
+    uploads: [],
+    mimeType: recorder.mimeType || mimeType || "audio/webm",
+    continueAfterStop: false,
+  });
+  recorder.addEventListener("dataavailable", (event) => {
+    if (event.data && event.data.size > 0) state.recorder.chunks.push(event.data);
+  });
+  recorder.addEventListener("stop", () => {
+    const shouldContinue = state.recorder.continueAfterStop;
+    state.recorder.continueAfterStop = false;
+    void finalizeRecorderSegment(shouldContinue);
+  });
+  recorder.start();
+  state.recorder.timer = setInterval(updateRecordTimer, 1000);
+  $("#startRecordButton").disabled = true;
+  $("#stopRecordButton").disabled = false;
+  $("#recordStatus").textContent = "录音中";
+  $("#recordDot").classList.add("active");
+  toast("已开始录音");
+}
+
+async function stopWebRecording() {
+  const recorder = state.recorder.mediaRecorder;
+  if (!recorder) return;
+  $("#stopRecordButton").disabled = true;
+  $("#recordStatus").textContent = "正在保存最后分段";
+  if (recorder.state === "recording") {
+    state.recorder.continueAfterStop = false;
+    recorder.stop();
+  }
+}
+
+async function rotateRecorderSegment() {
+  const recorder = state.recorder.mediaRecorder;
+  if (!recorder || recorder.state !== "recording") return;
+  state.recorder.continueAfterStop = true;
+  recorder.stop();
+}
+
+async function finalizeRecorderSegment(continueRecording) {
+  const recorderState = state.recorder;
+  const blob = new Blob(recorderState.chunks, { type: recorderState.mimeType || "audio/webm" });
+  const startedAt = recorderState.segmentStartedAt;
+  const now = Date.now();
+  recorderState.chunks = [];
+  if (blob.size > 0 && recorderState.meetingId) {
+    recorderState.segmentNo += 1;
+    const segmentNo = recorderState.segmentNo;
+    const startMs = Math.max(0, startedAt - recorderState.startedAt);
+    const endMs = Math.max(startMs, now - recorderState.startedAt);
+    recorderState.uploads.push({ segmentNo, status: "上传中", size: blob.size });
+    renderRecorderSegments();
+    await uploadRecorderSegment(blob, segmentNo, startMs, endMs);
+  }
+  if (continueRecording && recorderState.stream) {
+    const mimeType = pickRecorderMimeType();
+    const nextRecorder = new MediaRecorder(recorderState.stream, mimeType ? { mimeType } : undefined);
+    recorderState.chunks = [];
+    recorderState.mediaRecorder = nextRecorder;
+    recorderState.segmentStartedAt = Date.now();
+    recorderState.mimeType = nextRecorder.mimeType || mimeType || "audio/webm";
+    nextRecorder.addEventListener("dataavailable", (event) => {
+      if (event.data && event.data.size > 0) recorderState.chunks.push(event.data);
+    });
+    nextRecorder.addEventListener("stop", () => {
+      const shouldContinue = recorderState.continueAfterStop;
+      recorderState.continueAfterStop = false;
+      void finalizeRecorderSegment(shouldContinue);
+    });
+    nextRecorder.start();
+    return;
+  }
+  await finishWebRecording();
+}
+
+async function uploadRecorderSegment(blob, segmentNo, startMs, endMs) {
+  const extension = recorderExtension(state.recorder.mimeType);
+  const form = new FormData();
+  form.append("segment_no", String(segmentNo));
+  form.append("start_ms", String(startMs));
+  form.append("end_ms", String(endMs));
+  form.append("duration_ms", String(endMs - startMs));
+  form.append("file", blob, `web_part_${String(segmentNo).padStart(4, "0")}.${extension}`);
+  try {
+    await api(`/api/mobile/meetings/${state.recorder.meetingId}/segments`, { method: "POST", body: form, headers: {} });
+    updateRecorderUpload(segmentNo, "已上传");
+  } catch (error) {
+    updateRecorderUpload(segmentNo, "待重试");
+    toast("分段上传失败，录音已保留在当前会话内，请网络恢复后结束并重试");
+  }
+}
+
+async function finishWebRecording() {
+  if (state.recorder.timer) clearInterval(state.recorder.timer);
+  if (state.recorder.stream) {
+    state.recorder.stream.getTracks().forEach((track) => track.stop());
+  }
+  const meetingId = state.recorder.meetingId;
+  const pending = state.recorder.uploads.filter((item) => item.status !== "已上传");
+  if (meetingId && !pending.length) {
+    await api(`/api/mobile/meetings/${meetingId}/finish`, { method: "POST", body: "{}" });
+    toast("录音已结束，已提交完整整理");
+    setView("meetings");
+    await loadMeetings();
+    await selectMeeting(meetingId);
+  } else if (pending.length) {
+    toast("仍有分段未上传，请保持页面打开后重试文件补传");
+  }
+  Object.assign(state.recorder, {
+    mediaRecorder: null,
+    stream: null,
+    meetingId: "",
+    startedAt: 0,
+    segmentStartedAt: 0,
+    chunks: [],
+    timer: null,
+    continueAfterStop: false,
+  });
+  $("#startRecordButton").disabled = false;
+  $("#stopRecordButton").disabled = true;
+  $("#recordStatus").textContent = "未开始";
+  $("#recordDot").classList.remove("active");
+  updateRecordTimer();
+}
+
+function updateRecorderUpload(segmentNo, status) {
+  const item = state.recorder.uploads.find((entry) => entry.segmentNo === segmentNo);
+  if (item) item.status = status;
+  renderRecorderSegments();
+}
+
+function renderRecorderSegments() {
+  const box = $("#recordSegmentList");
+  if (!box) return;
+  if (!state.recorder.uploads.length) {
+    box.innerHTML = `<p class="hint">暂无录音分段</p>`;
+    return;
+  }
+  box.innerHTML = state.recorder.uploads.map((item) => `
+    <div class="audio-segment">
+      <div><b>分段 ${item.segmentNo}</b><span>${formatBytes(item.size || 0)}</span></div>
+      <span class="status-pill">${escapeHtml(item.status)}</span>
+    </div>
+  `).join("");
+}
+
+function updateRecordTimer() {
+  const elapsed = state.recorder.startedAt ? Date.now() - state.recorder.startedAt : 0;
+  $("#recordTimer").textContent = formatTime(elapsed);
+  if (
+    state.recorder.mediaRecorder
+    && state.recorder.mediaRecorder.state === "recording"
+    && elapsed > 0
+    && Date.now() - state.recorder.segmentStartedAt >= state.recorder.segmentMs
+  ) {
+    void rotateRecorderSegment();
+  }
+}
+
+function pickRecorderMimeType() {
+  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/aac"];
+  return candidates.find((type) => MediaRecorder.isTypeSupported?.(type)) || "";
+}
+
+function recorderExtension(mimeType) {
+  if (String(mimeType).includes("mp4")) return "m4a";
+  if (String(mimeType).includes("aac")) return "aac";
+  if (String(mimeType).includes("ogg")) return "ogg";
+  return "webm";
+}
+
 async function loadRelease() {
   try {
-    const data = await api("/api/web/releases/latest");
+    const platform = state.selectedDownloadPlatform || "android";
+    const data = await api(`/api/web/releases/latest?platform=${encodeURIComponent(platform)}`);
     const box = $("#releaseBox");
     if (!data.release) {
-      box.innerHTML = `<p>尚未发布 APK。管理员可在管理页上传。</p>`;
+      box.innerHTML = `<p>尚未发布 ${PLATFORM_LABELS[platform]}。管理员可在管理页上传。</p>`;
       return;
     }
     const rel = data.release;
     box.innerHTML = `
-      <h3>${escapeHtml(rel.version_name)} (${rel.version_code})</h3>
+      <h3>${escapeHtml(PLATFORM_LABELS[rel.platform] || rel.platform)} · ${escapeHtml(rel.version_name)} (${rel.version_code})</h3>
       <p>SHA-256：<code>${escapeHtml(rel.sha256)}</code></p>
       <p>${escapeHtml(rel.release_notes || "")}</p>
-      <a class="button primary" href="${rel.downloadUrl}">下载 APK</a>
+      <a class="button primary" href="${rel.downloadUrl}">下载 ${escapeHtml(PLATFORM_LABELS[rel.platform] || "应用")}</a>
     `;
   } catch (error) {
-    $("#releaseBox").textContent = "请先登录后查看 APK。";
+    $("#releaseBox").textContent = "请先登录后查看发布包。";
   }
 }
 
@@ -406,19 +638,21 @@ async function retryJob(jobId) {
 }
 
 async function uploadRelease() {
-  const file = $("#apkFile").files[0];
+  const file = $("#releaseFile").files[0];
   if (!file) {
-    toast("请选择 APK 文件");
+    toast("请选择发布包文件");
     return;
   }
   const form = new FormData();
+  form.append("platform", $("#releasePlatform").value);
   form.append("version_name", $("#releaseVersionName").value || "0.7.0");
   form.append("version_code", $("#releaseVersionCode").value || "7");
   form.append("release_notes", $("#releaseNotes").value || "");
   form.append("force_update", $("#forceUpdate").checked ? "true" : "false");
   form.append("file", file);
   await api("/api/admin/releases", { method: "POST", body: form, headers: {} });
-  toast("APK 已发布");
+  state.selectedDownloadPlatform = $("#releasePlatform").value;
+  toast("发布包已上传");
   await loadRelease();
 }
 
@@ -448,6 +682,12 @@ function formatDate(value) {
 function formatTime(ms) {
   const seconds = Math.floor((ms || 0) / 1000);
   return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function escapeHtml(value) {
@@ -483,9 +723,28 @@ function bindEvents() {
     if (event.key === "Enter") loadMeetings($("#searchInput").value.trim());
   });
   $("#createUploadButton").addEventListener("click", createAndUpload);
+  $("#startRecordButton").addEventListener("click", () => {
+    startWebRecording().catch(() => toast("无法开始录音，请检查麦克风权限"));
+  });
+  $("#stopRecordButton").addEventListener("click", () => {
+    stopWebRecording().catch(() => toast("结束录音失败，请稍后重试"));
+  });
+  $$("#downloadTabs .chip").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.selectedDownloadPlatform = button.dataset.platform;
+      $$("#downloadTabs .chip").forEach((item) => item.classList.toggle("active", item === button));
+      loadRelease();
+    });
+  });
   $("#refreshAdmin").addEventListener("click", loadAdmin);
   $("#saveProviders").addEventListener("click", saveProviders);
   $("#uploadRelease").addEventListener("click", uploadRelease);
+  window.addEventListener("beforeunload", (event) => {
+    if (state.recorder.mediaRecorder) {
+      event.preventDefault();
+      event.returnValue = "录音仍在进行中，请先结束录音。";
+    }
+  });
 }
 
 async function init() {

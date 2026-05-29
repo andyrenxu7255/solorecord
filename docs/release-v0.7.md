@@ -13,7 +13,8 @@ SoloRecord V0.7 是公司内部会议记录系统的首个可部署交付版，�
 - 弱网分段续传：音频分段本地落盘，multipart 文件流上传，已确认分段重试时跳过，重复 finish 会复用已有处理任务。
 - 服务器权威存储：保存登录用户名、会议、音频分段、转写、纪要、待办、角色名和审计日志。
 - 重装 APK 后恢复：登录后可从 `/api/mobile/sync` 恢复服务器记录，并按权限下载服务器音频播放。
-- Web 管理端：会议查看/编辑、转写编辑、角色改名、导出、模型配置、任务查看、APK 发布。
+- Web 管理端：会议查看/编辑、Web 实时录音、转写编辑、角色改名、导出、模型配置、任务查看、多平台终端发布。
+- 多平台客户端：Windows Electron 可运行包已生成并启动验证；macOS、iOS、HarmonyOS 提供 WebView 外壳工程，签名安装包需在对应官方构建机生成。
 - APK Release 附件：公开附件不包含真实服务器地址和任何 token/key；内部分发时只预置服务器地址，再由 Web 管理端发布下载。
 - 模型密钥服务端保存：APK 不包含 ASR/LLM/LDAP/SSO/Hermes/ES 密钥。
 - ASR 适配器：支持本地命令适配器，也支持 OpenAI 兼容/FunASR 远程 STT 服务；模型密钥仅保存在服务器端。
@@ -25,7 +26,8 @@ SoloRecord V0.7 是公司内部会议记录系统的首个可部署交付版，�
 ### 验收状态
 
 - 服务端主流程测试通过。
-- HTTP 端到端 smoke 通过，覆盖登录、重叠分段上传、阶段转写、受权限保护的音频下载、处理、转写、角色改名、同步、外部 API、导出和 APK 发布下载。
+- HTTP 端到端 smoke 通过，覆盖登录、重叠分段上传、阶段转写、受权限保护的音频下载、处理、转写、角色改名、同步、外部 API、导出和多平台发布下载。
+- Windows `clients/desktop/dist/win-unpacked/SoloRecord.exe` 启动 smoke 通过，`clients/desktop/release/SoloRecord-0.7.0-windows-x64.zip` 已生成。
 - Android `assembleDebug` 通过。
 - APK 当前约 60KB 属于预期：不内置 ASR/LLM 模型和三方重 SDK，只包含登录、录音、分段账本、同步、播放和展示逻辑。
 - `pip check` 通过。
@@ -54,7 +56,8 @@ SoloRecord V0.7 is the first deployable internal release of the company meeting 
 - Weak-network segment resume: audio segments are stored locally, uploaded as multipart files, skipped after acknowledgement, and repeated finish calls reuse the existing processing job.
 - Server-authoritative storage: user identity, meetings, audio segments, transcripts, summaries, action items, speaker names, and audit logs are stored server-side.
 - APK reinstall recovery: after login, the app can restore records through `/api/mobile/sync` and download protected server audio segments for playback.
-- Web admin: meeting review/editing, transcript editing, speaker rename, exports, model configuration, job view, and APK publishing.
+- Web admin: meeting review/editing, Web live recording, transcript editing, speaker rename, exports, model configuration, job view, and multi-platform client publishing.
+- Multi-platform clients: Windows Electron package generated and smoke-started. macOS, iOS, and HarmonyOS WebView shell projects are provided; signed packages require the matching official build machines.
 - APK Release asset: the public attachment contains no real server URL or token/key. For internal distribution, embed only the server URL and publish the APK from the Web admin.
 - Server-side secrets: the APK does not contain ASR, LLM, LDAP, SSO, Hermes, or ES credentials.
 - ASR adapters: local command runtimes and OpenAI-compatible/FunASR remote STT services are supported; model secrets remain server-side.
@@ -66,7 +69,8 @@ SoloRecord V0.7 is the first deployable internal release of the company meeting 
 ### Verification
 
 - Server regression test passed.
-- HTTP end-to-end smoke passed, covering login, overlapped segment upload, partial transcript return, protected audio download, processing, transcript fetch, speaker rename, sync, external API, export, and APK release download.
+- HTTP end-to-end smoke passed, covering login, overlapped segment upload, partial transcript return, protected audio download, processing, transcript fetch, speaker rename, sync, external API, export, and multi-platform release download.
+- Windows `clients/desktop/dist/win-unpacked/SoloRecord.exe` smoke-started successfully, and `clients/desktop/release/SoloRecord-0.7.0-windows-x64.zip` was generated.
 - Android `assembleDebug` passed.
 - The APK is roughly 60KB by design because ASR/LLM models and heavy third-party SDKs are not embedded; it contains login, recording, upload ledger, sync, playback, and display logic.
 - `pip check` passed.

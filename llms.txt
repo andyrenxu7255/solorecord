@@ -2,7 +2,7 @@
 
 ## 中文
 
-> 公司内部会议记录系统：Android APK + FastAPI 服务端 + Web 管理端 + 本地或远程 STT/ASR + LLM 流水线 + 群晖 LDAP/SSO + 服务端转写/纪要存储 + 可选 ES/OpenSearch。
+> 公司内部会议记录系统：Android APK + Windows/macOS/iOS/HarmonyOS 终端外壳 + FastAPI 服务端 + Web 管理端 + 本地或远程 STT/ASR + LLM 流水线 + 群晖 LDAP/SSO + 服务端转写/纪要存储 + 可选 ES/OpenSearch。
 
 ### 先读这里
 
@@ -14,6 +14,7 @@
 - [运维手册](docs/human-ops/README.md)：部署、环境变量、LDAP/SSO、ASR/LLM、ES、备份、APK 发布、排障。
 - [部署参考](docs/deployment.md)：快速启动和 Docker 说明。
 - [安全审计](docs/security-audit.md)：安全控制、原型风险、验证结果。
+- [多终端客户端](docs/multi-platform-clients.md)：Android、Windows、macOS、iOS、HarmonyOS 构建与发布。
 - [数据存储与 ES](docs/data-storage-and-es.md)：服务端权威存储、移动端重装同步、外部 API、ES/OpenSearch 文档结构。
 
 ### 人类开发
@@ -29,7 +30,7 @@
 ### 智能体维护
 
 - [智能体维护手册](docs/agents/README.md)：上下文摘要、安全任务模式、已知风险、文档维护规则。
-- 服务器运维 Agent 自动部署：见 [docs/agents/README.md](docs/agents/README.md) 的“服务器运维 Agent 自动部署 Runbook”，会向操作者收集 URL/key，写入服务器 `.env`，自动部署、发布 APK 并联调。
+- 服务器运维 Agent 自动部署：见 [docs/agents/README.md](docs/agents/README.md) 的“服务器运维 Agent 自动部署 Runbook”，会向操作者收集 URL/key，写入服务器 `.env`，自动部署、发布终端应用并联调。
 
 ### 产品与架构参考
 
@@ -37,6 +38,7 @@
 - [群晖 SSO + ASR 架构](docs/synology-bailian-architecture.md)：安全决策、群晖 SSO、百炼/Qwen ASR 分析。
 - [开源调研](docs/open-source-research.md)：sherpa-onnx、whisper.cpp、Vosk、Whishper、Meetily、许可证注意事项。
 - [分发模式](docs/distribution-mode.md)：内部 APK 分发参考。
+- [多终端客户端](docs/multi-platform-clients.md)：多平台终端工程、构建、签名与服务端发布。
 - [Roadmap](docs/roadmap.md)：后续增强建议。
 - [V0.7 发布说明](docs/release-v0.7.md)：当前发布能力、验证状态和部署提醒。
 
@@ -54,6 +56,8 @@
 - `app/src/main/java/com/solorecord/MainActivity.java`：Android UI 和流程。
 - `app/src/main/java/com/solorecord/net/RollingAudioRecorder.java`：Android 滚动录音。
 - `app/src/main/java/com/solorecord/net/SoloServerClient.java`：Android 服务端 API、同步、服务器音频下载。
+- `clients/desktop`：Windows/macOS Electron 客户端。
+- `clients/ios`、`clients/macos`、`clients/harmony`：iOS、macOS、HarmonyOS WebView 外壳工程。
 
 ### 常用命令
 
@@ -61,15 +65,16 @@
 scripts\run-tests.ps1
 scripts\run-server.ps1
 & 'C:\Users\Andy\.gradle\wrapper\dists\gradle-8.7-bin\bhs2wmbdwecv87pi65oeuq5iu\gradle-8.7\bin\gradle.bat' assembleDebug
+cd clients\desktop; npm install; npm run pack; npm run portable:win
 ```
 
 ### 公开仓库边界
 
-源码和文档可以公开，但真实密钥、`server/.env`、运行数据、数据库、缓存、APK 构建产物和客户会议音频不能提交。生产部署仍按公司内部系统保护。
+源码和文档可以公开，但真实密钥、`server/.env`、运行数据、数据库、缓存、终端构建产物和客户会议音频不能提交。生产部署仍按公司内部系统保护。
 
 ## English
 
-> Internal company meeting recorder: Android APK + FastAPI server + Web admin + local or remote STT/ASR + LLM pipeline + Synology LDAP/SSO + server-side transcript/summary storage + optional ES/OpenSearch.
+> Internal company meeting recorder: Android APK + Windows/macOS/iOS/HarmonyOS client shells + FastAPI server + Web admin + local or remote STT/ASR + LLM pipeline + Synology LDAP/SSO + server-side transcript/summary storage + optional ES/OpenSearch.
 
 ## Start Here
 
@@ -81,6 +86,7 @@ scripts\run-server.ps1
 - [Operations Manual](docs/human-ops/README.md): Deployment, env vars, LDAP/SSO, ASR/LLM, ES, backups, APK publishing, troubleshooting.
 - [Deployment Reference](docs/deployment.md): Quick start and Docker notes.
 - [Security Audit](docs/security-audit.md): Security controls, prototype risks, verification results.
+- [Multi-platform Clients](docs/multi-platform-clients.md): Android, Windows, macOS, iOS, and HarmonyOS builds and publishing.
 - [Data Storage And ES](docs/data-storage-and-es.md): Server authoritative storage, mobile resync, external API, ES/OpenSearch document shape.
 
 ## Human Development
@@ -96,7 +102,7 @@ scripts\run-server.ps1
 ## Agent Maintenance
 
 - [Agent Maintenance Manual](docs/agents/README.md): Context summary, safe task patterns, known risks, documentation maintenance rules.
-- Server operations agent auto-deployment: see the "Server Operations Agent Auto-Deployment Runbook" in [docs/agents/README.md](docs/agents/README.md). It collects URLs/keys from the operator, writes server-local `.env`, deploys, publishes APK, and runs integration checks.
+- Server operations agent auto-deployment: see the "Server Operations Agent Auto-Deployment Runbook" in [docs/agents/README.md](docs/agents/README.md). It collects URLs/keys from the operator, writes server-local `.env`, deploys, publishes client packages, and runs integration checks.
 
 ## Product And Architecture References
 
@@ -104,6 +110,7 @@ scripts\run-server.ps1
 - [Synology SSO + ASR Architecture](docs/synology-bailian-architecture.md): Security decision, Synology SSO, Bailian/Qwen ASR analysis.
 - [Open Source Research](docs/open-source-research.md): sherpa-onnx, whisper.cpp, Vosk, Whishper, Meetily, licensing notes.
 - [Distribution Mode](docs/distribution-mode.md): Original internal-distribution notes.
+- [Multi-platform Clients](docs/multi-platform-clients.md): Client projects, builds, signing, and server-side publishing.
 - [Roadmap](docs/roadmap.md): Follow-up enhancement ideas.
 
 ## Code Map
@@ -120,6 +127,8 @@ scripts\run-server.ps1
 - `app/src/main/java/com/solorecord/MainActivity.java`: Android UI and workflow.
 - `app/src/main/java/com/solorecord/net/RollingAudioRecorder.java`: Android rolling recorder.
 - `app/src/main/java/com/solorecord/net/SoloServerClient.java`: Android server API client, mobile sync, server audio download.
+- `clients/desktop`: Windows/macOS Electron client.
+- `clients/ios`, `clients/macos`, `clients/harmony`: iOS, macOS, and HarmonyOS WebView shells.
 
 ## Commands
 
@@ -127,4 +136,5 @@ scripts\run-server.ps1
 scripts\run-tests.ps1
 scripts\run-server.ps1
 & 'C:\Users\Andy\.gradle\wrapper\dists\gradle-8.7-bin\bhs2wmbdwecv87pi65oeuq5iu\gradle-8.7\bin\gradle.bat' assembleDebug
+cd clients\desktop; npm install; npm run pack; npm run portable:win
 ```

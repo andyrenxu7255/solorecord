@@ -9,8 +9,9 @@
 SoloRecord 由三部分组成：
 
 - Android APK：员工录音、查看记录、同步到服务器。
-- 服务端 API：登录、会议、音频、转写、纪要、待办、导出、APK 发布。
-- Web 管理端：会议管理、模型配置、任务队列、APK 下载/发布、外部接口配置。
+- Windows/macOS/iOS/HarmonyOS 客户端：承载服务器 Web 体验，支持录音、补传、记录查看和下载。
+- 服务端 API：登录、会议、音频、转写、纪要、待办、导出、多平台终端发布。
+- Web 管理端：会议管理、模型配置、任务队列、终端应用下载/发布、外部接口配置。
 
 服务端是权威数据源。APK 本地只保存录音和缓存；重装 APK 后，用户重新登录即可通过服务器同步记录。
 
@@ -327,15 +328,16 @@ POST /api/admin/search/reindex
 
 需要管理员登录。
 
-## APK 发布
+## 终端应用发布
 
-管理员登录 Web 后进入“管理”页上传 APK：
+管理员登录 Web 后进入“管理”页上传终端应用：
 
+- 平台：Android APK、Windows EXE/ZIP、macOS DMG、iOS IPA、HarmonyOS HAP
 - 版本名：例如 `0.7.0`
 - 版本号：整数，递增
 - 更新说明
 - 是否强制更新
-- APK 文件
+- 发布包文件
 
 APK 有两种构建方式：
 
@@ -355,6 +357,24 @@ app/build/outputs/apk/debug/app-debug.apk
 ```
 
 用户在 Web 的“App 下载”页下载。App 的登录状态页也会提示从 Web 下载最新 APK。
+
+Windows 客户端构建：
+
+```powershell
+cd clients\desktop
+npm install
+$env:SOLO_SERVER_URL="https://record.example.com"
+npm run pack
+npm run portable:win
+```
+
+输出：
+
+```text
+clients/desktop/release/SoloRecord-0.7.0-windows-x64.zip
+```
+
+macOS 可在 macOS 构建机用 `clients/desktop` 生成 DMG，也可使用 `clients/macos` 的 SwiftUI 外壳。iOS 使用 `clients/ios` 的 WKWebView 外壳并由 Xcode 导出 IPA。HarmonyOS 使用 DevEco Studio 打开 `clients/harmony/SoloRecord` 并导出 HAP。详见 `docs/multi-platform-clients.md`。
 
 App 重装后，本机缓存会清空，但服务器记录不丢失。用户重新登录后可在“录音”或“记录”页点击“从服务器恢复记录”。恢复后的记录带服务器音频下载地址；播放时会按用户权限下载音频分段再播放。
 
@@ -395,7 +415,7 @@ var/apk/
 
 - SQLite 数据库文件。
 - 音频和导出文件。
-- APK 发布文件。
+- 终端应用发布文件。
 
 备份前建议暂停写入或使用数据库一致性备份。生产长期运行建议迁移 PostgreSQL。
 
@@ -501,11 +521,12 @@ This manual is for the people who deploy, operate, back up, secure, and troubles
 
 ### System Components
 
-SoloRecord has three main parts:
+SoloRecord has these main parts:
 
 - Android APK: employee recording, local records, playback, and server sync.
-- Server API: login, meetings, audio, transcripts, summaries, action items, exports, APK publishing, and external integrations.
-- Web admin / PC UI: meeting management, provider configuration, jobs, APK download/publishing, and external API configuration.
+- Windows/macOS/iOS/HarmonyOS clients: server-hosted Web experience with recording, upload, record review, and downloads.
+- Server API: login, meetings, audio, transcripts, summaries, action items, exports, multi-platform client publishing, and external integrations.
+- Web admin / PC UI: meeting management, provider configuration, jobs, client download/publishing, and external API configuration.
 
 The server is the authoritative data source. The APK keeps local audio and cache only. After reinstalling the APK, users can sign in again and recover server records.
 
@@ -789,15 +810,16 @@ SOLO_ES_PASSWORD=
 
 It is an index only. The database remains the source of truth.
 
-### APK Publishing
+### Client Publishing
 
-Admins upload APKs from the Web admin page:
+Admins upload client packages from the Web admin page:
 
+- Platform: Android APK, Windows EXE/ZIP, macOS DMG, iOS IPA, or HarmonyOS HAP
 - Version name, such as `0.7.0`
 - Version code, integer and increasing
 - Release notes
 - Force update flag
-- APK file
+- Package file
 
 There are two APK build modes:
 
@@ -816,7 +838,25 @@ Output:
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Users download APKs from the Web App Download page. After reinstall, users sign in and click server recovery. Server audio can be downloaded and played according to permissions.
+Users download client packages from the Web App Download page. After reinstall, users sign in and click server recovery. Server audio can be downloaded and played according to permissions.
+
+Windows client build:
+
+```powershell
+cd clients\desktop
+npm install
+$env:SOLO_SERVER_URL="https://record.example.com"
+npm run pack
+npm run portable:win
+```
+
+Output:
+
+```text
+clients/desktop/release/SoloRecord-0.7.0-windows-x64.zip
+```
+
+macOS DMG should be built on macOS from `clients/desktop`, or from the SwiftUI shell in `clients/macos`. iOS IPA uses the WKWebView shell in `clients/ios` and Xcode signing. HarmonyOS HAP uses DevEco Studio with `clients/harmony/SoloRecord`. See `docs/multi-platform-clients.md`.
 
 Weak-network sync behavior:
 
@@ -889,8 +929,8 @@ docker compose build --build-arg INSTALL_MEDIA_TOOLS=true solorecord
 - `var/` mounted to persistent disk.
 - Backups configured.
 - External API tokens replaced with long random values.
-- APK uploaded and downloadable.
-- APK confirmed to contain only the server URL, with no ASR/LLM/LDAP/SSO/Hermes/ES token or key.
+- Required client packages uploaded and downloadable.
+- Client packages confirmed to contain only the server URL, with no ASR/LLM/LDAP/SSO/Hermes/ES token or key.
 - Test user completes LDAP login, recording, upload, transcription, speaker rename, export, server recovery, and server audio playback.
 - `scripts\smoke-e2e.ps1` passed.
 - `pip-audit -r server/requirements.txt` shows no known vulnerabilities.

@@ -9,6 +9,7 @@
 ```text
 D:\solo\solorecord
 ├── app/                         Android 原生 Java App
+├── clients/                     Windows/macOS/iOS/HarmonyOS 外壳工程
 ├── server/
 │   ├── solorecord_server/        FastAPI 服务端
 │   ├── static/                   Web 管理端静态页面
@@ -38,6 +39,15 @@ Web：
 - 静态 HTML/CSS/JavaScript
 - 无打包步骤
 - 通过 FastAPI StaticFiles 提供
+- 提供桌面/WebView 共享体验：录音、文件补传、记录、下载、管理
+
+桌面与 WebView：
+
+- `clients/desktop`：Electron Windows/macOS 外壳。
+- `clients/ios`：SwiftUI + WKWebView iOS 外壳。
+- `clients/macos`：SwiftUI + WKWebView macOS 备选外壳。
+- `clients/harmony`：HarmonyOS Stage 模型 Web 外壳。
+- 终端外壳不内置任何密钥，只配置服务器地址。
 
 Android：
 
@@ -134,7 +144,7 @@ POST /api/web/meetings/{meetingId}/speakers/rename
 POST /api/web/meetings/{meetingId}/exports
 GET  /api/web/search
 GET  /api/web/sync
-GET  /api/web/releases/latest
+GET  /api/web/releases/latest?platform=android|windows|macos|ios|harmony
 ```
 
 管理：
@@ -368,6 +378,20 @@ APK：
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
+Windows 桌面客户端：
+
+```powershell
+cd clients\desktop
+npm install
+$env:SOLO_SERVER_URL="http://127.0.0.1:8000"
+npm run pack
+npm run portable:win
+```
+
+本机可验证 `clients/desktop/dist/win-unpacked/SoloRecord.exe` 是否能启动。NSIS 安装 EXE 需要当前 Windows 账号具备 electron-builder 解压 winCodeSign 所需的符号链接权限；若没有，使用 portable ZIP 发布。
+
+iOS、macOS、HarmonyOS 签名包分别需要 Xcode 或 DevEco Studio 构建机，源码工程在 `clients/ios`、`clients/macos`、`clients/harmony`。
+
 ## Docker 调试
 
 常规：
@@ -409,7 +433,7 @@ server/tests/test_api.py
 - 拉取转写
 - 角色改名
 - 导出 Markdown
-- 发布 APK
+- 发布 Android APK 和 Windows/macOS/iOS/HarmonyOS 终端应用
 - 移动端同步
 - 外部系统 token 调用
 - 受权限保护的服务器音频下载
@@ -430,7 +454,7 @@ scripts\smoke-e2e.ps1 -BaseUrl http://127.0.0.1:8000 -ExternalToken test-token
 
 ## 开发约束
 
-- 不要把真实 ASR/LLM/SSO/Hermes 密钥写进 APK。
+- 不要把真实 ASR/LLM/SSO/Hermes 密钥写进 APK、EXE、DMG、IPA 或 HAP。
 - 不要把真实密钥写进文档或提交。
 - 服务端接口必须做权限检查。
 - Web 渲染动态文本必须转义。
@@ -473,13 +497,14 @@ scripts\smoke-e2e.ps1 -BaseUrl http://127.0.0.1:8000 -ExternalToken test-token
 
 ### Audience
 
-This manual is for engineers extending SoloRecord. It covers the server, Web UI, Android APK, data model, tests, and integration boundaries.
+This manual is for engineers extending SoloRecord. It covers the server, Web UI, Android APK, desktop/WebView client shells, data model, tests, and integration boundaries.
 
 ### Repository Structure
 
 ```text
 D:\solo\solorecord
 ├── app/                         Native Android Java app
+├── clients/                     Windows/macOS/iOS/HarmonyOS client shells
 ├── server/
 │   ├── solorecord_server/        FastAPI server
 │   ├── static/                   Static Web admin UI
@@ -509,6 +534,15 @@ Web:
 - Static HTML/CSS/JavaScript
 - No build step
 - Served by FastAPI static routes
+- Shared desktop/WebView experience for recording, upload, records, downloads, and administration
+
+Desktop and WebView clients:
+
+- `clients/desktop`: Electron Windows/macOS wrapper.
+- `clients/ios`: SwiftUI + WKWebView iOS shell.
+- `clients/macos`: SwiftUI + WKWebView macOS alternative shell.
+- `clients/harmony`: HarmonyOS Stage-model Web shell.
+- Client shells embed no secrets; they only configure the server URL.
 
 Android:
 
@@ -596,7 +630,7 @@ POST /api/web/meetings/{meetingId}/speakers/rename
 POST /api/web/meetings/{meetingId}/exports
 GET  /api/web/search
 GET  /api/web/sync
-GET  /api/web/releases/latest
+GET  /api/web/releases/latest?platform=android|windows|macos|ios|harmony
 ```
 
 Admin:
@@ -819,9 +853,23 @@ APK output:
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
+Windows desktop client:
+
+```powershell
+cd clients\desktop
+npm install
+$env:SOLO_SERVER_URL="http://127.0.0.1:8000"
+npm run pack
+npm run portable:win
+```
+
+Validate that `clients/desktop/dist/win-unpacked/SoloRecord.exe` starts. The NSIS EXE target requires Windows symlink privileges for electron-builder's winCodeSign extraction. If that is unavailable, publish the portable ZIP.
+
+iOS, macOS, and HarmonyOS signed packages require Xcode or DevEco Studio build machines. Source projects live in `clients/ios`, `clients/macos`, and `clients/harmony`.
+
 ### Test Coverage
 
-`server/tests/test_api.py` covers login, meeting create, audio upload, finish/process, transcript fetch, speaker rename, Markdown export, APK release publishing, mobile sync, external API token access, and protected server audio download.
+`server/tests/test_api.py` covers login, meeting create, audio upload, finish/process, transcript fetch, speaker rename, Markdown export, multi-platform release publishing, mobile sync, external API token access, and protected server audio download.
 
 Runtime smoke:
 
@@ -839,7 +887,7 @@ Extend tests whenever a new endpoint, state transition, or shared data contract 
 
 ### Development Constraints
 
-- Do not put real ASR/LLM/SSO/Hermes secrets into the APK.
+- Do not put real ASR/LLM/SSO/Hermes secrets into APK, EXE, DMG, IPA, or HAP packages.
 - Do not commit real secrets or write them into docs.
 - Every server endpoint must enforce access control.
 - Web dynamic text must be escaped.

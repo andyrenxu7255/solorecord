@@ -17,5 +17,12 @@ var/
 *.sqlite
 *.sqlite3
 *.apk
+*.exe
+*.dmg
+*.ipa
+*.hap
+clients/desktop/node_modules/
+clients/desktop/dist/
+clients/desktop/release/
 *.log
 ops/ACTIVE_TASK.json

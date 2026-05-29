@@ -1,0 +1,9 @@
+{
+  "name": "entry",
+  "version": "0.7.0",
+  "description": "SoloRecord HarmonyOS entry module",
+  "main": "",
+  "author": "SoloRecord",
+  "license": "Apache-2.0",
+  "dependencies": {}
+}

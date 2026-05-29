@@ -18,7 +18,7 @@
       </div>
       <nav class="nav">
         <button class="nav-item active" data-view="meetings">会议</button>
-        <button class="nav-item" data-view="recorder">新建上传</button>
+        <button class="nav-item" data-view="recorder">录音</button>
         <button class="nav-item" data-view="downloads">App 下载</button>
         <button class="nav-item" data-view="admin">管理</button>
       </nav>
@@ -53,28 +53,56 @@
       <section id="view-recorder" class="view">
         <header class="page-header">
           <div>
-            <h2>新建上传</h2>
-            <p>用于 PC 端补传录音；手机端录音会自动分段上传。</p>
+            <h2>录音</h2>
+            <p>桌面端可直接录制会议，也可以补传已有音频文件。</p>
           </div>
         </header>
-        <section class="panel form-panel">
-          <label>会议标题</label>
-          <input id="newMeetingTitle" class="input" placeholder="例如：客户复盘会">
-          <label>音频文件</label>
-          <input id="audioFile" class="input" type="file" accept="audio/*">
-          <button id="createUploadButton" class="button primary">创建会议并上传</button>
-          <p class="hint">上传完成后会自动进入转写队列。未配置本地 ASR 时会生成占位转写，方便先验证系统闭环。</p>
-        </section>
+        <div class="recorder-layout">
+          <section class="panel form-panel">
+            <h3>实时录音</h3>
+            <label>会议标题</label>
+            <input id="recordMeetingTitle" class="input" placeholder="例如：客户复盘会">
+            <div class="recorder-meter">
+              <div class="record-dot" id="recordDot"></div>
+              <div>
+                <strong id="recordStatus">未开始</strong>
+                <p class="hint" id="recordTimer">00:00</p>
+              </div>
+            </div>
+            <div class="recorder-actions">
+              <button id="startRecordButton" class="button primary">开始录音</button>
+              <button id="stopRecordButton" class="button secondary" disabled>结束录音</button>
+            </div>
+            <div id="recordSegmentList" class="segment-progress"></div>
+            <p class="hint">录音会按服务器配置的时长滚动分段并在网络可用时逐段上传；结束后同一条会议记录会继续生成完整纪要。</p>
+          </section>
+          <section class="panel form-panel">
+            <h3>文件补传</h3>
+            <label>会议标题</label>
+            <input id="newMeetingTitle" class="input" placeholder="例如：客户复盘会">
+            <label>音频文件</label>
+            <input id="audioFile" class="input" type="file" accept="audio/*">
+            <button id="createUploadButton" class="button primary">创建会议并上传</button>
+            <p class="hint">上传完成后会自动进入转写队列。未配置本地 ASR 时会生成占位转写，方便先验证系统闭环。</p>
+          </section>
+        </div>
       </section>
 
       <section id="view-downloads" class="view">
         <header class="page-header">
           <div>
-            <h2>Android App 下载</h2>
-            <p>公司内部 APK 分发入口。</p>
+            <h2>App 下载</h2>
+            <p>公司内部 Android、Windows、macOS、iOS、HarmonyOS 终端分发入口。</p>
           </div>
         </header>
         <section class="panel">
+          <div class="download-tabs" id="downloadTabs">
+            <button class="chip active" data-platform="android">Android</button>
+            <button class="chip" data-platform="windows">Windows</button>
+            <button class="chip" data-platform="macos">macOS</button>
+            <button class="chip" data-platform="ios">iOS</button>
+            <button class="chip" data-platform="harmony">HarmonyOS</button>
+          </div>
           <div id="releaseBox" class="release-box">正在读取版本信息...</div>
         </section>
       </section>
@@ -83,7 +111,7 @@
         <header class="page-header">
           <div>
             <h2>系统管理</h2>
-            <p>配置模型、处理参数、查看任务和发布 APK。</p>
+            <p>配置模型、处理参数、查看任务和发布终端应用。</p>
           </div>
           <button id="refreshAdmin" class="button secondary">刷新管理信息</button>
         </header>
@@ -152,7 +180,15 @@
           </section>
 
           <section class="panel">
-            <h3>发布 APK</h3>
+            <h3>发布终端应用</h3>
+            <label>平台</label>
+            <select id="releasePlatform" class="input">
+              <option value="android">Android APK</option>
+              <option value="windows">Windows EXE</option>
+              <option value="macos">macOS DMG</option>
+              <option value="ios">iOS IPA</option>
+              <option value="harmony">HarmonyOS HAP</option>
+            </select>
             <label>版本名</label>
             <input id="releaseVersionName" class="input" placeholder="0.7.0">
             <label>版本号</label>
@@ -160,8 +196,8 @@
             <label>更新说明</label>
             <textarea id="releaseNotes" class="input" rows="4"></textarea>
             <label class="checkbox-row"><input id="forceUpdate" type="checkbox"> 强制更新</label>
-            <input id="apkFile" class="input" type="file" accept=".apk,application/vnd.android.package-archive">
-            <button id="uploadRelease" class="button primary">上传 APK</button>
+            <input id="releaseFile" class="input" type="file" accept=".apk,.exe,.dmg,.ipa,.hap,application/vnd.android.package-archive">
+            <button id="uploadRelease" class="button primary">上传发布包</button>
           </section>
         </div>
       </section>

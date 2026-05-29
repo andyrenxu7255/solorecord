@@ -6,20 +6,22 @@ SoloRecord 是公司内部会议记录系统。你可以用手机录音，系统
 
 ## 你需要准备什么
 
-- Android 手机。
+- Android 手机，或 Windows/macOS/iOS/HarmonyOS 终端。
 - 公司统一登录账号。
 - SoloRecord 服务器地址。
-- 公司内部分发的 APK。
+- 公司内部分发的 Android APK、Windows 包、macOS 包、iOS IPA 或 HarmonyOS HAP。
 
-## 安装 APK
+## 安装终端应用
 
 1. 打开 SoloRecord Web 页面。
 2. 登录。
 3. 进入“App 下载”。
-4. 下载 Android APK。
-5. 手机上安装 APK。
+4. 选择你的平台。
+5. 下载并安装对应发布包。
 
 如果手机提示“禁止安装未知来源应用”，按公司 IT 指引允许安装。
+
+Windows 版本下载后解压，运行 `SoloRecord.exe`。iOS、macOS 和 HarmonyOS 需要公司签名包或企业分发通道。
 
 ## 登录
 
@@ -113,11 +115,12 @@ SoloRecord 是公司内部会议记录系统。你可以用手机录音，系统
 
 如果识别不准确，可以在 Web 端编辑。
 
-## Web 端怎么用
+## Web 和桌面端怎么用
 
 打开 SoloRecord Web 页面后，可以做这些事：
 
 - 登录。
+- 在“录音”页直接录音，或补传已有音频文件。
 - 查看会议列表。
 - 搜索会议标题、纪要、转写正文。
 - 查看会议详情。
@@ -126,14 +129,14 @@ SoloRecord 是公司内部会议记录系统。你可以用手机录音，系统
 - 修改转写文本。
 - 批量修改说话人名称。
 - 导出 Markdown、Word、PDF、JSON、SRT。
-- 下载 Android APK。
+- 下载 Android、Windows、macOS、iOS、HarmonyOS 发布包。
 
 管理员还可以：
 
 - 配置 ASR/LLM 模型。
 - 查看处理任务。
 - 重试失败任务。
-- 上传新版本 APK。
+- 上传新版本终端应用。
 
 ## 导出文件
 
@@ -216,20 +219,21 @@ SoloRecord is an internal company meeting recorder. You can record meetings on a
 
 ### What You Need
 
-- Android phone.
+- Android phone, or a Windows/macOS/iOS/HarmonyOS client.
 - Company unified login account.
 - SoloRecord server address.
-- APK distributed by the company.
+- The company-distributed Android APK, Windows package, macOS package, iOS IPA, or HarmonyOS HAP.
 
-### Install The APK
+### Install The Client
 
 1. Open the SoloRecord Web page.
 2. Sign in.
 3. Open the App Download section.
-4. Download the Android APK.
-5. Install it on your phone.
+4. Select your platform.
+5. Download and install the matching package.
 
 If Android blocks unknown-source installation, follow the company IT instructions.
+On Windows, unzip the package and run `SoloRecord.exe`. iOS, macOS, and HarmonyOS require company-signed packages or enterprise distribution.
 
 ### Sign In
 
@@ -317,11 +321,12 @@ Action items usually include:
 
 If the result is inaccurate, edit it on the Web.
 
-### Web Usage
+### Web And Desktop Usage
 
 The SoloRecord Web app supports:
 
 - Login/logout
+- Live recording from the Recording page, or uploading an existing audio file
 - Meeting list
 - Search by title, summary, transcript, or keyword
 - Meeting details
@@ -330,9 +335,9 @@ The SoloRecord Web app supports:
 - Transcript editing
 - Batch speaker rename
 - Export to Markdown, Word, PDF, JSON, and SRT
-- Android APK download
+- Android, Windows, macOS, iOS, and HarmonyOS downloads
 
-Admins can also configure ASR/LLM providers, view jobs, retry failed jobs, and upload new APK versions.
+Admins can also configure ASR/LLM providers, view jobs, retry failed jobs, and upload new client versions.
 
 ### Export Formats
 

@@ -37,6 +37,15 @@ APK 输出：
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
+Windows 客户端：
+
+```powershell
+cd clients\desktop
+npm install
+npm run pack
+npm run portable:win
+```
+
 HTTP smoke：
 
 ```powershell
@@ -48,6 +57,7 @@ scripts\smoke-e2e.ps1 -BaseUrl http://127.0.0.1:8000 -ExternalToken test-token
 组件：
 
 - Android App：`app/src/main/java/com/solorecord/`
+- 多平台客户端：`clients/`
 - FastAPI 服务端：`server/solorecord_server/`
 - 静态 Web 端：`server/static/`
 - 文档：`docs/`
@@ -96,7 +106,7 @@ Android 上传可靠性：
 - `speakers`
 - `action_items`
 - `processing_jobs`
-- `apk_releases`
+- `apk_releases`（兼容命名，实际保存 Android/Windows/macOS/iOS/HarmonyOS 发布包）
 - `app_config`
 - `audit_logs`
 
@@ -144,6 +154,7 @@ PUT  /api/admin/providers
 GET  /api/admin/jobs
 POST /api/admin/jobs/{jobId}/retry
 POST /api/admin/releases
+GET  /api/web/releases/latest?platform=android|windows|macos|ios|harmony
 POST /api/admin/search/reindex
 ```
 
@@ -161,9 +172,10 @@ GET  /api/auth/sso/callback
 服务器运维 Agent 自动部署：
 
 - 先读 `docs/agents/README.md` 的“服务器运维 Agent 自动部署 Runbook”。
-- 向操作者收集 `SOLO_BASE_URL`、LDAP、ASR、LLM、Hermes、ES、备份和 APK 分发信息；SSO/OIDC 仅在启用浏览器统一登录时必需。
+- 向操作者收集 `SOLO_BASE_URL`、LDAP、ASR、LLM、Hermes、ES、备份和终端应用分发信息；SSO/OIDC 仅在启用浏览器统一登录时必需。
 - 密钥只写入服务器本地 `server/.env` 或密钥管理系统，不写入 Git、文档或最终回复。
 - 自动完成部署、配置、APK 发布、健康检查和端到端 smoke 后再交付。
+- Windows/macOS/iOS/HarmonyOS 终端应用发布也走 `/api/admin/releases`，必须设置 `platform`，不能把密钥写入任何终端包。
 
 新增服务端字段：
 
@@ -201,7 +213,7 @@ GET  /api/auth/sso/callback
 - 开发：`docs/human-dev/README.md`
 - 用户：`docs/user/README.md`
 - 智能体：`docs/agents/README.md`、`llms.txt`
-- 参考：`docs/meeting-app-prd-v2.md`、`docs/deployment.md`、`docs/data-storage-and-es.md`、`docs/local-asr-pipeline.md`、`docs/synology-bailian-architecture.md`、`docs/open-source-research.md`、`docs/security-audit.md`、`docs/ux-review-v0.7.md`
+- 参考：`docs/meeting-app-prd-v2.md`、`docs/deployment.md`、`docs/data-storage-and-es.md`、`docs/local-asr-pipeline.md`、`docs/synology-bailian-architecture.md`、`docs/open-source-research.md`、`docs/security-audit.md`、`docs/ux-review-v0.7.md`、`docs/multi-platform-clients.md`
 
 ## English
 
@@ -244,6 +256,15 @@ APK output:
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
+Windows client:
+
+```powershell
+cd clients\desktop
+npm install
+npm run pack
+npm run portable:win
+```
+
 Docker smoke fallback:
 
 ```powershell
@@ -271,6 +292,7 @@ scripts\smoke-e2e.ps1 -BaseUrl http://127.0.0.1:8000 -ExternalToken test-token
 Components:
 
 - Android app: `app/src/main/java/com/solorecord/`
+- Multi-platform clients: `clients/`
 - FastAPI server: `server/solorecord_server/`
 - Static Web app: `server/static/`
 - Docs: `docs/`
@@ -319,7 +341,7 @@ Important tables:
 - `speakers`
 - `action_items`
 - `processing_jobs`
-- `apk_releases`
+- `apk_releases` (legacy name; stores Android/Windows/macOS/iOS/HarmonyOS release packages)
 - `app_config`
 - `audit_logs`
 
@@ -367,6 +389,7 @@ PUT  /api/admin/providers
 GET  /api/admin/jobs
 POST /api/admin/jobs/{jobId}/retry
 POST /api/admin/releases
+GET  /api/web/releases/latest?platform=android|windows|macos|ios|harmony
 POST /api/admin/search/reindex
 ```
 
@@ -384,9 +407,10 @@ GET  /api/auth/sso/callback
 Server operations agent auto-deployment:
 
 - First read the "Server Operations Agent Auto-Deployment Runbook" in `docs/agents/README.md`.
-- Collect `SOLO_BASE_URL`, LDAP, ASR, LLM, Hermes, ES, backup, and APK distribution inputs from the operator; SSO/OIDC is required only when browser unified login is enabled.
+- Collect `SOLO_BASE_URL`, LDAP, ASR, LLM, Hermes, ES, backup, and client distribution inputs from the operator; SSO/OIDC is required only when browser unified login is enabled.
 - Store secrets only in server-local `server/.env` or a secret manager, never in Git, docs, or final responses.
 - Complete deployment, configuration, APK publishing, health checks, and end-to-end smoke before handoff.
+- Windows/macOS/iOS/HarmonyOS packages also use `/api/admin/releases` with `platform`; never embed secrets in any client package.
 
 ### Add A Server Field
 
@@ -458,4 +482,5 @@ Reference:
 - `docs/synology-bailian-architecture.md`
 - `docs/open-source-research.md`
 - `docs/security-audit.md`
+- `docs/multi-platform-clients.md`
 - `docs/ux-review-v0.7.md`

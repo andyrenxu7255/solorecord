@@ -119,6 +119,7 @@ def main() -> int:
     release = client.post(
         "/api/admin/releases",
         data={
+            "platform": "android",
             "version_name": "9.9.9-smoke",
             "version_code": "9999",
             "release_notes": "smoke",
@@ -135,6 +136,25 @@ def main() -> int:
     downloaded = client.get(download_url)
     expect(downloaded, 200, "apk download")
     assert downloaded.content == b"fake apk"
+
+    windows_release = client.post(
+        "/api/admin/releases",
+        data={
+            "platform": "windows",
+            "version_name": "9.9.9-smoke",
+            "version_code": "9999",
+            "release_notes": "windows smoke",
+            "force_update": "false",
+        },
+        files={"file": ("SoloRecord-Setup.exe", b"fake exe", "application/vnd.microsoft.portable-executable")},
+        headers=headers,
+    )
+    expect(windows_release, 200, "windows release upload")
+    windows_latest = client.get("/api/web/releases/latest?platform=windows", headers=headers)
+    expect(windows_latest, 200, "latest windows release")
+    windows_download = client.get(windows_latest.json()["release"]["downloadUrl"])
+    expect(windows_download, 200, "windows exe download")
+    assert windows_download.content == b"fake exe"
 
     external_bad = client.get("/api/external/meetings", headers={"Authorization": "Bearer wrong-token"})
     expect(external_bad, 401, "external bad token rejected")

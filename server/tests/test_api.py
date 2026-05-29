@@ -442,16 +442,43 @@ def test_full_user_story_permissions_sync_export_and_release(tmp_path: Path) -> 
     release = client.post(
         "/api/admin/releases",
         headers=headers,
-        data={"version_name": "0.7.0", "version_code": "7", "release_notes": "V0.7", "force_update": "false"},
+        data={
+            "platform": "android",
+            "version_name": "0.7.0",
+            "version_code": "7",
+            "release_notes": "V0.7",
+            "force_update": "false",
+        },
         files={"file": ("app.apk", b"fake apk", "application/vnd.android.package-archive")},
     )
     assert release.status_code == 200
     latest = client.get("/api/web/releases/latest", headers=headers)
     assert latest.status_code == 200
     assert latest.json()["release"]["version_name"] == "0.7.0"
+    assert latest.json()["release"]["platform"] == "android"
     download = client.get("/downloads/android/0.7.0/app.apk")
     assert download.status_code == 200
     assert download.content == b"fake apk"
+
+    windows_release = client.post(
+        "/api/admin/releases",
+        headers=headers,
+        data={
+            "platform": "windows",
+            "version_name": "0.7.0",
+            "version_code": "7",
+            "release_notes": "V0.7 Windows",
+            "force_update": "false",
+        },
+        files={"file": ("SoloRecord-Setup.exe", b"fake exe", "application/vnd.microsoft.portable-executable")},
+    )
+    assert windows_release.status_code == 200
+    windows_latest = client.get("/api/web/releases/latest?platform=windows", headers=headers)
+    assert windows_latest.status_code == 200
+    assert windows_latest.json()["release"]["platform"] == "windows"
+    windows_download = client.get(windows_latest.json()["release"]["downloadUrl"])
+    assert windows_download.status_code == 200
+    assert windows_download.content == b"fake exe"
 
     sync = client.get("/api/mobile/sync", headers=headers)
     assert sync.status_code == 200

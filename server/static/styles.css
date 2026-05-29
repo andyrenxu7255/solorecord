@@ -240,6 +240,62 @@ button, input, textarea, select {
   gap: 12px;
 }
 
+.recorder-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
+  gap: 16px;
+}
+
+.recorder-meter {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: #fbfcfe;
+}
+
+.record-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #98a2b3;
+}
+
+.record-dot.active {
+  background: var(--danger);
+  box-shadow: 0 0 0 6px rgba(180, 35, 24, 0.12);
+}
+
+.recorder-actions,
+.download-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.segment-progress {
+  display: grid;
+  gap: 8px;
+}
+
+.chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.chip.active,
+.chip:hover {
+  border-color: var(--primary);
+  color: var(--primary-dark);
+  background: #f2fbfe;
+}
+
 .form-grid {
   grid-template-columns: 150px 1fr;
   align-items: center;
@@ -446,6 +502,7 @@ button, input, textarea, select {
   }
 
   .workspace,
+  .recorder-layout,
   .admin-grid {
     grid-template-columns: 1fr;
   }

@@ -1,0 +1,9 @@
+{
+  "name": "solorecord-harmony",
+  "version": "0.7.0",
+  "description": "SoloRecord HarmonyOS client shell",
+  "main": "",
+  "author": "SoloRecord",
+  "license": "Apache-2.0",
+  "dependencies": {}
+}

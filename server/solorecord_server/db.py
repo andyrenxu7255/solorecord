@@ -167,15 +167,20 @@ CREATE TABLE IF NOT EXISTS exports (
 
 CREATE TABLE IF NOT EXISTS apk_releases (
     id TEXT PRIMARY KEY,
+    platform TEXT NOT NULL DEFAULT 'android',
     version_name TEXT NOT NULL,
     version_code INTEGER NOT NULL,
     file_name TEXT NOT NULL,
     storage_path TEXT NOT NULL,
+    content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
     sha256 TEXT NOT NULL,
     release_notes TEXT NOT NULL DEFAULT '',
     force_update INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_apk_releases_platform_version
+ON apk_releases(platform, version_code DESC, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS app_config (
     key TEXT PRIMARY KEY,
@@ -217,6 +222,13 @@ def init_db() -> None:
         ]
         if "source_segment_no" not in transcript_columns:
             connection.execute("ALTER TABLE transcript_segments ADD COLUMN source_segment_no INTEGER")
+        release_columns = [row["name"] for row in connection.execute("PRAGMA table_info(apk_releases)").fetchall()]
+        if "platform" not in release_columns:
+            connection.execute("ALTER TABLE apk_releases ADD COLUMN platform TEXT NOT NULL DEFAULT 'android'")
+        if "content_type" not in release_columns:
+            connection.execute(
+                "ALTER TABLE apk_releases ADD COLUMN content_type TEXT NOT NULL DEFAULT 'application/octet-stream'"
+            )
 
 
 @contextmanager
