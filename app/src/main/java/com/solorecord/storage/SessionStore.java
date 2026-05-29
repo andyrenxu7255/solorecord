@@ -32,11 +32,24 @@ public final class SessionStore {
         return preferences.getString("email", "");
     }
 
+    public String getUsername() {
+        return preferences.getString("username", "");
+    }
+
     public void saveLogin(String token, String displayName, String email) {
         preferences.edit()
                 .putString("token", token == null ? "" : token)
                 .putString("displayName", displayName == null ? "" : displayName)
                 .putString("email", email == null ? "" : email)
+                .apply();
+    }
+
+    public void saveLogin(String token, String displayName, String email, String username) {
+        preferences.edit()
+                .putString("token", token == null ? "" : token)
+                .putString("displayName", displayName == null ? "" : displayName)
+                .putString("email", email == null ? "" : email)
+                .putString("username", username == null ? "" : username)
                 .apply();
     }
 

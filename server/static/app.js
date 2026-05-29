@@ -39,7 +39,43 @@ function setView(name) {
   if (name === "admin") loadAdmin();
 }
 
-async function login() {
+function showLogin() {
+  $("#loginModal").classList.remove("hidden");
+  $("#loginUsername").focus();
+}
+
+function hideLogin() {
+  $("#loginPassword").value = "";
+  $("#loginModal").classList.add("hidden");
+}
+
+async function ldapLogin(event) {
+  event.preventDefault();
+  const username = $("#loginUsername").value.trim();
+  const password = $("#loginPassword").value;
+  if (!username || !password) {
+    toast("请输入用户名和密码");
+    return;
+  }
+  try {
+    const data = await api("/api/auth/ldap-login", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    });
+    state.token = data.access_token;
+    state.user = data.user;
+    localStorage.setItem("solo_token", state.token);
+    localStorage.setItem("solo_user", JSON.stringify(state.user));
+    hideLogin();
+    renderAccount();
+    await loadMeetings();
+    toast("已登录");
+  } catch (error) {
+    toast("登录失败，请检查用户名、密码或服务器配置");
+  }
+}
+
+async function demoLogin() {
   const displayName = prompt("姓名", state.user?.display_name || "Demo User") || "Demo User";
   const email = prompt("邮箱：admin@example.com 会获得管理员权限", state.user?.email || "admin@example.com") || "admin@example.com";
   const data = await api("/api/auth/demo-login", {
@@ -396,10 +432,15 @@ function bindEvents() {
   $$(".nav-item").forEach((item) => item.addEventListener("click", () => setView(item.dataset.view)));
   $("#loginButton").addEventListener("click", (event) => {
     if (event && event.altKey) {
-      login();
+      demoLogin();
       return;
     }
-    ssoLogin();
+    showLogin();
+  });
+  $("#loginForm").addEventListener("submit", ldapLogin);
+  $("#cancelLogin").addEventListener("click", hideLogin);
+  $("#loginModal").addEventListener("click", (event) => {
+    if (event.target === $("#loginModal")) hideLogin();
   });
   $("#refreshMeetings").addEventListener("click", () => loadMeetings($("#searchInput").value.trim()));
   $("#searchInput").addEventListener("keydown", (event) => {

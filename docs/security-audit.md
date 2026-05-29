@@ -19,7 +19,7 @@
 
 - 修改 `SOLO_SECRET_KEY`。
 - 关闭 `SOLO_ALLOW_DEMO_LOGIN`。
-- 配置群晖 SSO，并在服务端验证 token。
+- 配置群晖 LDAP；如果启用浏览器统一登录，再配置群晖 SSO 并在服务端验证 token。
 - 在服务前启用 HTTPS。
 - 将 APK 下载路径限制为登录用户或内网访问。
 - ASR/LLM 凭证只放到服务端 `.env` 或密钥管理系统。
@@ -33,7 +33,7 @@
 - Web 管理端不把已保存 LLM/Hermes 密钥回显到浏览器。
 - 会议读写检查成员权限。
 - 服务器音频分段下载使用同一会议权限检查。
-- SSO 回跳目标限制为本地路径或 `solorecord://auth/callback`。
+- LDAP 用户名在 DN 和搜索过滤器中使用标准转义；SSO 回跳目标限制为本地路径或 `solorecord://auth/callback`。
 - 说话人改名按稳定 speaker id 更新全部匹配转写行。
 - 上传 APK 保存 SHA-256。
 - 审计日志记录登录相邻业务动作和管理变更。
@@ -53,7 +53,7 @@
 
 ## 已执行验证
 
-- `scripts\run-tests.ps1` 通过。
+- `scripts\run-tests.ps1` 通过，包含 LDAP 登录、DN/过滤器转义和权限主流程。
 - Gradle `assembleDebug` 通过。
 - `pip check` 通过。
 - `pip-audit -r server/requirements.txt --timeout 60` 无已知漏洞。
@@ -78,7 +78,7 @@ scripts\smoke-e2e.ps1
 
 ## 公开仓库安全边界
 
-源码和文档可以公开，但发布前必须确认未提交真实密钥、`server/.env`、运行数据、数据库、缓存、APK 构建产物或客户会议音频。生产部署仍是公司内部系统，必须由 HTTPS、SSO、服务端权限和内网策略保护。
+源码和文档可以公开，但发布前必须确认未提交真实密钥、LDAP 凭据、`server/.env`、运行数据、数据库、缓存、APK 构建产物或客户会议音频。生产部署仍是公司内部系统，必须由 HTTPS、LDAP/SSO、服务端权限和内网策略保护。
 
 ## English
 
@@ -103,7 +103,7 @@ This project is now an internal runnable prototype with:
 
 - Change `SOLO_SECRET_KEY`.
 - Disable `SOLO_ALLOW_DEMO_LOGIN`.
-- Configure Synology SSO and verify tokens server-side.
+- Configure Synology LDAP. If browser unified login is enabled, configure Synology SSO and verify tokens server-side.
 - Put HTTPS in front of the server.
 - Restrict APK download path to logged-in users or internal network.
 - Move ASR/LLM credentials to server `.env` or secret manager only.
@@ -117,7 +117,7 @@ This project is now an internal runnable prototype with:
 - Web admin does not echo saved LLM/Hermes secrets back to the browser.
 - Meeting reads/writes check membership.
 - Server-side audio segment download checks the same meeting membership.
-- SSO return targets are limited to local paths or `solorecord://auth/callback`.
+- LDAP usernames are escaped for DN and search filters. SSO return targets are limited to local paths or `solorecord://auth/callback`.
 - Speaker rename updates all matching transcript rows by stable speaker id.
 - Uploaded APK stores SHA-256.
 - Audit log records login-adjacent business actions and admin changes.

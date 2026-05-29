@@ -2,11 +2,32 @@ import importlib
 import os
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 
-def make_client(tmp_path: Path) -> TestClient:
+LDAP_ENV_KEYS = [
+    "SOLO_LDAP_ENABLED",
+    "SOLO_LDAP_SERVER",
+    "SOLO_LDAP_BIND_DN_TEMPLATE",
+    "SOLO_LDAP_LOOKUP_BIND_DN",
+    "SOLO_LDAP_LOOKUP_BIND_PASSWORD",
+    "SOLO_LDAP_SEARCH_DN",
+    "SOLO_LDAP_SEARCH_FILTER",
+    "SOLO_LDAP_USERNAME_KEY",
+    "SOLO_LDAP_EMAIL_KEY",
+    "SOLO_LDAP_EMAIL_POSTFIX",
+    "SOLO_LDAP_DISPLAY_NAME_KEY",
+    "SOLO_LDAP_ADMIN_USERS",
+    "SOLO_LDAP_ADMIN_GROUP_DN",
+    "SOLO_LDAP_DEFAULT_ROLE",
+    "SOLO_LDAP_TLS_VALIDATE",
+    "SOLO_LDAP_TIMEOUT_SECONDS",
+]
+
+
+def make_client(tmp_path: Path, clear_ldap: bool = True) -> TestClient:
     os.environ["SOLO_DATA_DIR"] = str(tmp_path / "var")
     os.environ["SOLO_DATABASE_PATH"] = str(tmp_path / "var" / "test.db")
     os.environ["SOLO_STORAGE_DIR"] = str(tmp_path / "var" / "storage")
@@ -17,6 +38,10 @@ def make_client(tmp_path: Path) -> TestClient:
     os.environ["SOLO_SSO_ISSUER"] = "https://sso.example.com"
     os.environ["SOLO_SSO_CLIENT_ID"] = "solo-test"
     os.environ["SOLO_SSO_REDIRECT_URI"] = "https://record.example.com/api/auth/sso/callback"
+    if clear_ldap:
+        for key in LDAP_ENV_KEYS:
+            os.environ.pop(key, None)
+        os.environ["SOLO_LDAP_ENABLED"] = "false"
     import solorecord_server.config as config
     import solorecord_server.db as db
     import solorecord_server.main as main
@@ -26,6 +51,19 @@ def make_client(tmp_path: Path) -> TestClient:
     importlib.reload(main)
     main.startup()
     return TestClient(main.app)
+
+
+def make_ldap_client(tmp_path: Path) -> TestClient:
+    os.environ["SOLO_LDAP_ENABLED"] = "true"
+    os.environ["SOLO_LDAP_SERVER"] = "ldaps://ldap.example.com:636"
+    os.environ["SOLO_LDAP_BIND_DN_TEMPLATE"] = "uid=XXX,cn=users,dc=example,dc=com"
+    os.environ["SOLO_LDAP_SEARCH_DN"] = "cn=users,dc=example,dc=com"
+    os.environ["SOLO_LDAP_SEARCH_FILTER"] = "(cn={username})"
+    os.environ["SOLO_LDAP_USERNAME_KEY"] = "cn"
+    os.environ["SOLO_LDAP_EMAIL_KEY"] = "mail"
+    os.environ["SOLO_LDAP_DISPLAY_NAME_KEY"] = "displayName"
+    os.environ["SOLO_LDAP_ADMIN_USERS"] = "alice"
+    return make_client(tmp_path, clear_ldap=False)
 
 
 def login(client: TestClient) -> dict:
@@ -46,6 +84,135 @@ def login_user(client: TestClient) -> dict:
     assert response.status_code == 200
     data = response.json()
     return {"Authorization": f"Bearer {data['access_token']}"}
+
+
+def test_ldap_login_uses_server_side_bind_and_session(tmp_path: Path) -> None:
+    client = make_ldap_client(tmp_path)
+    with patch("solorecord_server.auth._ldap_fetch_user") as fetch_user:
+        fetch_user.return_value = (
+            "uid=alice,cn=users,dc=example,dc=com",
+            {
+                "cn": ["alice"],
+                "mail": ["alice@example.com"],
+                "displayName": ["任旭"],
+                "memberOf": [],
+            },
+        )
+        response = client.post(
+            "/api/auth/ldap-login",
+            json={"username": "alice", "password": "test-password"},
+        )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["access_token"]
+    assert data["user"]["display_name"] == "任旭"
+    assert data["user"]["email"] == "alice@example.com"
+    assert data["user"]["role"] == "admin"
+    fetch_user.assert_called_once_with(
+        "alice",
+        "uid=alice,cn=users,dc=example,dc=com",
+        "test-password",
+    )
+    headers = {"Authorization": f"Bearer {data['access_token']}"}
+    assert client.get("/api/web/me", headers=headers).json()["user"]["display_name"] == "任旭"
+
+
+def test_ldap_login_can_be_disabled(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    response = client.post(
+        "/api/auth/ldap-login",
+        json={"username": "alice", "password": "test-password"},
+    )
+    assert response.status_code == 400
+
+
+def test_ldap_login_escapes_dn_and_filter_input(tmp_path: Path) -> None:
+    client = make_ldap_client(tmp_path)
+    with patch("solorecord_server.auth._ldap_fetch_user") as fetch_user:
+        fetch_user.return_value = (
+            r"uid=alice*\,(),cn=users,dc=example,dc=com",
+            {"cn": ["alice*"], "mail": [], "displayName": []},
+        )
+        response = client.post(
+            "/api/auth/ldap-login",
+            json={"username": r"alice*,()", "password": "test-password"},
+        )
+    assert response.status_code == 200
+    fetch_user.assert_called_once_with(
+        r"alice*,()",
+        r"uid=alice*\,(),cn=users,dc=example,dc=com",
+        "test-password",
+    )
+    import solorecord_server.auth as auth
+
+    assert auth._ldap_search_filter(r"alice*,()") == r"(cn=alice\2a,\28\29)"
+
+
+def test_ldap_search_filter_accepts_field_name_and_filter_fragment(tmp_path: Path) -> None:
+    client = make_ldap_client(tmp_path)
+    assert client.get("/api/health").status_code == 200
+    import solorecord_server.auth as auth
+    import solorecord_server.config as config
+
+    settings = config.get_settings()
+    original_filter = settings.ldap_search_filter
+    try:
+        settings.ldap_search_filter = "cn"
+        assert auth._ldap_search_filter("alice") == "(cn=alice)"
+        settings.ldap_search_filter = "&(objectClass=user)(cn=%s)"
+        assert auth._ldap_search_filter("alice") == "(&(objectClass=user)(cn=alice))"
+    finally:
+        settings.ldap_search_filter = original_filter
+
+
+def test_ldap_email_postfix_fills_missing_mail_attribute(tmp_path: Path) -> None:
+    client = make_ldap_client(tmp_path)
+    import solorecord_server.auth as auth
+    import solorecord_server.config as config
+
+    settings = config.get_settings()
+    original_postfix = settings.ldap_email_postfix
+    try:
+        settings.ldap_email_postfix = "example.com"
+        assert auth._ldap_email("alice", {"mail": []}) == "alice@example.com"
+        assert auth._ldap_email("alice", {"mail": ["alice"]}) == "alice@example.com"
+        assert auth._ldap_email("alice", {"mail": ["alice@corp.example"]}) == "alice@corp.example"
+    finally:
+        settings.ldap_email_postfix = original_postfix
+
+
+def test_ldap_lookup_bind_mode_uses_found_dn(tmp_path: Path) -> None:
+    client = make_ldap_client(tmp_path)
+    import solorecord_server.auth as auth
+    import solorecord_server.config as config
+
+    settings = config.get_settings()
+    original_lookup_dn = settings.ldap_lookup_bind_dn
+    original_lookup_password = settings.ldap_lookup_bind_password
+    try:
+        settings.ldap_lookup_bind_dn = "uid=lookup,cn=users,dc=example,dc=com"
+        settings.ldap_lookup_bind_password = "lookup-password"
+        with patch("solorecord_server.auth._ldap_lookup_user") as lookup_user, patch(
+            "solorecord_server.auth._ldap_bind_credentials"
+        ) as bind_credentials:
+            lookup_user.return_value = (
+                "uid=alice,cn=users,dc=example,dc=com",
+                {"cn": ["alice"], "mail": ["alice@example.com"]},
+            )
+            user_dn, attrs = auth._ldap_fetch_user(
+                "alice",
+                "uid=alice-template,cn=users,dc=example,dc=com",
+                "user-password",
+            )
+        assert user_dn == "uid=alice,cn=users,dc=example,dc=com"
+        assert attrs["cn"] == ["alice"]
+        bind_credentials.assert_called_once_with(
+            "uid=alice,cn=users,dc=example,dc=com",
+            "user-password",
+        )
+    finally:
+        settings.ldap_lookup_bind_dn = original_lookup_dn
+        settings.ldap_lookup_bind_password = original_lookup_password
 
 
 def test_full_user_story_permissions_sync_export_and_release(tmp_path: Path) -> None:

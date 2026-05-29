@@ -6,6 +6,7 @@ pydantic-settings==2.7.0
 python-multipart==0.0.29
 PyJWT[crypto]==2.13.0
 httpx==0.28.1
+ldap3==2.9.1
 pytest==9.0.3
 reportlab==4.2.5
 python-docx==1.1.2

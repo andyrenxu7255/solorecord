@@ -2,7 +2,7 @@
 
 ## 关键规则
 
-- 不要把真实 ASR、LLM、SSO、Hermes、ES 或外部 API 密钥写进源码、文档、APK、Docker 镜像或最终回复。
+- 不要把真实 ASR、LLM、LDAP、SSO、Hermes、ES 或外部 API 密钥写进源码、文档、APK、Docker 镜像或最终回复。
 - 服务端是权威数据源。Android 本地数据只是缓存和离线录音保护。
 - ES/OpenSearch 只是可选索引层。业务数据必须先写入数据库。
 - 所有会议读写接口都必须做权限校验。
@@ -56,7 +56,7 @@ scripts\smoke-e2e.ps1 -BaseUrl http://127.0.0.1:8000 -ExternalToken test-token
 
 - `main.py`：API 路由。
 - `db.py`：SQLite schema 和迁移。
-- `auth.py`：用户会话、SSO、外部 token。
+- `auth.py`：用户会话、LDAP、SSO、外部 token。
 - `processing.py`：ASR、纪要、转发、索引工作流。
 - `repository.py`：会议完整文档聚合。
 - `search_index.py`：ES/OpenSearch 索引。
@@ -137,12 +137,21 @@ POST /api/admin/releases
 POST /api/admin/search/reindex
 ```
 
+认证：
+
+```text
+POST /api/auth/ldap-login
+POST /api/auth/demo-login
+GET  /api/auth/sso/start
+GET  /api/auth/sso/callback
+```
+
 ## 常见任务
 
 服务器运维 Agent 自动部署：
 
 - 先读 `docs/agents/README.md` 的“服务器运维 Agent 自动部署 Runbook”。
-- 向操作者收集 `SOLO_BASE_URL`、SSO、ASR、LLM、Hermes、ES、备份和 APK 分发信息。
+- 向操作者收集 `SOLO_BASE_URL`、LDAP、ASR、LLM、Hermes、ES、备份和 APK 分发信息；SSO/OIDC 仅在启用浏览器统一登录时必需。
 - 密钥只写入服务器本地 `server/.env` 或密钥管理系统，不写入 Git、文档或最终回复。
 - 自动完成部署、配置、APK 发布、健康检查和端到端 smoke 后再交付。
 
@@ -187,7 +196,7 @@ POST /api/admin/search/reindex
 
 ## Critical Rules
 
-- Do not put real ASR, LLM, SSO, Hermes, ES, or external API secrets in source, docs, APK, Docker image, or final answers.
+- Do not put real ASR, LLM, LDAP, SSO, Hermes, ES, or external API secrets in source, docs, APK, Docker image, or final answers.
 - Server is the authoritative data source. Android local data is cache/offline recording protection.
 - ES/OpenSearch is an optional index only. Always persist business data to DB first.
 - Every meeting read/write endpoint must enforce access control.
@@ -257,7 +266,7 @@ Core server files:
 
 - `main.py`: API routes.
 - `db.py`: SQLite schema and migrations.
-- `auth.py`: user sessions, SSO, external token auth.
+- `auth.py`: user sessions, LDAP, SSO, external token auth.
 - `processing.py`: ASR, summary, forwarding, indexing workflow.
 - `repository.py`: full meeting document aggregation.
 - `search_index.py`: ES/OpenSearch indexing.
@@ -338,12 +347,21 @@ POST /api/admin/releases
 POST /api/admin/search/reindex
 ```
 
+Auth:
+
+```text
+POST /api/auth/ldap-login
+POST /api/auth/demo-login
+GET  /api/auth/sso/start
+GET  /api/auth/sso/callback
+```
+
 ## Common Tasks
 
 Server operations agent auto-deployment:
 
 - First read the "Server Operations Agent Auto-Deployment Runbook" in `docs/agents/README.md`.
-- Collect `SOLO_BASE_URL`, SSO, ASR, LLM, Hermes, ES, backup, and APK distribution inputs from the operator.
+- Collect `SOLO_BASE_URL`, LDAP, ASR, LLM, Hermes, ES, backup, and APK distribution inputs from the operator; SSO/OIDC is required only when browser unified login is enabled.
 - Store secrets only in server-local `server/.env` or a secret manager, never in Git, docs, or final responses.
 - Complete deployment, configuration, APK publishing, health checks, and end-to-end smoke before handoff.
 

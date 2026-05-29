@@ -13,6 +13,7 @@ from .auth import (
     create_or_get_user,
     create_session,
     exchange_sso_code,
+    ldap_login as authenticate_ldap,
     require_admin,
 )
 from .config import get_settings
@@ -21,6 +22,7 @@ from .exports import create_export
 from .processing import enqueue_transcription
 from .repository import list_documents_for_external, list_documents_for_user, meeting_document
 from .schemas import (
+    LdapLoginRequest,
     LoginRequest,
     MeetingCreate,
     MeetingUpdate,
@@ -62,6 +64,11 @@ def demo_login(request: LoginRequest) -> dict:
     user = create_or_get_user(request.display_name, request.email, role=role)
     session = create_session(user["id"])
     return {"user": user, **session}
+
+
+@app.post("/api/auth/ldap-login")
+def ldap_login(request: LdapLoginRequest) -> dict:
+    return authenticate_ldap(request.username, request.password)
 
 
 @app.get("/api/auth/sso/start")

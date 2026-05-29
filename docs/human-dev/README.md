@@ -54,7 +54,7 @@ Android：
 server/solorecord_server/
 ├── main.py              API 路由和静态资源挂载
 ├── db.py                SQLite schema 和连接
-├── auth.py              demo 登录、SSO、会话、外部 token
+├── auth.py              LDAP 登录、demo 登录、SSO、会话、外部 token
 ├── config.py            环境变量配置
 ├── processing.py        处理任务：ASR、纪要、转发、索引
 ├── asr_adapters.py      本地 ASR 命令适配器
@@ -314,7 +314,7 @@ model/TranscriptSegment.java       转写段模型
 - 音频按段保存，默认 5 分钟轮转。
 - 关闭 App 停止录音并保存最后一段。
 - 角色改名按 speaker id 批量替换。
-- 主登录按钮走服务端 SSO，回跳 scheme 为 `solorecord://auth/callback`。
+- 主登录按钮走服务端 LDAP 登录；浏览器 SSO 入口保留，回跳 scheme 为 `solorecord://auth/callback`。
 - “从服务器恢复记录”会拉取 `/api/mobile/sync`，并保留服务器音频下载地址。
 
 ## 本地运行
@@ -377,7 +377,7 @@ server/tests/test_api.py
 
 覆盖：
 
-- demo 登录
+- LDAP 登录、demo 登录
 - 创建会议
 - 上传音频分段
 - finish/process
@@ -498,7 +498,7 @@ Android:
 server/solorecord_server/
 ├── main.py              API routes and static mount
 ├── db.py                SQLite schema and migrations
-├── auth.py              demo login, SSO, sessions, external tokens
+├── auth.py              LDAP login, demo login, SSO, sessions, external tokens
 ├── config.py            environment settings
 ├── processing.py        ASR, summary, forwarding, indexing workflow
 ├── asr_adapters.py      local ASR command adapter
@@ -729,7 +729,7 @@ Current requirements:
 - Audio rotates every 5 minutes by default.
 - Closing the app stops recording and saves the last segment as far as possible.
 - Speaker rename updates all transcript rows with the same speaker id.
-- Main login uses server-side SSO with `solorecord://auth/callback`.
+- Main login uses server-side LDAP login. Browser SSO remains available with `solorecord://auth/callback`.
 - Server recovery calls `/api/mobile/sync` and keeps server audio download URLs.
 
 ### Local Commands

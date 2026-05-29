@@ -1,13 +1,18 @@
 import hashlib
+import ssl
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from urllib.parse import urlencode
 
 from fastapi import Depends, Header, HTTPException, status
+import httpx
 import jwt
 from jwt import PyJWKClient
-import httpx
+from ldap3 import ALL, BASE, SUBTREE, Connection, Server, Tls
+from ldap3.core.exceptions import LDAPException
+from ldap3.utils.conv import escape_filter_chars
+from ldap3.utils.dn import escape_rdn
 
 from .config import get_settings
 from .db import get_db
@@ -20,12 +25,38 @@ def hash_token(token: str) -> str:
 
 def create_or_get_user(display_name: str, email: str = "", role: str = "user") -> dict:
     subject = email or display_name
+    return create_or_get_user_for_subject(subject, display_name, email, role)
+
+
+def create_or_get_user_for_subject(
+    subject: str,
+    display_name: str,
+    email: str = "",
+    role: str = "user",
+) -> dict:
+    normalized_subject = subject.strip() or email or display_name
     with get_db() as db:
         existing = db.execute(
             "SELECT * FROM users WHERE sso_subject = ?",
-            (subject,),
+            (normalized_subject,),
         ).fetchone()
         if existing:
+            if (
+                existing["display_name"] != display_name
+                or existing["email"] != email
+                or existing["role"] != role
+            ):
+                db.execute(
+                    """
+                    UPDATE users SET display_name = ?, email = ?, role = ?
+                    WHERE id = ?
+                    """,
+                    (display_name, email, role, existing["id"]),
+                )
+                existing = db.execute(
+                    "SELECT * FROM users WHERE id = ?",
+                    (existing["id"],),
+                ).fetchone()
             return row_to_dict(existing)
         user_id = new_id("usr")
         db.execute(
@@ -33,9 +64,36 @@ def create_or_get_user(display_name: str, email: str = "", role: str = "user") -
             INSERT INTO users (id, sso_subject, display_name, email, role, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (user_id, subject, display_name, email, role, now_iso()),
+            (user_id, normalized_subject, display_name, email, role, now_iso()),
         )
         return row_to_dict(db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone())
+
+
+def ldap_login(username: str, password: str) -> dict:
+    settings = get_settings()
+    login_name = username.strip()
+    if not settings.ldap_enabled:
+        raise HTTPException(status_code=400, detail="LDAP login is not configured")
+    if not login_name or not password:
+        raise HTTPException(status_code=400, detail="Username and password are required")
+    if len(login_name) > 128 or len(password) > 512:
+        raise HTTPException(status_code=400, detail="Username or password is too long")
+    if not settings.ldap_server or not (
+        settings.ldap_bind_dn_template
+        or (settings.ldap_lookup_bind_dn and settings.ldap_lookup_bind_password and settings.ldap_search_dn)
+    ):
+        raise HTTPException(status_code=400, detail="LDAP server or bind DN is not configured")
+    user_dn = _ldap_user_dn(login_name) if settings.ldap_bind_dn_template else ""
+    user_dn, attributes = _ldap_fetch_user(login_name, user_dn, password)
+    display_name = _first_attr(
+        attributes,
+        [settings.ldap_display_name_key, settings.ldap_username_key, "displayName", "cn", "uid"],
+    ) or login_name
+    email = _ldap_email(login_name, attributes)
+    subject = f"ldap:{user_dn}"
+    role = _ldap_role(login_name, user_dn, attributes)
+    user = create_or_get_user_for_subject(subject, display_name, email, role)
+    return {"user": user, **create_session(user["id"])}
 
 
 def build_sso_authorize_url(redirect_after: str = "/") -> str:
@@ -161,6 +219,201 @@ def external_client(authorization: Annotated[str | None, Header()] = None) -> di
 
 ExternalClient = Annotated[dict, Depends(external_client)]
 
+
+def _ldap_server() -> Server:
+    settings = get_settings()
+    return Server(
+        settings.ldap_server,
+        get_info=ALL,
+        connect_timeout=settings.ldap_timeout_seconds,
+        tls=Tls(validate=ssl.CERT_REQUIRED if settings.ldap_tls_validate else ssl.CERT_NONE),
+    )
+
+
+def _ldap_user_dn(username: str) -> str:
+    settings = get_settings()
+    escaped_username = escape_rdn(username)
+    return settings.ldap_bind_dn_template.replace("XXX", escaped_username).replace("%s", escaped_username)
+
+
+def _ldap_search_filter(username: str) -> str:
+    settings = get_settings()
+    raw_filter = settings.ldap_search_filter.strip() or "({username_key}={username})"
+    escaped_username = escape_filter_chars(username)
+    if "%s" in raw_filter:
+        rendered = raw_filter % escaped_username
+    elif "{" in raw_filter:
+        rendered = raw_filter.format(
+            username=escaped_username,
+            username_key=settings.ldap_username_key,
+        )
+    elif "(" not in raw_filter:
+        rendered = f"({raw_filter}={escaped_username})"
+    else:
+        rendered = raw_filter
+    if not rendered.startswith("("):
+        rendered = f"({rendered})"
+    return rendered
+
+
+def _ldap_fetch_user(username: str, user_dn: str, password: str) -> tuple[str, dict]:
+    settings = get_settings()
+    try:
+        if settings.ldap_lookup_bind_dn and settings.ldap_lookup_bind_password and settings.ldap_search_dn:
+            found_dn, attributes = _ldap_lookup_user(username)
+            authenticated_dn = found_dn or user_dn
+            _ldap_bind_credentials(authenticated_dn, password)
+            return authenticated_dn, attributes
+        return user_dn, _ldap_fetch_user_with_bind(username, user_dn, password)
+    except HTTPException:
+        raise
+    except LDAPException as exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password",
+        ) from exception
+
+
+def _ldap_lookup_user(username: str) -> tuple[str, dict]:
+    settings = get_settings()
+    with Connection(
+        _ldap_server(),
+        user=settings.ldap_lookup_bind_dn,
+        password=settings.ldap_lookup_bind_password,
+        auto_bind=True,
+        receive_timeout=settings.ldap_timeout_seconds,
+    ) as conn:
+        entry = _ldap_search_entry(conn, username)
+        if not entry:
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+        return entry.entry_dn, entry.entry_attributes_as_dict
+
+
+def _ldap_bind_credentials(user_dn: str, password: str) -> None:
+    settings = get_settings()
+    if not user_dn:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    with Connection(
+        _ldap_server(),
+        user=user_dn,
+        password=password,
+        auto_bind=True,
+        receive_timeout=settings.ldap_timeout_seconds,
+    ):
+        return
+
+
+def _ldap_fetch_user_with_bind(username: str, user_dn: str, password: str) -> dict:
+    settings = get_settings()
+    with Connection(
+        _ldap_server(),
+        user=user_dn,
+        password=password,
+        auto_bind=True,
+        receive_timeout=settings.ldap_timeout_seconds,
+    ) as conn:
+        entry = _ldap_search_entry(conn, username)
+        if not entry and user_dn:
+            conn.search(
+                user_dn,
+                "(objectClass=*)",
+                search_scope=BASE,
+                attributes=_ldap_attributes(),
+                size_limit=1,
+            )
+            entry = conn.entries[0] if conn.entries else None
+        if not entry:
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+        return entry.entry_attributes_as_dict
+
+
+def _ldap_search_entry(conn: Connection, username: str):
+    settings = get_settings()
+    if not settings.ldap_search_dn:
+        return None
+    conn.search(
+        settings.ldap_search_dn,
+        _ldap_search_filter(username),
+        search_scope=SUBTREE,
+        attributes=_ldap_attributes(),
+        size_limit=1,
+    )
+    return conn.entries[0] if conn.entries else None
+
+
+def _ldap_attributes() -> list[str]:
+    settings = get_settings()
+    return list(
+        dict.fromkeys(
+            [
+                settings.ldap_username_key,
+                settings.ldap_email_key,
+                settings.ldap_display_name_key,
+                "cn",
+                "uid",
+                "mail",
+                "email",
+                "displayName",
+                "memberOf",
+            ]
+        )
+    )
+
+
+def _ldap_role(username: str, user_dn: str, attributes: dict) -> str:
+    settings = get_settings()
+    configured_admins = {
+        item.strip().lower()
+        for item in settings.ldap_admin_users.split(",")
+        if item.strip()
+    }
+    if username.lower() in configured_admins or user_dn.lower() in configured_admins:
+        return "admin"
+    admin_group = settings.ldap_admin_group_dn.strip().lower()
+    if admin_group:
+        groups = _attr_list(attributes.get("memberOf") or attributes.get("memberof"))
+        if any(str(group).strip().lower() == admin_group for group in groups):
+            return "admin"
+    return settings.ldap_default_role if settings.ldap_default_role in {"admin", "user"} else "user"
+
+
+def _first_attr(attributes: dict, names: list[str]) -> str:
+    lowered = {key.lower(): value for key, value in attributes.items()}
+    for name in names:
+        value = lowered.get((name or "").lower())
+        values = _attr_list(value)
+        if values:
+            return str(values[0])
+    return ""
+
+
+def _ldap_email(username: str, attributes: dict) -> str:
+    settings = get_settings()
+    email = _first_attr(attributes, [settings.ldap_email_key, "mail", "email"]).strip()
+    postfix = settings.ldap_email_postfix.strip()
+    if email and ("@" in email or not postfix):
+        return email
+    if email and postfix:
+        return f"{email}{_normalized_email_postfix(postfix)}"
+    if postfix:
+        return f"{username}{_normalized_email_postfix(postfix)}"
+    return ""
+
+
+def _normalized_email_postfix(postfix: str) -> str:
+    if not postfix:
+        return ""
+    return postfix if postfix.startswith("@") else f"@{postfix}"
+
+
+def _attr_list(value: object) -> list[object]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [item for item in value if item not in (None, "")]
+    if value == "":
+        return []
+    return [value]
 
 def _verify_id_token(id_token: str, nonce: str) -> dict:
     settings = get_settings()

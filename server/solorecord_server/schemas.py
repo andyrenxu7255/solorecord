@@ -6,6 +6,11 @@ class LoginRequest(BaseModel):
     email: str = Field(default="demo@example.com")
 
 
+class LdapLoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=1, max_length=512)
+
+
 class MeetingCreate(BaseModel):
     title: str = ""
     started_at: str | None = None

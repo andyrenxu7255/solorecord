@@ -20,6 +20,18 @@ import java.util.List;
 public final class SoloServerClient {
     private final HttpJsonClient httpJsonClient = new HttpJsonClient();
 
+    public LoginResult ldapLogin(String serverEndpoint, String username, String password) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("username", username);
+        body.put("password", password);
+        JSONObject response = httpJsonClient.postJson(url(serverEndpoint, "/api/auth/ldap-login"), "", body);
+        JSONObject user = response.optJSONObject("user");
+        return new LoginResult(
+                response.optString("access_token"),
+                user == null ? username : user.optString("display_name", username),
+                user == null ? "" : user.optString("email", ""));
+    }
+
     public LoginResult demoLogin(String serverEndpoint, String displayName, String email) throws Exception {
         JSONObject body = new JSONObject();
         body.put("display_name", displayName);

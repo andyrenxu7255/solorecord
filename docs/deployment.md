@@ -63,9 +63,11 @@ scripts\smoke-e2e.ps1 -BaseUrl http://127.0.0.1:8000 -ExternalToken test-token
 ## 生产检查清单
 
 - 修改 `SOLO_SECRET_KEY`。
-- SSO 接通后关闭 `SOLO_ALLOW_DEMO_LOGIN`。
-- 在 `server/.env` 中配置群晖 SSO。优先复制群晖 discovery 页面里的 authorize/token/userinfo/JWKS URL；否则服务端会按 Synology 风格推导 `/webman/sso/SSOOauth.cgi` 和 `/webman/sso/SSOAccessToken.cgi`。
-- 注册 Web 回调 `https://record.example.com/api/auth/sso/callback`。Android 登录使用同一回调，再跳回 `solorecord://auth/callback`。
+- LDAP 接通后关闭 `SOLO_ALLOW_DEMO_LOGIN`。
+- 在 `server/.env` 中配置群晖 LDAP：`SOLO_LDAP_ENABLED=true`、`SOLO_LDAP_SERVER=ldaps://...`、`SOLO_LDAP_BIND_DN_TEMPLATE=uid=XXX,...`、`SOLO_LDAP_SEARCH_DN=...`、`SOLO_LDAP_SEARCH_FILTER=cn` 或完整过滤器、`SOLO_LDAP_EMAIL_POSTFIX=`。
+- 如果拿到的是 `ldapLogin` JSON，`baseDn` 写入 `SOLO_LDAP_BIND_DN_TEMPLATE`，`searchStandard` 写入 `SOLO_LDAP_SEARCH_FILTER`；不要保存 `bindPassword`，登录时使用用户输入的密码。
+- 若目录要求服务账号先搜索真实用户 DN，再用用户密码校验，才配置 `SOLO_LDAP_LOOKUP_BIND_DN` 和 `SOLO_LDAP_LOOKUP_BIND_PASSWORD`。
+- 如果后续改走浏览器统一登录，再配置群晖 SSO/OIDC、注册 Web 回调 `https://record.example.com/api/auth/sso/callback`，Android 回跳 `solorecord://auth/callback`。
 - 在 `8000` 端口前放 Nginx/Caddy HTTPS。
 - 将 `/downloads/android/*` 限制为登录用户或内网访问。
 - 将 `var/` 挂载到持久磁盘。
@@ -226,14 +228,21 @@ scripts\smoke-e2e.ps1 -BaseUrl http://127.0.0.1:8000 -ExternalToken test-token
 ## Production Checklist
 
 - Change `SOLO_SECRET_KEY`.
-- Disable `SOLO_ALLOW_DEMO_LOGIN` after SSO is connected.
-- Configure Synology SSO values in `server/.env`. Prefer copying the OIDC
-  authorize/token/userinfo/JWKS URLs from Synology's discovery page when
-  available; otherwise the server can fall back to Synology-style
-  `/webman/sso/SSOOauth.cgi` and `/webman/sso/SSOAccessToken.cgi` endpoints.
-- Register the Web callback `https://record.example.com/api/auth/sso/callback`.
-  Android login uses the same callback and then returns to the APK with
-  `solorecord://auth/callback`.
+- Disable `SOLO_ALLOW_DEMO_LOGIN` after LDAP is connected.
+- Configure Synology LDAP in `server/.env`: `SOLO_LDAP_ENABLED=true`,
+  `SOLO_LDAP_SERVER=ldaps://...`, `SOLO_LDAP_BIND_DN_TEMPLATE=uid=XXX,...`,
+  `SOLO_LDAP_SEARCH_DN=...`, `SOLO_LDAP_SEARCH_FILTER=cn` or a full filter,
+  and `SOLO_LDAP_EMAIL_POSTFIX=`.
+- If you receive a `ldapLogin` JSON object, map `baseDn` to
+  `SOLO_LDAP_BIND_DN_TEMPLATE` and `searchStandard` to
+  `SOLO_LDAP_SEARCH_FILTER`. Do not store `bindPassword`; user-entered login
+  passwords are used for LDAP bind.
+- Configure `SOLO_LDAP_LOOKUP_BIND_DN` and `SOLO_LDAP_LOOKUP_BIND_PASSWORD`
+  only if the directory requires a service account lookup before validating the
+  user's password.
+- If browser unified login is enabled later, configure Synology SSO/OIDC,
+  register `https://record.example.com/api/auth/sso/callback`, and keep the
+  Android return URI `solorecord://auth/callback`.
 - Put Nginx/Caddy with HTTPS in front of port `8000`.
 - Restrict `/downloads/android/*` to logged-in users or internal network.
 - Mount `var/` to persistent disk.

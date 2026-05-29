@@ -7,13 +7,13 @@ SoloRecord V0.7 是公司内部会议记录系统的首个可部署交付版，�
 ### 主要能力
 
 - Android App 三页签：录音、记录、登录状态。
-- 群晖/公司统一登录链路：Web 回调后可回跳 Android `solorecord://auth/callback`。
+- 群晖/公司登录链路：默认 LDAP 用户名密码登录；可选 Web SSO 回调后回跳 Android `solorecord://auth/callback`。
 - 滚动分段录音：点击开始后本地即时保存，结束或关闭 App 时停止并尽量保存最后一段。
 - 服务器权威存储：保存登录用户名、会议、音频分段、转写、纪要、待办、角色名和审计日志。
 - 重装 APK 后恢复：登录后可从 `/api/mobile/sync` 恢复服务器记录，并按权限下载服务器音频播放。
 - Web 管理端：会议查看/编辑、转写编辑、角色改名、导出、模型配置、任务查看、APK 发布。
 - APK Release 附件：公开附件不包含真实服务器地址和任何 token/key；内部分发时只预置服务器地址，再由 Web 管理端发布下载。
-- 模型密钥服务端保存：APK 不包含 ASR/LLM/SSO/Hermes/ES 密钥。
+- 模型密钥服务端保存：APK 不包含 ASR/LLM/LDAP/SSO/Hermes/ES 密钥。
 - 本地 ASR 命令适配器：可接入自建 ASR，标准 JSON 输出即可。
 - LLM 纪要适配器：支持 mock、Ollama、OpenAI 兼容接口和内部模型。
 - 外部系统接口：Hermes/CRM 等可通过服务端 token 拉取会议数据。
@@ -33,7 +33,7 @@ SoloRecord V0.7 是公司内部会议记录系统的首个可部署交付版，�
 
 - 正式部署前必须修改 `SOLO_SECRET_KEY`。
 - 正式环境关闭 `SOLO_ALLOW_DEMO_LOGIN`。
-- 配置 HTTPS、群晖 SSO 回调、本地 ASR、LLM、备份和外部 API token。
+- 配置 HTTPS、群晖 LDAP、本地 ASR、LLM、备份和外部 API token；如果启用浏览器统一登录，再配置 SSO 回调。
 - 如果要让员工免填服务器地址，请用 `-PSOLO_SERVER_ENDPOINT=https://record.example.com` 重新构建 APK，再上传到服务器 Web 管理端；不要把任何 token/key 打进 APK。
 - 代码仓库可以公开，但必须确认没有提交真实密钥、`server/.env`、运行数据、数据库、缓存、APK 构建产物或客户会议音频；生产部署仍按公司内部系统管控。
 
@@ -44,13 +44,13 @@ SoloRecord V0.7 is the first deployable internal release of the company meeting 
 ### Highlights
 
 - Android app with three tabs: recording, records, and login status.
-- Synology/company SSO flow: Web callback can return to Android through `solorecord://auth/callback`.
+- Synology/company login flow: LDAP username/password login by default; optional Web SSO callback can return to Android through `solorecord://auth/callback`.
 - Rolling segmented recording: local audio is saved immediately after start; ending or closing the app stops recording and preserves the last segment as far as possible.
 - Server-authoritative storage: user identity, meetings, audio segments, transcripts, summaries, action items, speaker names, and audit logs are stored server-side.
 - APK reinstall recovery: after login, the app can restore records through `/api/mobile/sync` and download protected server audio segments for playback.
 - Web admin: meeting review/editing, transcript editing, speaker rename, exports, model configuration, job view, and APK publishing.
 - APK Release asset: the public attachment contains no real server URL or token/key. For internal distribution, embed only the server URL and publish the APK from the Web admin.
-- Server-side secrets: the APK does not contain ASR, LLM, SSO, Hermes, or ES credentials.
+- Server-side secrets: the APK does not contain ASR, LLM, LDAP, SSO, Hermes, or ES credentials.
 - Local ASR command adapter: any local ASR runtime can be integrated by printing standard JSON.
 - LLM summary adapter: mock, Ollama, OpenAI-compatible, and internal providers are supported.
 - External integration API: Hermes/CRM systems can pull meeting data with server-side bearer tokens.
@@ -70,6 +70,6 @@ SoloRecord V0.7 is the first deployable internal release of the company meeting 
 
 - Change `SOLO_SECRET_KEY` before production deployment.
 - Disable `SOLO_ALLOW_DEMO_LOGIN` in production.
-- Configure HTTPS, Synology SSO callback, local ASR, LLM, backups, and external API tokens.
+- Configure HTTPS, Synology LDAP, local ASR, LLM, backups, and external API tokens. Configure SSO callback only if browser unified login is enabled.
 - To avoid asking employees to type the server URL, rebuild with `-PSOLO_SERVER_ENDPOINT=https://record.example.com`, then upload that APK from the server Web admin. Never put tokens or keys into the APK.
 - The source repository can be public, but verify that real secrets, `server/.env`, runtime data, databases, caches, APK build outputs, and customer meeting audio are not committed. Production deployments remain internal systems.

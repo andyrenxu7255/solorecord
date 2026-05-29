@@ -13,6 +13,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -364,15 +365,14 @@ public final class MainActivity extends Activity {
         EditText serverInput = input(sessionStore.getServerEndpoint(), "服务器地址");
         content.addView(serverInput, spacedParams());
 
-        EditText nameInput = input(
-                sessionStore.getDisplayName().isEmpty() ? "Demo User" : sessionStore.getDisplayName(),
-                "姓名");
-        content.addView(nameInput, spacedParams());
+        EditText usernameInput = input(
+                sessionStore.getUsername(),
+                "LDAP 用户名");
+        content.addView(usernameInput, spacedParams());
 
-        EditText emailInput = input(
-                sessionStore.getEmail().isEmpty() ? "admin@example.com" : sessionStore.getEmail(),
-                "邮箱");
-        content.addView(emailInput, spacedParams());
+        EditText passwordInput = input("", "LDAP 密码");
+        passwordInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        content.addView(passwordInput, spacedParams());
 
         Button saveServer = secondaryButton("保存服务器地址");
         saveServer.setOnClickListener(view -> {
@@ -382,13 +382,16 @@ public final class MainActivity extends Activity {
         });
         content.addView(saveServer, spacedParams());
 
-        Button login = primaryButton("登录");
-        login.setOnClickListener(view -> startSsoLogin(serverInput.getText().toString()));
+        Button login = primaryButton("LDAP 登录");
+        login.setOnClickListener(view -> loginWithLdap(
+                serverInput.getText().toString(),
+                usernameInput.getText().toString(),
+                passwordInput.getText().toString()));
         content.addView(login, spacedParams());
 
-        Button demoLogin = secondaryButton("演示登录");
-        demoLogin.setOnClickListener(view -> login(serverInput.getText().toString(), nameInput.getText().toString(), emailInput.getText().toString()));
-        content.addView(demoLogin, spacedParams());
+        Button ssoLogin = secondaryButton("浏览器统一登录");
+        ssoLogin.setOnClickListener(view -> startSsoLogin(serverInput.getText().toString()));
+        content.addView(ssoLogin, spacedParams());
 
         Button logout = secondaryButton("退出登录");
         logout.setOnClickListener(view -> {
@@ -402,7 +405,7 @@ public final class MainActivity extends Activity {
         checkRelease.setOnClickListener(view -> openLatestRelease());
         content.addView(checkRelease, spacedParams());
 
-        addHint("App 版本：" + BuildConfig.VERSION_NAME + "。APK 只保存服务器地址和登录会话，不内置模型密钥或外部系统 token。");
+        addHint("App 版本：" + BuildConfig.VERSION_NAME + "。APK 只保存服务器地址和登录会话，不内置 LDAP、模型密钥或外部系统 token。");
     }
 
     private void toggleRecording() {
@@ -605,6 +608,33 @@ public final class MainActivity extends Activity {
             try {
                 SoloServerClient.LoginResult result = serverClient.demoLogin(endpoint, displayName, email);
                 sessionStore.saveLogin(result.getToken(), result.getDisplayName(), result.getEmail());
+                runOnUiThread(() -> {
+                    updateHeader();
+                    toast("登录成功");
+                    renderCurrentTab();
+                });
+            } catch (Exception exception) {
+                runOnUiThread(() -> toast("登录失败：" + exception.getMessage()));
+            }
+        });
+    }
+
+    private void loginWithLdap(String serverEndpoint, String username, String password) {
+        String endpoint = normalizeServerEndpoint(serverEndpoint);
+        String loginName = username == null ? "" : username.trim();
+        if (endpoint.isEmpty()) {
+            toast("请先填写服务器地址");
+            return;
+        }
+        if (loginName.isEmpty() || password == null || password.isEmpty()) {
+            toast("请输入用户名和密码");
+            return;
+        }
+        sessionStore.setServerEndpoint(endpoint);
+        executorService.execute(() -> {
+            try {
+                SoloServerClient.LoginResult result = serverClient.ldapLogin(endpoint, loginName, password);
+                sessionStore.saveLogin(result.getToken(), result.getDisplayName(), result.getEmail(), loginName);
                 runOnUiThread(() -> {
                     updateHeader();
                     toast("登录成功");

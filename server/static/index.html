@@ -159,6 +159,20 @@
       </section>
     </main>
   </div>
+  <div id="loginModal" class="modal-backdrop hidden">
+    <form id="loginForm" class="modal-card">
+      <h2>登录 SoloRecord</h2>
+      <label>用户名</label>
+      <input id="loginUsername" class="input" autocomplete="username" placeholder="LDAP 用户名">
+      <label>密码</label>
+      <input id="loginPassword" class="input" type="password" autocomplete="current-password" placeholder="LDAP 密码">
+      <div class="modal-actions">
+        <button type="button" id="cancelLogin" class="button secondary">取消</button>
+        <button type="submit" class="button primary">登录</button>
+      </div>
+      <p class="hint">账号密码只提交给 SoloRecord 服务端用于 LDAP 校验，不会保存到浏览器。</p>
+    </form>
+  </div>
   <div id="toast" class="toast"></div>
   <script src="/app.js"></script>
 </body>

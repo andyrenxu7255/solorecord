@@ -46,11 +46,11 @@ Local ASR/LLM + Hermes/Sales Workspace
 - CPU 4 核以上，内存 8 GB 以上。
 - 磁盘按会议音频量预估，建议从 500 GB 起。
 - 如果本地 ASR 需要 GPU，ASR 服务单独部署到 GPU 主机。
-- HTTPS 域名，用于 Web、APK 下载和 SSO 回调。
+- HTTPS 域名，用于 Web、APK 下载；仅启用浏览器 SSO/OIDC 时才需要回调域名。
 
 必须准备：
 
-- 群晖 SSO/OIDC 应用信息。
+- 群晖 LDAP 信息；如果后续改走浏览器统一登录，再准备 SSO/OIDC 应用信息。
 - SoloRecord 服务域名。
 - 本地 ASR 命令或服务地址。
 - LLM 模型接口，可是 Ollama、OpenAI 兼容接口或公司内网模型。
@@ -122,7 +122,42 @@ SOLO_ALLOW_DEMO_LOGIN=true
 如果启用 Docker Compose 的 `full` profile，还要把 `server/.env.example`
 里的 `POSTGRES_PASSWORD` 和 `MINIO_ROOT_PASSWORD` 换成长随机值。
 
-## 群晖 SSO 配置
+## 群晖 LDAP 登录配置
+
+当前 Android App 和 Web 默认使用 LDAP 用户名密码登录。员工只输入自己的 LDAP 用户名和密码；服务端用该凭据连接群晖 LDAP，校验成功后签发 SoloRecord 会话 token。APK 不保存 LDAP 密码，也不内置 LDAP 服务端凭据。
+
+`server/.env` 示例：
+
+```text
+SOLO_LDAP_ENABLED=true
+SOLO_LDAP_SERVER=ldaps://ldap.example.com:636
+SOLO_LDAP_BIND_DN_TEMPLATE=uid=XXX,cn=users,dc=example,dc=com
+SOLO_LDAP_LOOKUP_BIND_DN=
+SOLO_LDAP_LOOKUP_BIND_PASSWORD=
+SOLO_LDAP_SEARCH_DN=cn=users,dc=example,dc=com
+SOLO_LDAP_SEARCH_FILTER=(cn={username})
+SOLO_LDAP_USERNAME_KEY=cn
+SOLO_LDAP_EMAIL_KEY=mail
+SOLO_LDAP_EMAIL_POSTFIX=
+SOLO_LDAP_DISPLAY_NAME_KEY=displayName
+SOLO_LDAP_ADMIN_USERS=admin_user_1,admin_user_2
+SOLO_LDAP_TLS_VALIDATE=true
+```
+
+说明：
+
+- `SOLO_LDAP_BIND_DN_TEMPLATE` 中的 `XXX` 或 `%s` 会替换为用户输入的用户名。
+- 如果运维给的是 JSON 配置：`ldapLogin.server` 对应 `SOLO_LDAP_SERVER`，`baseDn` 对应 `SOLO_LDAP_BIND_DN_TEMPLATE`，`searchDn` 对应 `SOLO_LDAP_SEARCH_DN`，`searchStandard` 对应 `SOLO_LDAP_SEARCH_FILTER`，`usernameKey` 对应 `SOLO_LDAP_USERNAME_KEY`，`emailKey` 对应 `SOLO_LDAP_EMAIL_KEY`，`emailPostfix` 对应 `SOLO_LDAP_EMAIL_POSTFIX`。`bindPassword` 不写入服务器配置，使用用户登录时输入的密码。
+- `SOLO_LDAP_SEARCH_FILTER` 可以写字段名 `cn`，也可以写完整过滤器片段，例如 `&(objectClass=user)(cn=%s)`。
+- 默认模式是按 `SOLO_LDAP_BIND_DN_TEMPLATE` 组装用户 DN，并用用户输入的密码 bind。如果群晖必须先用服务账号搜索用户 DN，再用用户密码 bind，可额外配置 `SOLO_LDAP_LOOKUP_BIND_DN` 和 `SOLO_LDAP_LOOKUP_BIND_PASSWORD`；该密码只能写入服务器本地 `server/.env`。
+- `SOLO_LDAP_EMAIL_POSTFIX` 可为空；如果 LDAP 没返回邮箱或只返回用户名，服务端会用该后缀补出邮箱。
+- 如果群晖证书不是系统信任链，联调时可临时设 `SOLO_LDAP_TLS_VALIDATE=false`；生产应安装可信证书并改回 `true`。
+- 管理员权限优先用 `SOLO_LDAP_ADMIN_USERS` 指定用户名；后续也可用 `SOLO_LDAP_ADMIN_GROUP_DN` 按 LDAP 组映射。
+- 正式环境建议关闭 `SOLO_ALLOW_DEMO_LOGIN`。
+
+## 群晖 SSO/OIDC 配置
+
+LDAP 已能满足当前用户名密码登录需求。若后续希望改成浏览器跳转式统一登录，可继续使用本节。
 
 推荐使用 OIDC。
 
@@ -476,11 +511,11 @@ Minimum recommendation:
 - 4+ CPU cores and 8 GB+ memory.
 - Disk capacity sized for meeting audio; start from 500 GB if unsure.
 - A separate GPU host if the local ASR runtime needs GPU.
-- HTTPS domain for Web, APK download, and SSO callback.
+- HTTPS domain for Web and APK download; callback support is only required if browser SSO/OIDC is enabled.
 
 Prepare:
 
-- Synology SSO/OIDC app information.
+- Synology LDAP information. Prepare Synology SSO/OIDC app information only if browser-based unified login is enabled later.
 - SoloRecord service domain.
 - Local ASR command or service endpoint.
 - LLM endpoint, such as Ollama, OpenAI-compatible API, or internal model.
@@ -549,7 +584,42 @@ SOLO_ALLOW_DEMO_LOGIN=true
 
 Disable it before production use. If the optional Docker Compose `full` profile is enabled, replace `POSTGRES_PASSWORD` and `MINIO_ROOT_PASSWORD` with long random values.
 
-### Synology SSO
+### Synology LDAP Login
+
+The current Android and Web login flow uses LDAP username/password login. Users enter their own LDAP username and password; the server binds to Synology LDAP with that credential, then issues a SoloRecord session token. The APK does not store LDAP passwords or LDAP service credentials.
+
+Example `server/.env`:
+
+```text
+SOLO_LDAP_ENABLED=true
+SOLO_LDAP_SERVER=ldaps://ldap.example.com:636
+SOLO_LDAP_BIND_DN_TEMPLATE=uid=XXX,cn=users,dc=example,dc=com
+SOLO_LDAP_LOOKUP_BIND_DN=
+SOLO_LDAP_LOOKUP_BIND_PASSWORD=
+SOLO_LDAP_SEARCH_DN=cn=users,dc=example,dc=com
+SOLO_LDAP_SEARCH_FILTER=(cn={username})
+SOLO_LDAP_USERNAME_KEY=cn
+SOLO_LDAP_EMAIL_KEY=mail
+SOLO_LDAP_EMAIL_POSTFIX=
+SOLO_LDAP_DISPLAY_NAME_KEY=displayName
+SOLO_LDAP_ADMIN_USERS=admin_user_1,admin_user_2
+SOLO_LDAP_TLS_VALIDATE=true
+```
+
+Notes:
+
+- `XXX` or `%s` in `SOLO_LDAP_BIND_DN_TEMPLATE` is replaced by the username.
+- If operations provides a JSON config, map `ldapLogin.server` to `SOLO_LDAP_SERVER`, `baseDn` to `SOLO_LDAP_BIND_DN_TEMPLATE`, `searchDn` to `SOLO_LDAP_SEARCH_DN`, `searchStandard` to `SOLO_LDAP_SEARCH_FILTER`, `usernameKey` to `SOLO_LDAP_USERNAME_KEY`, `emailKey` to `SOLO_LDAP_EMAIL_KEY`, and `emailPostfix` to `SOLO_LDAP_EMAIL_POSTFIX`. Do not store `bindPassword`; SoloRecord uses the password entered by the user at login.
+- `SOLO_LDAP_SEARCH_FILTER` can be a field name such as `cn`, or a full filter fragment such as `&(objectClass=user)(cn=%s)`.
+- The default mode builds a user DN from `SOLO_LDAP_BIND_DN_TEMPLATE` and binds with the user's password. If Synology requires a service account to search the real user DN first, also configure `SOLO_LDAP_LOOKUP_BIND_DN` and `SOLO_LDAP_LOOKUP_BIND_PASSWORD`; keep that password only in server-local `server/.env`.
+- `SOLO_LDAP_EMAIL_POSTFIX` can be empty. If LDAP does not return an email or returns only a local name, the server appends this postfix.
+- If Synology uses an internal certificate during validation, temporarily set `SOLO_LDAP_TLS_VALIDATE=false`; production should trust the certificate chain and keep validation enabled.
+- Use `SOLO_LDAP_ADMIN_USERS` for the first admin accounts, or `SOLO_LDAP_ADMIN_GROUP_DN` for group-based admin mapping.
+- Disable `SOLO_ALLOW_DEMO_LOGIN` for formal use.
+
+### Synology SSO/OIDC
+
+LDAP covers the current username/password flow. Use this optional section if the company later wants browser-based unified login.
 
 Register these in Synology SSO/OIDC:
 
@@ -734,7 +804,7 @@ Expected:
 
 ### Troubleshooting
 
-Login failures usually point to `SOLO_BASE_URL`, `SOLO_SSO_REDIRECT_URI`, Synology callback configuration, or reverse proxy Host/TLS settings.
+LDAP login failures usually point to `SOLO_LDAP_SERVER`, `SOLO_LDAP_BIND_DN_TEMPLATE`, `SOLO_LDAP_SEARCH_DN`, `SOLO_LDAP_SEARCH_FILTER`, TLS trust, or the user's LDAP password. Browser SSO failures usually point to `SOLO_BASE_URL`, `SOLO_SSO_REDIRECT_URI`, Synology callback configuration, or reverse proxy Host/TLS settings.
 
 Sync failures usually point to the APK server endpoint, network access, expired token, or `GET /api/mobile/sync`.
 
@@ -753,14 +823,15 @@ docker compose build --build-arg INSTALL_MEDIA_TOOLS=true solorecord
 - `SOLO_SECRET_KEY` changed.
 - `SOLO_ALLOW_DEMO_LOGIN=false`.
 - HTTPS enabled.
-- SSO callback verified.
+- LDAP login verified with a test user.
+- SSO callback verified if browser SSO/OIDC is enabled.
 - ASR command or service verified.
 - LLM configuration verified.
 - `var/` mounted to persistent disk.
 - Backups configured.
 - External API tokens replaced with long random values.
 - APK uploaded and downloadable.
-- APK confirmed to contain only the server URL, with no ASR/LLM/SSO/Hermes/ES token or key.
-- Test user completes SSO, recording, upload, transcription, speaker rename, export, server recovery, and server audio playback.
+- APK confirmed to contain only the server URL, with no ASR/LLM/LDAP/SSO/Hermes/ES token or key.
+- Test user completes LDAP login, recording, upload, transcription, speaker rename, export, server recovery, and server audio playback.
 - `scripts\smoke-e2e.ps1` passed.
 - `pip-audit -r server/requirements.txt` shows no known vulnerabilities.

@@ -2,7 +2,7 @@
 
 ## 中文
 
-> 公司内部会议记录系统：Android APK + FastAPI 服务端 + Web 管理端 + 本地 ASR/LLM 流水线 + 群晖 SSO + 服务端转写/纪要存储 + 可选 ES/OpenSearch。
+> 公司内部会议记录系统：Android APK + FastAPI 服务端 + Web 管理端 + 本地 ASR/LLM 流水线 + 群晖 LDAP/SSO + 服务端转写/纪要存储 + 可选 ES/OpenSearch。
 
 ### 先读这里
 
@@ -11,7 +11,7 @@
 
 ### 人类运维
 
-- [运维手册](docs/human-ops/README.md)：部署、环境变量、SSO、ASR/LLM、ES、备份、APK 发布、排障。
+- [运维手册](docs/human-ops/README.md)：部署、环境变量、LDAP/SSO、ASR/LLM、ES、备份、APK 发布、排障。
 - [部署参考](docs/deployment.md)：快速启动和 Docker 说明。
 - [安全审计](docs/security-audit.md)：安全控制、原型风险、验证结果。
 - [数据存储与 ES](docs/data-storage-and-es.md)：服务端权威存储、移动端重装同步、外部 API、ES/OpenSearch 文档结构。
@@ -44,7 +44,7 @@
 
 - `server/solorecord_server/main.py`：FastAPI 路由。
 - `server/solorecord_server/db.py`：SQLite schema 和迁移。
-- `server/solorecord_server/auth.py`：会话、SSO、外部 token 鉴权。
+- `server/solorecord_server/auth.py`：会话、LDAP、SSO、外部 token 鉴权。
 - `server/solorecord_server/processing.py`：ASR、纪要、转发、索引流程。
 - `server/solorecord_server/repository.py`：完整会议文档聚合。
 - `server/solorecord_server/search_index.py`：ES/OpenSearch 索引。
@@ -69,7 +69,7 @@ scripts\run-server.ps1
 
 ## English
 
-> Internal company meeting recorder: Android APK + FastAPI server + Web admin + local ASR/LLM pipeline + Synology SSO + server-side transcript/summary storage + optional ES/OpenSearch.
+> Internal company meeting recorder: Android APK + FastAPI server + Web admin + local ASR/LLM pipeline + Synology LDAP/SSO + server-side transcript/summary storage + optional ES/OpenSearch.
 
 ## Start Here
 
@@ -78,7 +78,7 @@ scripts\run-server.ps1
 
 ## Human Operations
 
-- [Operations Manual](docs/human-ops/README.md): Deployment, env vars, SSO, ASR/LLM, ES, backups, APK publishing, troubleshooting.
+- [Operations Manual](docs/human-ops/README.md): Deployment, env vars, LDAP/SSO, ASR/LLM, ES, backups, APK publishing, troubleshooting.
 - [Deployment Reference](docs/deployment.md): Quick start and Docker notes.
 - [Security Audit](docs/security-audit.md): Security controls, prototype risks, verification results.
 - [Data Storage And ES](docs/data-storage-and-es.md): Server authoritative storage, mobile resync, external API, ES/OpenSearch document shape.
@@ -110,7 +110,7 @@ scripts\run-server.ps1
 
 - `server/solorecord_server/main.py`: FastAPI routes.
 - `server/solorecord_server/db.py`: SQLite schema and migrations.
-- `server/solorecord_server/auth.py`: Sessions, SSO, external token auth.
+- `server/solorecord_server/auth.py`: Sessions, LDAP, SSO, external token auth.
 - `server/solorecord_server/processing.py`: ASR, summary, forwarding, indexing workflow.
 - `server/solorecord_server/repository.py`: Full meeting document aggregation.
 - `server/solorecord_server/search_index.py`: ES/OpenSearch indexing.

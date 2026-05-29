@@ -12,7 +12,7 @@ SoloRecord 是公司内部会议记录系统，用来通过 Android App 可靠�
 
 这是面向公司内部使用的一体化会议记录系统，当前发布版为 V0.7，包含 Android App、服务端网关和 Web 管理/PC 端。
 
-- Android App：统一登录跳转与回跳、滚动分段录音、本地记录、本地播放、同步到服务器、重装后恢复服务器记录、查看转写/纪要/待办、批量修改角色名。
+- Android App：LDAP 登录、可选统一登录跳转与回跳、滚动分段录音、本地记录、本地播放、同步到服务器、重装后恢复服务器记录、查看转写/纪要/待办、批量修改角色名。
 - 服务端：登录会话、会议/音频/转写/角色/纪要/待办、ASR/LLM 配置、导出、APK 发布下载、Hermes/Webhook 转发。
 - Web 端：PC 上传录音、会议查看编辑、角色重命名、导出、模型配置、任务管理、APK 发布。
 - 模型密钥保存在服务端，APK 默认只需要服务器地址和短期会话 token。
@@ -62,7 +62,7 @@ scripts\run-server.ps1
 http://127.0.0.1:8000
 ```
 
-演示管理员账号可用 `admin@example.com` 登录。正式部署前请按 `docs/deployment.md` 配置 SSO、密钥、HTTPS、ASR Provider 和 APK 发布。
+演示管理员账号可用 `admin@example.com` 登录。正式部署前请按 `docs/deployment.md` 配置 LDAP、密钥、HTTPS、ASR Provider 和 APK 发布。
 
 当前已验证：
 
@@ -91,7 +91,7 @@ http://127.0.0.1:8000
 
 面向正式分发的 APK，不建议把百炼/DashScope Key、LLM Key、群晖 OIDC Client Secret 或 Hermes 工作区凭证写进 APK。APK 反编译后这些值有泄露风险。
 
-推荐模式是：APK 只配置你自己的网关地址；网关负责群晖 SSO 登录校验、保存百炼 Key、保存大模型 Key、调用 `qwen3-asr-flash-filetrans`、生成纪要、转发到销售工作区。
+推荐模式是：APK 只配置你自己的网关地址；网关负责群晖 LDAP/SSO 登录校验、保存百炼 Key、保存大模型 Key、调用 `qwen3-asr-flash-filetrans`、生成纪要、转发到销售工作区。
 
 `qwen3-asr-flash-filetrans` 的“离线转写”是云端长音频文件转写，不是手机本地无网转写。它通常需要先把音频放到公网可访问地址，再提交异步任务、轮询任务状态、下载临时转写结果。因此只给 APK 配 URL、Key 和 Model ID 可以做短音频原型，但不适合作为正式长会议录音方案。
 
@@ -114,17 +114,17 @@ APK 正式分发时只建议预配置服务器地址，不预置任何 token/key
 SOLO_SERVER_ENDPOINT=https://record.example.com
 ```
 
-如果构建时没有传入 `SOLO_SERVER_ENDPOINT`，App 首次打开会在“登录状态”页要求填写服务器地址；填写后再走统一登录。GitHub 公开 Release 附带的 APK 不包含真实服务器地址和密钥，适合初装/联调；公司正式分发时，建议用实际域名重新构建后上传到服务器 Web 管理端的“发布 APK”。
+如果构建时没有传入 `SOLO_SERVER_ENDPOINT`，App 首次打开会在“登录状态”页要求填写服务器地址；填写后使用 LDAP 用户名密码登录。GitHub 公开 Release 附带的 APK 不包含真实服务器地址和密钥，适合初装/联调；公司正式分发时，建议用实际域名重新构建后上传到服务器 Web 管理端的“发布 APK”。
 
-ASR、LLM、SSO、Hermes、ES 等密钥都放在服务器 `server/.env` 或 Web 管理页，不写进 APK。
+ASR、LLM、LDAP、SSO、Hermes、ES 等密钥都放在服务器 `server/.env` 或 Web 管理页，不写进 APK。
 
-Android 统一登录使用系统浏览器打开：
+Android 默认通过服务端 LDAP 登录接口换取短期 SoloRecord 会话 token。可选浏览器统一登录仍保留：
 
 ```text
 https://record.example.com/api/auth/sso/start?redirect_after=solorecord://auth/callback
 ```
 
-登录完成后服务端会回跳 `solorecord://auth/callback`，APK 只保存服务端短期会话 token。
+浏览器登录完成后服务端会回跳 `solorecord://auth/callback`，APK 只保存服务端短期会话 token。
 
 构建可预配置服务器地址的 APK：
 
@@ -158,7 +158,7 @@ SoloRecord is an internal company meeting recorder. V0.7 is the first deployable
 
 ### What V0.7 Includes
 
-- Android app: SSO login handoff, rolling segmented recording, local records, playback, server sync, server record recovery after reinstall, transcript/summary/action-item viewing, and batch speaker rename.
+- Android app: LDAP login, optional SSO login handoff, rolling segmented recording, local records, playback, server sync, server record recovery after reinstall, transcript/summary/action-item viewing, and batch speaker rename.
 - Server: login sessions, meetings, audio segments, transcripts, speaker names, summaries, action items, ASR/LLM configuration, exports, APK publishing, Hermes/Webhook forwarding, external API, and optional ES/OpenSearch indexing.
 - Web app: PC upload, meeting review/editing, transcript editing, speaker rename, exports, model configuration, job management, and APK publishing.
 - Secrets are stored server-side. The APK only needs the server endpoint and a short-lived session token.
@@ -204,8 +204,8 @@ See `docs/deployment.md` for the Local ASR Command Adapter details.
 
 ### Public Repository Boundary
 
-The source code and documentation can be shared in a public repository, but real company secrets, SSO client secrets, model keys, Hermes tokens, ES credentials, `server/.env`, runtime data, databases, caches, APK build outputs, and customer meeting audio must never be committed. Production deployments remain internal systems protected by HTTPS, SSO, server-side authorization, and internal network policy.
+The source code and documentation can be shared in a public repository, but real company secrets, LDAP details, SSO client secrets, model keys, Hermes tokens, ES credentials, `server/.env`, runtime data, databases, caches, APK build outputs, and customer meeting audio must never be committed. Production deployments remain internal systems protected by HTTPS, LDAP/SSO, server-side authorization, and internal network policy.
 
 ### Production Notes
 
-Before production, change `SOLO_SECRET_KEY`, disable demo login, configure HTTPS and Synology SSO, connect the local ASR/LLM providers, configure backups, publish the APK through the server, and verify that no secrets or runtime data are present in the public repository.
+Before production, change `SOLO_SECRET_KEY`, disable demo login, configure HTTPS and Synology LDAP, connect the local ASR/LLM providers, configure backups, publish the APK through the server, and verify that no secrets or runtime data are present in the public repository.
