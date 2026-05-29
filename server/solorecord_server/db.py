@@ -179,9 +179,6 @@ CREATE TABLE IF NOT EXISTS apk_releases (
     created_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_apk_releases_platform_version
-ON apk_releases(platform, version_code DESC, created_at DESC);
-
 CREATE TABLE IF NOT EXISTS app_config (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -229,6 +226,12 @@ def init_db() -> None:
             connection.execute(
                 "ALTER TABLE apk_releases ADD COLUMN content_type TEXT NOT NULL DEFAULT 'application/octet-stream'"
             )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_apk_releases_platform_version
+            ON apk_releases(platform, version_code DESC, created_at DESC)
+            """
+        )
 
 
 @contextmanager

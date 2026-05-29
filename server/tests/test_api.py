@@ -255,6 +255,44 @@ def test_remote_stt_adapter_keeps_empty_audio_traceable(tmp_path: Path) -> None:
     assert "未识别到有效语音" in segments[0]["text"]
 
 
+def test_release_schema_migrates_existing_apk_table(tmp_path: Path) -> None:
+    os.environ["SOLO_DATA_DIR"] = str(tmp_path / "var")
+    os.environ["SOLO_DATABASE_PATH"] = str(tmp_path / "var" / "legacy.db")
+    os.environ["SOLO_STORAGE_DIR"] = str(tmp_path / "var" / "storage")
+    os.environ["SOLO_APK_DIR"] = str(tmp_path / "var" / "apk")
+    os.environ["SOLO_STATIC_DIR"] = str(Path(__file__).parents[1] / "static")
+    import sqlite3
+    import solorecord_server.config as config
+    import solorecord_server.db as db
+
+    config.get_settings.cache_clear()
+    legacy_path = tmp_path / "var" / "legacy.db"
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(legacy_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE apk_releases (
+                id TEXT PRIMARY KEY,
+                version_name TEXT NOT NULL,
+                version_code INTEGER NOT NULL,
+                file_name TEXT NOT NULL,
+                storage_path TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                release_notes TEXT NOT NULL DEFAULT '',
+                force_update INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+    db.init_db()
+    with db.get_db() as conn:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(apk_releases)").fetchall()}
+        indexes = {row["name"] for row in conn.execute("PRAGMA index_list(apk_releases)").fetchall()}
+    assert "platform" in columns
+    assert "content_type" in columns
+    assert "idx_apk_releases_platform_version" in indexes
+
+
 def test_full_user_story_permissions_sync_export_and_release(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)
