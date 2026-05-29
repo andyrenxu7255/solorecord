@@ -189,7 +189,7 @@ _assert_access(meeting_id, user, write=False)
 
 ## ASR 适配
 
-本地 ASR 命令适配器在：
+ASR 适配器在：
 
 ```text
 server/solorecord_server/asr_adapters.py
@@ -218,7 +218,9 @@ stdout 必须是：
 }
 ```
 
-适配器不使用 shell 执行命令，避免 shell 注入。新增占位符时，要在 `_render_command` 中显式加入。
+命令适配器不使用 shell 执行命令，避免 shell 注入。新增占位符时，要在 `_render_command` 中显式加入。
+
+远程 STT 适配器同在 `asr_adapters.py`。`transcribe_with_openai_compatible()` 支持 `openai-compatible`、`remote-stt` 和 `funasr` Provider，优先调用 `/audio/transcriptions`，如果返回 404 再尝试 `/asr`。它会规范化 `text`、`transcript`、`result`、`data` 或 `segments` 数组。空文本不会让会议处理丢失状态，而是写入带 `empty_asr` 的占位转写。
 
 ## LLM 适配
 
@@ -442,6 +444,8 @@ scripts\smoke-e2e.ps1 -BaseUrl http://127.0.0.1:8000 -ExternalToken test-token
 
 优先封装成命令行程序，保持 SoloRecord 只调用标准 JSON。这样后续替换模型不会影响业务 API。
 
+如果新增的是远程 STT Runtime，优先复用 `openai-compatible`/`funasr` 适配器；只有上游协议明显不同，才新增小而独立的 HTTP 适配函数，并补测试覆盖返回格式和空文本降级。
+
 ## English
 
 ### Audience
@@ -612,7 +616,7 @@ The audio download endpoint uses the same authorization path. After APK reinstal
 
 ### ASR Adapter
 
-The local ASR command adapter is in:
+The ASR adapter is in:
 
 ```text
 server/solorecord_server/asr_adapters.py
@@ -641,7 +645,14 @@ stdout must be:
 }
 ```
 
-The adapter does not execute through a shell. Add new placeholders explicitly in `_render_command`.
+The command adapter does not execute through a shell. Add new placeholders explicitly in `_render_command`.
+
+The remote STT adapter also lives in `asr_adapters.py`.
+`transcribe_with_openai_compatible()` supports `openai-compatible`,
+`remote-stt`, and `funasr` providers. It calls `/audio/transcriptions` first,
+then falls back to `/asr` on 404. It normalizes `text`, `transcript`, `result`,
+`data`, or `segments` responses. Empty text does not lose the meeting state;
+it is stored as an `empty_asr` placeholder transcript.
 
 ### LLM Adapter
 

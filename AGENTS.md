@@ -60,7 +60,7 @@ scripts\smoke-e2e.ps1 -BaseUrl http://127.0.0.1:8000 -ExternalToken test-token
 - `processing.py`：ASR、纪要、转发、索引工作流。
 - `repository.py`：会议完整文档聚合。
 - `search_index.py`：ES/OpenSearch 索引。
-- `asr_adapters.py`：本地命令 ASR。
+- `asr_adapters.py`：本地命令 ASR、OpenAI 兼容/FunASR 远程 STT。
 - `llm_adapters.py`：LLM 纪要适配器。
 - `publisher.py`：Hermes/Webhook 推送。
 - `exports.py`：导出格式。
@@ -174,6 +174,8 @@ GET  /api/auth/sso/callback
 新增 ASR Runtime：
 
 - 优先做成输出标准 JSON 的 sidecar 命令，避免把模型代码耦合进业务 API。
+- 如果 ASR 已经提供 OpenAI 兼容 HTTP 服务，使用 `asr_provider=openai-compatible` 或 `funasr`，并只在服务器本地配置 `asr_endpoint`、`asr_api_key`、`asr_model`。
+- 远程 STT 返回空文本时应保留可追踪的占位转写，不要让整场会议丢失状态。
 
 新增外部系统：
 
@@ -270,7 +272,7 @@ Core server files:
 - `processing.py`: ASR, summary, forwarding, indexing workflow.
 - `repository.py`: full meeting document aggregation.
 - `search_index.py`: ES/OpenSearch indexing.
-- `asr_adapters.py`: local command ASR.
+- `asr_adapters.py`: local command ASR and OpenAI-compatible/FunASR remote STT.
 - `llm_adapters.py`: LLM summary adapters.
 - `publisher.py`: Hermes/Webhook push.
 - `exports.py`: export formats.
@@ -384,6 +386,11 @@ Server operations agent auto-deployment:
 ### Add ASR Runtime
 
 Prefer a sidecar command that prints standard JSON. Avoid coupling model code to the business API.
+If ASR is already exposed through an OpenAI-compatible HTTP service, use
+`asr_provider=openai-compatible` or `funasr`, and store `asr_endpoint`,
+`asr_api_key`, and `asr_model` only in server-local configuration.
+When remote STT returns empty text, keep a traceable placeholder transcript
+instead of losing the meeting processing state.
 
 ### Add Export Format
 

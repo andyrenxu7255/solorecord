@@ -84,6 +84,8 @@ scripts\smoke-e2e.ps1 -BaseUrl http://127.0.0.1:8000 -ExternalToken test-token
 - `sherpa-onnx`：推荐优先评估的本地 ASR runtime。
 - `whisper.cpp`：推荐作为 ASR 质量基准或备选 runtime。
 - `command`：自定义本地 ASR 脚本/二进制命令适配器。
+- `openai-compatible`：OpenAI 兼容远程 STT 服务，调用 `/audio/transcriptions`。
+- `funasr`：FunASR 兼容服务，优先调用 `/audio/transcriptions`，404 时回退 `/asr`。
 - `remote-qwen`：可选远程兜底。
 
 ## 本地 ASR 命令适配器
@@ -120,6 +122,25 @@ ASR 命令: python /opt/solorecord-asr/run_asr.py --audio {audio} --audios-json 
   ]
 }
 ```
+
+## 远程 STT / FunASR 兼容服务
+
+如果 ASR 已经由独立服务提供，推荐使用服务器端远程 STT 适配器，而不是把模型 key 写进 APK。
+
+```text
+SOLO_ASR_PROVIDER=funasr
+SOLO_ASR_ENDPOINT=http://asr.example.com/v1
+SOLO_ASR_API_KEY=
+SOLO_ASR_MODEL=funasr-paraformer-zh
+```
+
+说明：
+
+- `SOLO_ASR_PROVIDER` 可填 `openai-compatible`、`remote-stt` 或 `funasr`。
+- Endpoint、API Key 和 Model 只写在服务器本地 `server/.env` 或 Web 管理端，不写入源码、文档、APK 或 Docker 镜像。
+- 服务端会用 multipart 上传音频文件，字段名优先为 `file`；如果 `/audio/transcriptions` 返回 404，会尝试 `/asr`，字段名为 `audio`。
+- 支持返回 `{ "text": "..." }`、`transcript`、`result`、`data` 或 `segments` 数组。
+- 如果远程 STT 返回空文本，服务端会生成带 `empty_asr` 标记的占位转写，保留会议记录可用性，方便人工复核。
 
 ## Web 体验说明
 
@@ -268,6 +289,8 @@ Then upload `app/build/outputs/apk/debug/app-debug.apk` from the Web admin relea
 - `sherpa-onnx`: recommended first real local ASR runtime.
 - `whisper.cpp`: recommended ASR benchmark or alternative runtime.
 - `command`: command adapter for a custom local ASR script.
+- `openai-compatible`: OpenAI-compatible remote STT service using `/audio/transcriptions`.
+- `funasr`: FunASR-compatible service; tries `/audio/transcriptions` first and falls back to `/asr` on 404.
 - `remote-qwen`: optional remote fallback.
 
 ## Local ASR Command Adapter
@@ -305,6 +328,26 @@ Expected stdout:
   ]
 }
 ```
+
+## Remote STT / FunASR-Compatible Service
+
+If ASR is already exposed as a separate service, use the server-side remote STT
+adapter instead of putting model keys in the APK.
+
+```text
+SOLO_ASR_PROVIDER=funasr
+SOLO_ASR_ENDPOINT=http://asr.example.com/v1
+SOLO_ASR_API_KEY=
+SOLO_ASR_MODEL=funasr-paraformer-zh
+```
+
+Notes:
+
+- `SOLO_ASR_PROVIDER` can be `openai-compatible`, `remote-stt`, or `funasr`.
+- Endpoint, API key, and model belong only in server-local `server/.env` or the Web admin configuration, never in source, docs, APKs, or Docker images.
+- The server uploads audio as multipart with field `file`; if `/audio/transcriptions` returns 404, it tries `/asr` with field `audio`.
+- Responses can use `text`, `transcript`, `result`, `data`, or a `segments` array.
+- Empty STT text is saved as a traceable `empty_asr` placeholder transcript so the meeting remains usable for review.
 
 ## Web UX Notes
 

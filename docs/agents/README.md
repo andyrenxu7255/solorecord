@@ -187,6 +187,20 @@ SOLO_ENABLE_DIARIZATION=true
 SOLO_ENABLE_DENOISE=false
 ```
 
+远程 STT / FunASR：
+
+```text
+SOLO_ASR_PROVIDER=funasr
+SOLO_ASR_ENDPOINT=http://asr.example.com/v1
+SOLO_ASR_API_KEY=
+SOLO_ASR_MODEL=funasr-paraformer-zh
+SOLO_TARGET_SAMPLE_RATE=16000
+SOLO_ENABLE_DIARIZATION=true
+SOLO_ENABLE_DENOISE=false
+```
+
+Agent 必须把远程 STT endpoint、key、model 只写入服务器本地 `server/.env` 或密钥系统。接口优先走 `/audio/transcriptions`，必要时回退 `/asr`；空语音结果应保留 `empty_asr` 占位转写，方便人工复核。
+
 LLM：
 
 ```text
@@ -264,7 +278,7 @@ GET /downloads/android/0.7.0/app.apk
 2. Web 可开但登录失败：查 `SOLO_BASE_URL`、SSO redirect URI、反代 HTTPS Host、群晖 client secret。
 3. Android 回跳失败：查 manifest scheme、`redirect_after=solorecord://auth/callback`、浏览器是否拦截。
 4. 上传失败：查 token、`SOLO_BASE_URL`、反代 body size、`var/storage` 权限。
-5. 转写失败：查 ASR command 是否可执行、stdout 是否合法 JSON、`processing_jobs.error_message`。
+5. 转写失败：查 ASR command 是否可执行、stdout 是否合法 JSON、远程 STT endpoint/model/key、上游 HTTP 错误、`processing_jobs.error_message`。
 6. 纪要失败：查 LLM endpoint/model/key；必要时回退 mock。
 7. APK 下载失败：查 `apk_releases`、`var/apk` 文件、反代下载路径。
 8. 外部系统失败：查 `SOLO_EXTERNAL_API_TOKENS`、Hermes webhook URL/token、网络连通性。
@@ -554,6 +568,23 @@ SOLO_ENABLE_DIARIZATION=true
 SOLO_ENABLE_DENOISE=false
 ```
 
+Remote STT / FunASR:
+
+```text
+SOLO_ASR_PROVIDER=funasr
+SOLO_ASR_ENDPOINT=http://asr.example.com/v1
+SOLO_ASR_API_KEY=
+SOLO_ASR_MODEL=funasr-paraformer-zh
+SOLO_TARGET_SAMPLE_RATE=16000
+SOLO_ENABLE_DIARIZATION=true
+SOLO_ENABLE_DENOISE=false
+```
+
+The agent must store remote STT endpoint, key, and model only in server-local
+`server/.env` or a secret system. The adapter tries `/audio/transcriptions`
+first and falls back to `/asr` when needed. Empty-speech output should remain
+as an `empty_asr` placeholder transcript for human review.
+
 LLM:
 
 ```text
@@ -631,7 +662,7 @@ GET /downloads/android/0.7.0/app.apk
 2. Web opens but login fails: check `SOLO_BASE_URL`, SSO redirect URI, HTTPS Host forwarding, and Synology client secret.
 3. Android callback fails: check manifest scheme, `redirect_after=solorecord://auth/callback`, and browser interception.
 4. Upload fails: check token, `SOLO_BASE_URL`, reverse proxy body size, and `var/storage` permissions.
-5. ASR fails: check ASR command execution, valid JSON stdout, and `processing_jobs.error_message`.
+5. ASR fails: check ASR command execution, valid JSON stdout, remote STT endpoint/model/key, upstream HTTP errors, and `processing_jobs.error_message`.
 6. Summary fails: check LLM endpoint/model/key; fall back to mock if needed.
 7. APK download fails: check `apk_releases`, `var/apk` files, and reverse proxy download path.
 8. External integration fails: check `SOLO_EXTERNAL_API_TOKENS`, Hermes webhook URL/token, and network connectivity.

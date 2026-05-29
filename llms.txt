@@ -2,7 +2,7 @@
 
 ## 中文
 
-> 公司内部会议记录系统：Android APK + FastAPI 服务端 + Web 管理端 + 本地 ASR/LLM 流水线 + 群晖 LDAP/SSO + 服务端转写/纪要存储 + 可选 ES/OpenSearch。
+> 公司内部会议记录系统：Android APK + FastAPI 服务端 + Web 管理端 + 本地或远程 STT/ASR + LLM 流水线 + 群晖 LDAP/SSO + 服务端转写/纪要存储 + 可选 ES/OpenSearch。
 
 ### 先读这里
 
@@ -69,7 +69,7 @@ scripts\run-server.ps1
 
 ## English
 
-> Internal company meeting recorder: Android APK + FastAPI server + Web admin + local ASR/LLM pipeline + Synology LDAP/SSO + server-side transcript/summary storage + optional ES/OpenSearch.
+> Internal company meeting recorder: Android APK + FastAPI server + Web admin + local or remote STT/ASR + LLM pipeline + Synology LDAP/SSO + server-side transcript/summary storage + optional ES/OpenSearch.
 
 ## Start Here
 

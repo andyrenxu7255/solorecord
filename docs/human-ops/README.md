@@ -240,6 +240,22 @@ SOLO_ASR_COMMAND=python /opt/solorecord-asr/run_asr.py --audios-json {audio_json
 - `{diarization}`：是否启用说话人分离。
 - `{denoise}`：是否启用降噪。
 
+如果 ASR 已经部署成 OpenAI 兼容或 FunASR 兼容 HTTP 服务，可以直接配置远程 STT：
+
+```text
+SOLO_ASR_PROVIDER=funasr
+SOLO_ASR_ENDPOINT=http://asr.example.com/v1
+SOLO_ASR_API_KEY=
+SOLO_ASR_MODEL=funasr-paraformer-zh
+```
+
+运维注意：
+
+- `SOLO_ASR_PROVIDER` 可用 `openai-compatible`、`remote-stt` 或 `funasr`。
+- Endpoint、API Key、Model 只写入服务器本地 `server/.env` 或 Web 管理页，不写入 APK。
+- 服务端优先调用 `/audio/transcriptions`；如果对方返回 404，会回退尝试 `/asr`。
+- 远程 STT 返回空文本时，系统会保存带 `empty_asr` 标记的占位转写，会议仍可查看、导出和人工复核。
+
 ## LLM 配置
 
 默认 `mock` 生成占位纪要：
@@ -419,6 +435,8 @@ GET /app.js
 
 - `SOLO_ASR_PROVIDER`
 - `SOLO_ASR_COMMAND`
+- `SOLO_ASR_ENDPOINT`
+- `SOLO_ASR_MODEL`
 - ASR 命令在服务器上是否可执行。
 - ASR stdout 是否是合法 JSON。
 - `processing_jobs.error_message`
@@ -687,6 +705,23 @@ The command must print JSON to stdout:
 
 Supported placeholders include `{audio}`, `{audio_json}`, `{audios}`, `{meeting_id}`, `{sample_rate}`, `{diarization}`, and `{denoise}`.
 
+If ASR is already exposed as an OpenAI-compatible or FunASR-compatible HTTP
+service, configure remote STT:
+
+```text
+SOLO_ASR_PROVIDER=funasr
+SOLO_ASR_ENDPOINT=http://asr.example.com/v1
+SOLO_ASR_API_KEY=
+SOLO_ASR_MODEL=funasr-paraformer-zh
+```
+
+Operations notes:
+
+- `SOLO_ASR_PROVIDER` can be `openai-compatible`, `remote-stt`, or `funasr`.
+- Endpoint, API key, and model belong only in server-local `server/.env` or Web admin configuration, never in the APK.
+- The server calls `/audio/transcriptions` first; if the service returns 404, it falls back to `/asr`.
+- Empty remote STT text is saved with an `empty_asr` placeholder transcript so the meeting remains visible, exportable, and reviewable.
+
 ### LLM Provider
 
 Mock mode produces placeholder summaries:
@@ -808,7 +843,7 @@ LDAP login failures usually point to `SOLO_LDAP_SERVER`, `SOLO_LDAP_BIND_DN_TEMP
 
 Sync failures usually point to the APK server endpoint, network access, expired token, or `GET /api/mobile/sync`.
 
-Transcription failures usually point to `SOLO_ASR_PROVIDER`, `SOLO_ASR_COMMAND`, command execution permission, invalid JSON stdout, or `processing_jobs.error_message`.
+Transcription failures usually point to `SOLO_ASR_PROVIDER`, `SOLO_ASR_COMMAND`, `SOLO_ASR_ENDPOINT`, `SOLO_ASR_MODEL`, command execution permission, invalid JSON stdout, upstream STT HTTP errors, or `processing_jobs.error_message`.
 
 Empty summaries usually point to missing `SOLO_LLM_PROVIDER`, `SOLO_LLM_ENDPOINT`, `SOLO_LLM_MODEL`, or `SOLO_LLM_API_KEY`. If the LLM is not configured, SoloRecord falls back to mock summaries.
 

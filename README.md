@@ -138,13 +138,15 @@ https://record.example.com/api/auth/sso/start?redirect_after=solorecord://auth/c
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## 本地 ASR 接入
+## ASR 接入
 
 Web 管理页选择 `command` 后，可接入任何本地 ASR 脚本/二进制，只要它向 stdout 输出标准 JSON：
 
 ```text
 python /opt/solorecord-asr/run_asr.py --audios-json {audio_json} --sample-rate {sample_rate}
 ```
+
+如果自建 ASR 已经提供 OpenAI 兼容 HTTP 服务，可以在 Web 管理页选择 `openai-compatible` 或 `funasr`，并在服务器端配置 Endpoint、API Key 和 Model。服务端优先调用 `/audio/transcriptions`，必要时回退尝试 `/asr`；空语音会保留可追踪占位转写，避免会议记录变成不可用。
 
 详见 `docs/deployment.md` 的 Local ASR Command Adapter。
 
@@ -192,13 +194,19 @@ Build the Android debug APK:
 - Agent maintenance: [AGENTS.md](AGENTS.md), [docs/agents/README.md](docs/agents/README.md), [llms.txt](llms.txt)
 - Release notes: [docs/release-v0.7.md](docs/release-v0.7.md)
 
-### Local ASR Integration
+### ASR Integration
 
 After selecting `command` on the Web admin provider page, SoloRecord can call any local ASR script or binary as long as it prints standard JSON to stdout:
 
 ```text
 python /opt/solorecord-asr/run_asr.py --audios-json {audio_json} --sample-rate {sample_rate}
 ```
+
+If your self-hosted ASR is exposed through an OpenAI-compatible HTTP service,
+select `openai-compatible` or `funasr` and configure endpoint, API key, and
+model on the server. The server first calls `/audio/transcriptions`, then
+falls back to `/asr` when needed. Empty-speech results are kept as traceable
+placeholder transcript rows so the meeting remains usable.
 
 See `docs/deployment.md` for the Local ASR Command Adapter details.
 

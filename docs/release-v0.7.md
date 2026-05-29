@@ -14,7 +14,8 @@ SoloRecord V0.7 是公司内部会议记录系统的首个可部署交付版，�
 - Web 管理端：会议查看/编辑、转写编辑、角色改名、导出、模型配置、任务查看、APK 发布。
 - APK Release 附件：公开附件不包含真实服务器地址和任何 token/key；内部分发时只预置服务器地址，再由 Web 管理端发布下载。
 - 模型密钥服务端保存：APK 不包含 ASR/LLM/LDAP/SSO/Hermes/ES 密钥。
-- 本地 ASR 命令适配器：可接入自建 ASR，标准 JSON 输出即可。
+- ASR 适配器：支持本地命令适配器，也支持 OpenAI 兼容/FunASR 远程 STT 服务；模型密钥仅保存在服务器端。
+- 空语音/空转写保护：远程 STT 返回空文本时保留可追踪占位转写，会议记录仍可查看和人工复核。
 - LLM 纪要适配器：支持 mock、Ollama、OpenAI 兼容接口和内部模型。
 - 外部系统接口：Hermes/CRM 等可通过服务端 token 拉取会议数据。
 - 可选 ES/OpenSearch 索引。
@@ -51,7 +52,8 @@ SoloRecord V0.7 is the first deployable internal release of the company meeting 
 - Web admin: meeting review/editing, transcript editing, speaker rename, exports, model configuration, job view, and APK publishing.
 - APK Release asset: the public attachment contains no real server URL or token/key. For internal distribution, embed only the server URL and publish the APK from the Web admin.
 - Server-side secrets: the APK does not contain ASR, LLM, LDAP, SSO, Hermes, or ES credentials.
-- Local ASR command adapter: any local ASR runtime can be integrated by printing standard JSON.
+- ASR adapters: local command runtimes and OpenAI-compatible/FunASR remote STT services are supported; model secrets remain server-side.
+- Empty-speech protection: when remote STT returns empty text, SoloRecord keeps a traceable placeholder transcript so the meeting remains reviewable.
 - LLM summary adapter: mock, Ollama, OpenAI-compatible, and internal providers are supported.
 - External integration API: Hermes/CRM systems can pull meeting data with server-side bearer tokens.
 - Optional ES/OpenSearch indexing.
