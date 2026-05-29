@@ -235,6 +235,26 @@ def test_remote_stt_adapter_normalizes_text_response(tmp_path: Path) -> None:
     assert post.call_args.kwargs["data"]["model"] == "funasr-paraformer-zh"
 
 
+def test_remote_stt_adapter_keeps_empty_audio_traceable(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    import solorecord_server.asr_adapters as asr_adapters
+
+    audio = tmp_path / "empty.wav"
+    audio.write_bytes(b"fake audio")
+    with patch("httpx.Client.post") as post:
+        post.return_value.status_code = 200
+        post.return_value.json.return_value = {"text": ""}
+        post.return_value.raise_for_status.return_value = None
+        segments = asr_adapters.transcribe_with_openai_compatible(
+            "http://asr.example.com/v1",
+            "test-key",
+            "funasr-paraformer-zh",
+            [str(audio)],
+        )
+    assert segments[0]["flags"] == ["empty_asr"]
+    assert "未识别到有效语音" in segments[0]["text"]
+
+
 def test_full_user_story_permissions_sync_export_and_release(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)

@@ -267,7 +267,7 @@ def _summarize(segments: list[dict]) -> tuple[str, str, list[dict]]:
     values = {row["key"]: row["value"] for row in rows}
     try:
         return summarize_with_llm(segments, llm_options_from_settings_and_db(values))
-    except LlmAdapterError:
+    except Exception:
         pass
     speaker_lines = [f"{item['display_name']}：{item['text']}" for item in segments]
     role_notes = "\n".join(speaker_lines)

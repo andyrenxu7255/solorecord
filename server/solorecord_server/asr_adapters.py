@@ -35,6 +35,19 @@ def transcribe_with_openai_compatible(
         if parsed:
             segments.extend(parsed)
             cursor_ms = max(cursor_ms, max(item["end_ms"] for item in parsed))
+        else:
+            segments.append(
+                {
+                    "speaker_id": "SPEAKER_01",
+                    "display_name": "发言人 1",
+                    "start_ms": cursor_ms,
+                    "end_ms": cursor_ms + 1000,
+                    "text": f"音频分段 {path.name} 未识别到有效语音，请人工确认录音内容。",
+                    "confidence": 0.0,
+                    "flags": ["empty_asr"],
+                }
+            )
+            cursor_ms += 1000
     if not segments:
         raise AsrAdapterError("ASR service returned no transcript text")
     return segments
