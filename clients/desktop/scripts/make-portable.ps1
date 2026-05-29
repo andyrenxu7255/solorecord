@@ -1,5 +1,6 @@
 param(
-    [string]$Version = "0.7.0"
+    [string]$Version = "0.7.0",
+    [string]$ServerUrl = $env:SOLO_SERVER_URL
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,6 +14,14 @@ if (!(Test-Path -LiteralPath (Join-Path $AppDir "SoloRecord.exe"))) {
 }
 
 New-Item -ItemType Directory -Force $ReleaseDir | Out-Null
+if ($ServerUrl) {
+    $ServerUrl.Trim() | Set-Content -LiteralPath (Join-Path $AppDir "server-url.txt") -Encoding ascii
+} else {
+    $configPath = Join-Path $AppDir "server-url.txt"
+    if (Test-Path -LiteralPath $configPath) {
+        Remove-Item -LiteralPath $configPath -Force
+    }
+}
 if (Test-Path -LiteralPath $Archive) {
     Remove-Item -LiteralPath $Archive -Force
 }

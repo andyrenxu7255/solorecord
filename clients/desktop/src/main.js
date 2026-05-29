@@ -1,11 +1,31 @@
+const fs = require("node:fs");
+const path = require("node:path");
 const { app, BrowserWindow, Menu, shell } = require("electron");
 
 const DEFAULT_SERVER_URL = "http://127.0.0.1:8000";
 
 function getServerUrl() {
   const cliArg = process.argv.find((arg) => arg.startsWith("--server="));
-  const raw = cliArg ? cliArg.slice("--server=".length) : process.env.SOLO_SERVER_URL;
+  const raw = cliArg
+    ? cliArg.slice("--server=".length)
+    : process.env.SOLO_SERVER_URL || readPackagedServerUrl();
   return normalizeUrl(raw || DEFAULT_SERVER_URL);
+}
+
+function readPackagedServerUrl() {
+  const candidates = [
+    path.join(path.dirname(process.execPath), "server-url.txt"),
+    path.join(process.resourcesPath || "", "server-url.txt"),
+  ];
+  for (const candidate of candidates) {
+    try {
+      const value = fs.readFileSync(candidate, "utf8").trim();
+      if (value) return value;
+    } catch {
+      // Missing config is fine; the public package falls back to localhost.
+    }
+  }
+  return "";
 }
 
 function normalizeUrl(value) {

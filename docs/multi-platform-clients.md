@@ -48,6 +48,8 @@ npm run pack
 npm run portable:win
 ```
 
+`portable:win` 会把 `SOLO_SERVER_URL` 写入 `server-url.txt`，这样员工打开 `SoloRecord.exe` 后会直接进入公司服务器。公开包不要设置该环境变量。
+
 输出：
 
 ```text

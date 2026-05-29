@@ -13,8 +13,11 @@
 
 ```powershell
 $env:SOLO_SERVER_URL="https://record.example.com"
-npm run dist:win
+npm run pack
+npm run portable:win
 ```
+
+`portable:win` 会把服务器地址写入包内的 `server-url.txt`。公开包不要设置该环境变量，员工内部分发包只允许写服务器地址，不能写任何 token/key。
 
 本仓库不内置任何 ASR、LLM、LDAP、Hermes、ES 密钥。桌面客户端只保存服务器地址和用户短期会话。
 
