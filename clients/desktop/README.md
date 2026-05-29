@@ -28,6 +28,13 @@ npm run dist:win
 
 输出在 `clients/desktop/dist/`，典型文件名为 `SoloRecord-0.7.0-win-x64.exe`。
 
+如果 NSIS 打包因 Windows 符号链接权限失败，可发布便携包：
+
+```powershell
+npm run pack
+npm run portable:win
+```
+
 ### macOS 构建
 
 macOS DMG 必须在 macOS 构建机上执行，并完成 Apple 签名/公证：

@@ -60,7 +60,7 @@ clients/desktop/release/SoloRecord-0.7.0-windows-x64.zip
 npm run dist:win
 ```
 
-生成 NSIS 安装 EXE。当前 Windows 机器已验证 `win-unpacked/SoloRecord.exe` 可启动；NSIS 步骤可能因 Windows 符号链接权限卡在 winCodeSign 解压。
+生成 NSIS 安装 EXE。当前 Windows 机器已验证 `win-unpacked/SoloRecord.exe` 可启动；NSIS 步骤可能因 Windows 符号链接权限卡在 winCodeSign 解压。稳定交付路径是发布 portable ZIP，解压后运行其中的 `SoloRecord.exe`。
 
 ### macOS
 

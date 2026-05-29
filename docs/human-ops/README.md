@@ -374,6 +374,8 @@ npm run portable:win
 clients/desktop/release/SoloRecord-0.7.0-windows-x64.zip
 ```
 
+Windows ZIP 解压后运行其中的 `SoloRecord.exe`。如果构建机具备 electron-builder 所需权限，也可尝试 `npm run dist:win` 生成 NSIS 安装 EXE。
+
 macOS 可在 macOS 构建机用 `clients/desktop` 生成 DMG，也可使用 `clients/macos` 的 SwiftUI 外壳。iOS 使用 `clients/ios` 的 WKWebView 外壳并由 Xcode 导出 IPA。HarmonyOS 使用 DevEco Studio 打开 `clients/harmony/SoloRecord` 并导出 HAP。详见 `docs/multi-platform-clients.md`。
 
 App 重装后，本机缓存会清空，但服务器记录不丢失。用户重新登录后可在“录音”或“记录”页点击“从服务器恢复记录”。恢复后的记录带服务器音频下载地址；播放时会按用户权限下载音频分段再播放。
@@ -855,6 +857,8 @@ Output:
 ```text
 clients/desktop/release/SoloRecord-0.7.0-windows-x64.zip
 ```
+
+After extracting the Windows ZIP, run `SoloRecord.exe`. If the build machine has the required electron-builder privileges, `npm run dist:win` can generate an NSIS installer EXE.
 
 macOS DMG should be built on macOS from `clients/desktop`, or from the SwiftUI shell in `clients/macos`. iOS IPA uses the WKWebView shell in `clients/ios` and Xcode signing. HarmonyOS HAP uses DevEco Studio with `clients/harmony/SoloRecord`. See `docs/multi-platform-clients.md`.
 
