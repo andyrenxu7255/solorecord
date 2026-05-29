@@ -77,7 +77,7 @@
 7. 服务按滚动分段写入本地文件。
 8. 用户结束录音，或 App 关闭触发服务停止。
 9. App 原子化保存当前分段，会议进入已录制状态。
-10. 网络稳定时上传缺失分段。
+10. 网络稳定时上传缺失分段；已确认分段本地标记为已上传，弱网重试只补传未完成分段。
 11. 网关保存音频并启动 normalize、VAD、可选降噪/去混响、可选 diarization、ASR、转写合并。
 12. 云端 file-transcription 适配器由网关完成音频托管、提交、轮询和结果下载。
 13. 网关调用 LLM 生成纪要和待办。
@@ -93,14 +93,15 @@
 - 按一次开始/结束聚合的 `MeetingRecord` 与 `AudioSegment`。
 - 本地播放。
 - 服务端同步、转写、纪要、待办、导出、APK 发布下载、模型管理页。
+- multipart 文件流上传和分段级断点续传。
 - 通过稳定 speaker id 批量改名。
 - 服务端群晖 SSO redirect/callback 骨架和 demo 登录兜底。
 
 正式扩大使用前建议：
 
-- 长会议上传从 Base64 JSON 改 multipart 或断点续传。
 - Android session token 改为 EncryptedSharedPreferences/Keystore。
 - 接入部署后的群晖 SSO 真实 endpoint。
+- 如果未来把单个录音分段调得很长，再评估对象存储分片上传或字节级续传。
 
 ## English
 
@@ -208,6 +209,8 @@ For the target production APK, it is not enough:
 9. App finalizes the current segment atomically and marks the meeting as
    `recorded`.
 10. When network is stable, WorkManager uploads missing segments to the gateway.
+    Confirmed segments are marked uploaded locally, so weak-network retries send
+    only pending segments.
 11. Gateway stores audio and starts the audio-processing pipeline: normalize,
     VAD, optional denoise/dereverb, optional diarization, ASR, and transcript
     merge.
@@ -310,12 +313,13 @@ Current code now includes:
 - Local playback for recorded segments.
 - Server-backed sync, transcript, summary, action items, exports, APK release
   upload/download, and model/provider admin page.
+- Multipart file upload with segment-level resume.
 - Speaker rename by stable speaker id, updating every matching transcript row.
 - Server-side Synology SSO redirect/callback skeleton plus demo login fallback.
 
 Before wider rollout:
 
-- Replace Android Base64 segment upload with multipart or resumable upload for
-  very long meetings.
 - Move Android session token storage to EncryptedSharedPreferences/Keystore.
 - Connect the final Synology endpoints from the deployed SSO Server.
+- If future segments become much longer, evaluate object-storage multipart
+  upload or byte-level resume.

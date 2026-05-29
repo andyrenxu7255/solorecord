@@ -74,6 +74,14 @@ scripts\smoke-e2e.ps1 -BaseUrl http://127.0.0.1:8000 -ExternalToken test-token
 - `MeetingStore.java`：本地缓存。
 - `SessionStore.java`：登录和服务器地址。
 
+Android 上传可靠性：
+
+- 录音分段先落盘到 App 私有目录。
+- 主流程用 multipart 文件流上传 `/api/mobile/meetings/{meetingId}/segments`。
+- 每个分段成功后立即将 `uploadStatus` 持久化为 `uploaded`。
+- 弱网重试只补传未完成分段；`/finish` 重试应复用已有处理 job。
+- 这是分段级断点续传，不是单文件字节 offset 续传。
+
 ## 数据与权限
 
 重要表：
@@ -285,6 +293,14 @@ Android files:
 - `SoloServerClient.java`: server API calls, mobile sync, server audio download.
 - `MeetingStore.java`: local cache.
 - `SessionStore.java`: login/server settings.
+
+Android upload reliability:
+
+- Recording segments are written to app-private storage first.
+- The main flow uploads multipart files to `/api/mobile/meetings/{meetingId}/segments`.
+- After each segment succeeds, `uploadStatus` is persisted as `uploaded`.
+- Weak-network retry sends only pending segments; `/finish` retry should reuse an existing processing job.
+- This is segment-level resume, not byte-offset resume inside one file.
 
 ## Data Model
 

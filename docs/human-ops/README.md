@@ -358,6 +358,15 @@ app/build/outputs/apk/debug/app-debug.apk
 
 App 重装后，本机缓存会清空，但服务器记录不丢失。用户重新登录后可在“录音”或“记录”页点击“从服务器恢复记录”。恢复后的记录带服务器音频下载地址；播放时会按用户权限下载音频分段再播放。
 
+弱网同步说明：
+
+- Android 先把录音滚动保存到本机私有目录，再同步服务器。
+- 上传走 `POST /api/mobile/meetings/{meetingId}/segments` multipart 文件流，不再依赖整段 Base64 JSON。
+- 客户端本地保存分段上传账本；服务端确认某分段后，本地立刻标记为“已上传”。
+- 下次同步会跳过已上传分段，只补传未完成分段。
+- 这是分段级断点续传，不是单个文件的字节 offset 续传。当前 5 分钟左右一个分段，弱网失败时最多重传当前未确认分段。
+- `/finish` 可以重复调用；如果会议已有排队、运行中或已完成的处理任务，服务端会复用已有 job，避免手机弱网重试造成重复 ASR/LLM 消耗。
+
 ## 数据目录
 
 默认目录：
@@ -805,6 +814,15 @@ app/build/outputs/apk/debug/app-debug.apk
 ```
 
 Users download APKs from the Web App Download page. After reinstall, users sign in and click server recovery. Server audio can be downloaded and played according to permissions.
+
+Weak-network sync behavior:
+
+- Android writes rolling audio files to private local storage before sync.
+- Upload uses the multipart file endpoint `POST /api/mobile/meetings/{meetingId}/segments`, not whole-file Base64 JSON.
+- The client keeps a local per-segment upload ledger. After the server confirms a segment, it is immediately marked uploaded.
+- The next sync skips uploaded segments and sends only pending segments.
+- This is segment-level resume, not byte-offset resume inside a single file. With roughly five-minute rolling segments, retry cost is bounded to the current unconfirmed segment.
+- `/finish` is retry-safe. If a queued, running, or completed processing job already exists, the server reuses that job instead of spending ASR/LLM again.
 
 ### Data And Backup
 

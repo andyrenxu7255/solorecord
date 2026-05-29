@@ -77,6 +77,10 @@ public final class AudioSegment {
         return downloadUrl;
     }
 
+    public boolean isUploaded() {
+        return "uploaded".equals(uploadStatus);
+    }
+
     public AudioSegment withUploadStatus(String status) {
         return new AudioSegment(segmentNo, path, startMillis, endMillis, status, downloadUrl);
     }

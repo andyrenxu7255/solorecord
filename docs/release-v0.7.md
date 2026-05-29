@@ -9,6 +9,7 @@ SoloRecord V0.7 是公司内部会议记录系统的首个可部署交付版，�
 - Android App 三页签：录音、记录、登录状态。
 - 群晖/公司登录链路：默认 LDAP 用户名密码登录；可选 Web SSO 回调后回跳 Android `solorecord://auth/callback`。
 - 滚动分段录音：点击开始后本地即时保存，结束或关闭 App 时停止并尽量保存最后一段。
+- 弱网分段续传：音频分段本地落盘，multipart 文件流上传，已确认分段重试时跳过，重复 finish 会复用已有处理任务。
 - 服务器权威存储：保存登录用户名、会议、音频分段、转写、纪要、待办、角色名和审计日志。
 - 重装 APK 后恢复：登录后可从 `/api/mobile/sync` 恢复服务器记录，并按权限下载服务器音频播放。
 - Web 管理端：会议查看/编辑、转写编辑、角色改名、导出、模型配置、任务查看、APK 发布。
@@ -25,6 +26,7 @@ SoloRecord V0.7 是公司内部会议记录系统的首个可部署交付版，�
 - 服务端主流程测试通过。
 - HTTP 端到端 smoke 通过，覆盖登录、上传、受权限保护的音频下载、处理、转写、角色改名、同步、外部 API、导出和 APK 发布下载。
 - Android `assembleDebug` 通过。
+- APK 当前约 60KB 属于预期：不内置 ASR/LLM 模型和三方重 SDK，只包含登录、录音、分段账本、同步、播放和展示逻辑。
 - `pip check` 通过。
 - `pip-audit -r server/requirements.txt --timeout 60` 无已知漏洞。
 - Web 页面打开验证通过。
@@ -47,6 +49,7 @@ SoloRecord V0.7 is the first deployable internal release of the company meeting 
 - Android app with three tabs: recording, records, and login status.
 - Synology/company login flow: LDAP username/password login by default; optional Web SSO callback can return to Android through `solorecord://auth/callback`.
 - Rolling segmented recording: local audio is saved immediately after start; ending or closing the app stops recording and preserves the last segment as far as possible.
+- Weak-network segment resume: audio segments are stored locally, uploaded as multipart files, skipped after acknowledgement, and repeated finish calls reuse the existing processing job.
 - Server-authoritative storage: user identity, meetings, audio segments, transcripts, summaries, action items, speaker names, and audit logs are stored server-side.
 - APK reinstall recovery: after login, the app can restore records through `/api/mobile/sync` and download protected server audio segments for playback.
 - Web admin: meeting review/editing, transcript editing, speaker rename, exports, model configuration, job view, and APK publishing.
@@ -63,6 +66,7 @@ SoloRecord V0.7 is the first deployable internal release of the company meeting 
 - Server regression test passed.
 - HTTP end-to-end smoke passed, covering login, upload, protected audio download, processing, transcript fetch, speaker rename, sync, external API, export, and APK release download.
 - Android `assembleDebug` passed.
+- The APK is roughly 60KB by design because ASR/LLM models and heavy third-party SDKs are not embedded; it contains login, recording, upload ledger, sync, playback, and display logic.
 - `pip check` passed.
 - `pip-audit -r server/requirements.txt --timeout 60` found no known vulnerabilities.
 - Web page rendering check passed.

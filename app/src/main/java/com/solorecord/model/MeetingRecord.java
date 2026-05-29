@@ -224,6 +224,51 @@ public final class MeetingRecord {
                 actionItems);
     }
 
+    public MeetingRecord withId(String newId, String newStatus) {
+        return new MeetingRecord(
+                newId,
+                title,
+                createdAtMillis,
+                audioPath,
+                audioSegments,
+                newStatus,
+                transcriptSegments,
+                roleNotes,
+                summary,
+                actionItems);
+    }
+
+    public MeetingRecord withSegmentUploadStatus(int segmentNo, String uploadStatus) {
+        List<AudioSegment> updated = new ArrayList<>();
+        for (AudioSegment segment : audioSegments) {
+            if (segment.getSegmentNo() == segmentNo) {
+                updated.add(segment.withUploadStatus(uploadStatus));
+            } else {
+                updated.add(segment);
+            }
+        }
+        return new MeetingRecord(
+                id,
+                title,
+                createdAtMillis,
+                audioPath,
+                updated,
+                status,
+                transcriptSegments,
+                roleNotes,
+                summary,
+                actionItems);
+    }
+
+    public boolean hasPendingLocalAudio() {
+        for (AudioSegment segment : audioSegments) {
+            if (!segment.isUploaded() && !segment.getPath().isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public MeetingRecord withSpeakerName(String speakerId, String displayName) {
         List<TranscriptSegment> renamed = new ArrayList<>();
         for (TranscriptSegment segment : transcriptSegments) {

@@ -187,6 +187,17 @@ _assert_access(meeting_id, user, write=False)
 音频下载接口同样走 `_assert_access`。Android 重装后通过 `GET /api/mobile/sync`
 恢复会议列表，再按 `audioSegments[].download_url` 下载服务器音频分段。
 
+Android 上传采用分段级断点续传：
+
+- 录音分段先写入 App 私有目录。
+- 客户端创建远端 meeting 后立即把本地记录 id 替换为服务端 id。
+- 每个分段通过 multipart 文件流上传到 `/api/mobile/meetings/{meetingId}/segments`。
+- 服务端确认后，客户端马上将该分段 `uploadStatus` 写为 `uploaded`。
+- 重试同步时跳过已上传分段，只上传本地账本中仍未完成的分段。
+- `/finish` 是可重试接口；已有 queued/running/succeeded job 时返回同一个 job id。
+
+`/segments-json` 仍保留作兼容和简单测试入口，Android 主流程不再使用它上传长会议音频。
+
 ## ASR 适配
 
 ASR 适配器在：
@@ -613,6 +624,17 @@ Meeting authorization is enforced in `main.py` by `_assert_access(meeting_id, us
 - owner/editor can write.
 
 The audio download endpoint uses the same authorization path. After APK reinstall, Android calls `GET /api/mobile/sync`, then downloads server audio through `audioSegments[].download_url`.
+
+Android upload uses segment-level resume:
+
+- Recording segments are written to the app-private directory first.
+- After the remote meeting is created, the client persists the server meeting id locally.
+- Each segment is uploaded as a multipart file to `/api/mobile/meetings/{meetingId}/segments`.
+- After server acknowledgement, the client immediately stores `uploadStatus=uploaded` for that segment.
+- Retry sync skips uploaded segments and sends only pending local segments.
+- `/finish` is retry-safe and returns the existing queued/running/succeeded job id when one already exists.
+
+`/segments-json` remains for compatibility and simple tests. The Android main flow no longer uses it for long meeting audio.
 
 ### ASR Adapter
 

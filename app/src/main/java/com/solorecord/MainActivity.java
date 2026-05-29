@@ -346,7 +346,11 @@ public final class MainActivity extends Activity {
                             + "-" + time(segment.getEndMillis()),
                     14,
                     true), matchWrap());
-            card.addView(text(file.exists() ? file.getName() : "服务器音频或本机文件不可用", 13, false), matchWrap());
+            String status = segment.isUploaded() ? "已上传" : "待上传";
+            card.addView(text(
+                    (file.exists() ? file.getName() : "服务器音频或本机文件不可用") + " · " + status,
+                    13,
+                    false), matchWrap());
             if (file.exists()) {
                 Button play = secondaryButton("播放该段");
                 play.setOnClickListener(view -> playAudio(file));
@@ -536,12 +540,28 @@ public final class MainActivity extends Activity {
             return;
         }
         executorService.execute(() -> {
+            final String[] activeRecordId = {record.getId()};
             try {
                 String localId = record.getId();
                 MeetingRecord processed = serverClient.uploadAndFinishMeeting(
                         sessionStore.getServerEndpoint(),
                         sessionStore.getToken(),
-                        record);
+                        record,
+                        new SoloServerClient.UploadProgressListener() {
+                            @Override
+                            public void onRemoteMeetingReady(MeetingRecord uploading) throws Exception {
+                                activeRecordId[0] = uploading.getId();
+                                meetingStore.replace(localId, uploading);
+                                currentMeeting = uploading;
+                            }
+
+                            @Override
+                            public void onSegmentUploaded(MeetingRecord uploading, AudioSegment segment) throws Exception {
+                                activeRecordId[0] = uploading.getId();
+                                meetingStore.upsert(uploading);
+                                currentMeeting = uploading;
+                            }
+                        });
                 meetingStore.replace(localId, processed);
                 runOnUiThread(() -> {
                     currentMeeting = processed;
@@ -550,7 +570,12 @@ public final class MainActivity extends Activity {
                     renderCurrentTab();
                 });
             } catch (Exception exception) {
-                runOnUiThread(() -> toast("同步失败：" + exception.getMessage()));
+                MeetingRecord latest = meetingStore.findById(activeRecordId[0]);
+                runOnUiThread(() -> {
+                    currentMeeting = latest == null ? currentMeeting : latest;
+                    toast("同步中断，已保留进度，下次会继续：" + exception.getMessage());
+                    renderCurrentTab();
+                });
             }
         });
     }

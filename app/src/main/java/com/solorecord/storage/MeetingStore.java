@@ -82,6 +82,18 @@ public final class MeetingStore {
         return records.isEmpty() ? null : records.get(0);
     }
 
+    public MeetingRecord findById(String id) {
+        if (id == null || id.trim().isEmpty()) {
+            return null;
+        }
+        for (MeetingRecord record : loadAll()) {
+            if (record.getId().equals(id)) {
+                return record;
+            }
+        }
+        return null;
+    }
+
     public void saveMetadataOnly(MeetingRecord record) throws IOException {
         upsert(new MeetingRecord(
                 record.getId(),

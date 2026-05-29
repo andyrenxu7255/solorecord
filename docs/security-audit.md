@@ -45,7 +45,7 @@
 
 - demo 登录为首轮部署测试有意开启。
 - SQLite 适合初期内网验证，多用户生产建议迁移 PostgreSQL。
-- Android 原型保留 Base64 JSON 上传，长会议建议改 multipart 或断点续传。
+- Android 已使用 multipart 文件流和分段级断点续传；若未来单个分段时长明显增加，再评估对象存储分片上传或字节级续传。
 - PDF 导出使用简单绘制，服务器字体未安装时中文渲染可能不完美。
 - 原型处理任务在 API 进程同步执行，高并发前应改 Redis/Celery/RQ/BullMQ worker。
 - Android 当前由 Activity 控制 MediaRecorder，并使用前台通知服务；满足“关闭 App 停止录音”。如果未来要求 UI 被杀后仍持续后台录音，需要把 recorder 所有权完全迁移到 Service。
@@ -130,8 +130,9 @@ This project is now an internal runnable prototype with:
 - Demo login is intentionally enabled for first deployment testing.
 - SQLite is fine for initial internal validation but should be migrated to
   PostgreSQL for multi-user production use.
-- Base64 JSON upload is available for the Android prototype; large meetings
-  should move to multipart or resumable upload.
+- Android now uses multipart file streaming with segment-level resume. If future
+  segment duration grows substantially, evaluate object-storage multipart
+  upload or byte-level resume.
 - PDF export uses simple drawing and may not render Chinese perfectly on every
   host until server fonts are installed.
 - Worker execution is synchronous in the API process for the prototype; use

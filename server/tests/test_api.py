@@ -305,7 +305,13 @@ def test_full_user_story_permissions_sync_export_and_release(tmp_path: Path) -> 
 
     finish = client.post(f"/api/mobile/meetings/{meeting_id}/finish", headers=headers)
     assert finish.status_code == 200
-    assert finish.json()["jobId"].startswith("job_")
+    finish_data = finish.json()
+    assert finish_data["jobId"].startswith("job_")
+    assert finish_data["reused"] is False
+    finish_retry = client.post(f"/api/mobile/meetings/{meeting_id}/finish", headers=headers)
+    assert finish_retry.status_code == 200
+    assert finish_retry.json()["jobId"] == finish_data["jobId"]
+    assert finish_retry.json()["reused"] is True
 
     transcript = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers)
     assert transcript.status_code == 200

@@ -102,9 +102,11 @@ http://127.0.0.1:8000
 1. 用户在 App 登录。
 2. 点击“开始录音”，授权麦克风权限。
 3. 点击“结束录音”，会议音频会按分段保存在本地。
-4. 网络稳定后同步到服务器；同一条本地会议同步成功后会被服务器正式记录替换，避免列表重复。
+4. 网络稳定后同步到服务器；同步采用分段级断点续传，已上传分段会在本地账本中标记，下次只补传未完成分段。
 5. 服务器执行 ASR、纪要整理、待办提取、外部系统转发和可选 ES/OpenSearch 索引。
 6. 用户在 App 或 Web 查看转写、纪要、待办，也可以改说话人名称、下载播放服务器音频和导出文件。
+
+APK 体积较小是预期现象：它不内置 ASR/LLM 模型和三方重 SDK，只负责登录、录音、分段落盘、文件流式上传、播放和展示。当前上传边界是 5 分钟左右一个音频分段；如果网络中断，最多重传当前未确认分段，而不是整场会议。
 
 ## App 预配置
 
@@ -165,6 +167,7 @@ SoloRecord is an internal company meeting recorder. V0.7 is the first deployable
 - Web app: PC upload, meeting review/editing, transcript editing, speaker rename, exports, model configuration, job management, and APK publishing.
 - Secrets are stored server-side. The APK only needs the server endpoint and a short-lived session token.
 - The public GitHub Release APK contains no real server URL or secret. Users can enter the server URL on first run; for company distribution, rebuild with `-PSOLO_SERVER_ENDPOINT=https://record.example.com` and publish that APK from the server Web admin.
+- The Android app records to local rolling audio files first and uses segment-level resume for upload. Confirmed segments are skipped on retry; only pending segments are uploaded again.
 
 ### Quick Start
 

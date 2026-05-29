@@ -18,7 +18,7 @@ APK 默认不承担重 VAD、降噪、说话人分离或 ASR。手机硬件和 A
 - 将音频滚动分段写入本地存储。
 - 用户停止或关闭 App 时安全停止。
 - 用同一个 meeting id 聚合一次开始/结束周期内的所有分段。
-- 网络稳定后上传缺失分段。
+- 网络稳定后上传缺失分段；已被服务端确认的分段不重复上传。
 - 按顺序播放本地音频分段。
 - 同步后展示转写、纪要和待办。
 
@@ -55,6 +55,8 @@ Overlap：300-800 ms，降低边界丢词
 ```
 
 APK 滚动分段是可靠性边界；VAD chunk 是 ASR 处理边界。两者相关，但不是同一概念。
+
+上传可靠性边界也是 APK 滚动分段。SoloRecord 当前实现的是分段级断点续传：一个分段上传成功后本地账本标记为 `uploaded`，弱网重试时跳过；如果单个分段上传中途断开，则重新上传该分段。只要保持 3 到 5 分钟分段，重传成本可控，且避免了手机端维护复杂字节 offset 状态。
 
 ### B. 常做：轻量降噪/去混响
 
@@ -120,7 +122,7 @@ license. See `docs/open-source-research.md` for the open-source comparison.
 - Writes rolling segments to local storage.
 - Stops safely on user stop or app close.
 - Keeps a meeting id that groups all segments from one start/end cycle.
-- Uploads missing segments when network is stable.
+- Uploads missing segments when the network is stable; server-confirmed segments are not sent again.
 - Plays local audio segments in order.
 - Displays transcript, summary, and action items after sync.
 
@@ -162,6 +164,12 @@ Overlap: 300-800 ms to reduce boundary word loss
 
 Important: the APK rolling segment is a safety boundary. VAD chunks are an ASR
 processing boundary. They are related but should not be the same concept.
+
+The upload reliability boundary is also the APK rolling segment. SoloRecord uses
+segment-level resume: once a segment is accepted by the server, the local ledger
+marks it `uploaded` and retries skip it. If the network drops midway through one
+segment, that segment is uploaded again. Keeping segments around three to five
+minutes bounds retry cost without adding byte-offset state on the phone.
 
 ### B. Common: light denoise and dereverb
 

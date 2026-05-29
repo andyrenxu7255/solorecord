@@ -14,7 +14,7 @@
 
 - 增加会议标题编辑、搜索和删除
 - 增加录音后台服务和前台通知，支持锁屏持续录音
-- 增加音频分片上传，避免长会议 Base64 请求过大
+- 如果未来单个录音分段显著变长，增加对象存储分片上传或字节级续传
 - 增加本地 ASR 网关：格式统一、VAD、质量检测、本地模型转写
 - 增加可配置轻量降噪/去混响，并用真实会议录音做 A/B 测试
 - 增加说话人分离流水线，把匿名说话人时间线合并到会议记录
@@ -41,7 +41,7 @@
 
 - Add meeting title editing, search, and delete.
 - Add background recording service and foreground notification for lock-screen recording.
-- Add chunked/resumable audio upload to avoid large Base64 requests for long meetings.
+- If individual recording segments become much longer, add object-storage multipart upload or byte-level resume.
 - Add local ASR gateway stages: format normalization, VAD, quality checks, and local model transcription.
 - Add configurable light denoise/dereverb after A/B tests with real recordings.
 - Add diarization and merge anonymous speaker timelines into meeting records.
@@ -52,4 +52,4 @@
 
 ## V0.7 Note
 
-V0.7 already includes many items from this roadmap: server-authoritative storage, Web/PC UI, APK publishing, rolling recording, mobile sync, protected server audio download, speaker rename, exports, provider configuration, local ASR command adapter, LLM adapter, external API, and optional ES/OpenSearch indexing.
+V0.7 already includes many items from this roadmap: server-authoritative storage, Web/PC UI, APK publishing, rolling recording, segment-level upload resume, mobile sync, protected server audio download, speaker rename, exports, provider configuration, local ASR command adapter, LLM adapter, external API, and optional ES/OpenSearch indexing.

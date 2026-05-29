@@ -23,6 +23,7 @@ SoloRecord 已具备：
 - 服务端会议、音频、转写、纪要、待办。
 - Web 管理端。
 - APK 上传和下载。
+- Android 分段级断点续传：本地分段落盘，multipart 文件流上传，服务端确认后本地账本标记已上传，弱网重试只补传未完成分段。
 - LDAP 用户名密码登录；SSO 浏览器登录回跳到 Android：`solorecord://auth/callback` 仍保留。
 - APK 重装后从 `/api/mobile/sync` 恢复记录，并可按权限下载服务器音频分段。
 - 本地 ASR 命令适配器。
@@ -124,7 +125,7 @@ Docker smoke fallback 见 `docs/human-ops/README.md`。
 8. 跑 smoke：使用 LDAP 测试账号、demo 登录或 SSO 测试账号执行 `scripts\smoke-e2e.ps1` 对应的服务器等价流程。
 9. 配置 Provider：通过 Web 管理端或 API 保存 ASR/LLM/Hermes/ES 配置；密钥字段留空表示保持不变。
 10. 发布 APK：如果选择内部分发，使用 `-PSOLO_SERVER_ENDPOINT=<SOLO_BASE_URL>` 构建 APK，再上传 `/api/admin/releases`。
-11. 端到端联调：测试 LDAP 登录、录音上传、转写/纪要、说话人改名、服务器恢复记录、服务器音频下载、外部 API 拉取。
+11. 端到端联调：测试 LDAP 登录、录音上传、弱网重试只补传未完成分段、转写/纪要、说话人改名、服务器恢复记录、服务器音频下载、外部 API 拉取。
 12. 输出交付摘要：只列 URL、版本、健康状态、已启用能力、待接入项和下一步，不输出任何密钥。
 
 ### `server/.env` 写入规则
@@ -278,10 +279,11 @@ GET /downloads/android/0.7.0/app.apk
 2. Web 可开但登录失败：查 `SOLO_BASE_URL`、SSO redirect URI、反代 HTTPS Host、群晖 client secret。
 3. Android 回跳失败：查 manifest scheme、`redirect_after=solorecord://auth/callback`、浏览器是否拦截。
 4. 上传失败：查 token、`SOLO_BASE_URL`、反代 body size、`var/storage` 权限。
-5. 转写失败：查 ASR command 是否可执行、stdout 是否合法 JSON、远程 STT endpoint/model/key、上游 HTTP 错误、`processing_jobs.error_message`。
-6. 纪要失败：查 LLM endpoint/model/key；必要时回退 mock。
-7. APK 下载失败：查 `apk_releases`、`var/apk` 文件、反代下载路径。
-8. 外部系统失败：查 `SOLO_EXTERNAL_API_TOKENS`、Hermes webhook URL/token、网络连通性。
+5. 弱网重复同步：确认 Android 本地 `audioSegments[].uploadStatus` 已持久化，`/segments` 返回 200 后下一次不应重复上传该分段；重复 `/finish` 应复用已有 job。
+6. 转写失败：查 ASR command 是否可执行、stdout 是否合法 JSON、远程 STT endpoint/model/key、上游 HTTP 错误、`processing_jobs.error_message`。
+7. 纪要失败：查 LLM endpoint/model/key；必要时回退 mock。
+8. APK 下载失败：查 `apk_releases`、`var/apk` 文件、反代下载路径。
+9. 外部系统失败：查 `SOLO_EXTERNAL_API_TOKENS`、Hermes webhook URL/token、网络连通性。
 
 ## 上下文摘要
 
@@ -342,7 +344,7 @@ Android 改动：
 
 - SQLite 适合初期部署，生产多用户建议迁移 PostgreSQL。
 - Android token 当前在 SharedPreferences，生产建议换 EncryptedSharedPreferences/Keystore。
-- Android Base64 上传用于原型，长会议建议 multipart/resumable。
+- Android 上传已使用 multipart 文件流和分段级断点续传；它不是单文件字节 offset 续传。若未来把分段时长调得很长，再评估更细粒度的对象存储分片上传。
 - Docker BuildKit 在本地 Windows 曾因 Python 包下载慢而超时，已给出 smoke fallback；生产 Linux 构建仍按 `docker compose up -d --build solorecord`。
 - PDF 中文渲染依赖系统字体，生产可启用 `INSTALL_MEDIA_TOOLS=true`。
 
@@ -406,6 +408,7 @@ SoloRecord currently includes:
 - Server-side meetings, audio, transcripts, summaries, and action items.
 - Web admin UI.
 - APK upload/download.
+- Android segment-level upload resume: recording segments are stored locally, uploaded as multipart files, marked uploaded after server acknowledgement, and skipped on retry.
 - LDAP username/password login. Browser SSO returning to Android through `solorecord://auth/callback` remains available.
 - APK reinstall recovery through `/api/mobile/sync`, including permission-protected server audio download.
 - Local ASR command adapter.
@@ -505,7 +508,7 @@ If Synology, ASR, LLM, or Hermes values are not ready, deploy the mock/demo loop
 8. Run smoke with an LDAP test account, demo login, or an SSO test account.
 9. Save ASR/LLM/Hermes/ES provider settings through Web admin or API. Empty secret fields mean "keep unchanged".
 10. Publish APK. For internal distribution, rebuild with `-PSOLO_SERVER_ENDPOINT=<SOLO_BASE_URL>` and upload through `/api/admin/releases`.
-11. Run end-to-end integration: LDAP login, recording upload, transcript/summary, speaker rename, server recovery, protected audio download, external API pull.
+11. Run end-to-end integration: LDAP login, recording upload, weak-network retry that sends only pending segments, transcript/summary, speaker rename, server recovery, protected audio download, external API pull.
 12. Return a handoff summary with URLs, version, health state, enabled capabilities, missing integrations, and next actions. Do not include secrets.
 
 #### `server/.env` Writing Rules
@@ -662,10 +665,11 @@ GET /downloads/android/0.7.0/app.apk
 2. Web opens but login fails: check `SOLO_BASE_URL`, SSO redirect URI, HTTPS Host forwarding, and Synology client secret.
 3. Android callback fails: check manifest scheme, `redirect_after=solorecord://auth/callback`, and browser interception.
 4. Upload fails: check token, `SOLO_BASE_URL`, reverse proxy body size, and `var/storage` permissions.
-5. ASR fails: check ASR command execution, valid JSON stdout, remote STT endpoint/model/key, upstream HTTP errors, and `processing_jobs.error_message`.
-6. Summary fails: check LLM endpoint/model/key; fall back to mock if needed.
-7. APK download fails: check `apk_releases`, `var/apk` files, and reverse proxy download path.
-8. External integration fails: check `SOLO_EXTERNAL_API_TOKENS`, Hermes webhook URL/token, and network connectivity.
+5. Weak-network retry duplicates work: confirm Android persisted `audioSegments[].uploadStatus`; after `/segments` returns 200 the next sync should skip that segment. Repeated `/finish` should reuse the existing job.
+6. ASR fails: check ASR command execution, valid JSON stdout, remote STT endpoint/model/key, upstream HTTP errors, and `processing_jobs.error_message`.
+7. Summary fails: check LLM endpoint/model/key; fall back to mock if needed.
+8. APK download fails: check `apk_releases`, `var/apk` files, and reverse proxy download path.
+9. External integration fails: check `SOLO_EXTERNAL_API_TOKENS`, Hermes webhook URL/token, and network connectivity.
 
 ### User Goal Summary
 
@@ -727,7 +731,7 @@ Android change:
 
 - SQLite is acceptable for initial deployment; migrate to PostgreSQL for multi-user production.
 - Android token currently uses SharedPreferences; use EncryptedSharedPreferences/Keystore before broader rollout.
-- Android Base64 upload is prototype-friendly; long meetings should move to multipart or resumable upload.
+- Android upload now uses multipart file streaming with segment-level resume. It is not byte-offset resume inside a single file; if segment duration is increased substantially, evaluate finer-grained object-storage multipart upload.
 - Windows Docker BuildKit may stall on slow Python package downloads; use the documented mounted-source smoke fallback locally.
 - PDF Chinese rendering depends on system fonts; production can enable `INSTALL_MEDIA_TOOLS=true`.
 

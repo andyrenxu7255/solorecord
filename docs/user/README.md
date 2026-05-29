@@ -51,7 +51,7 @@ SoloRecord 是公司内部会议记录系统。你可以用手机录音，系统
 
 ## 网络不好怎么办
 
-录音先保存在手机本地。网络稳定后再同步到服务器。
+录音先按分段保存在手机本地。网络稳定后再同步到服务器。
 
 你可以在“录音”页点击：
 
@@ -59,7 +59,9 @@ SoloRecord 是公司内部会议记录系统。你可以用手机录音，系统
 同步最新会议到服务器
 ```
 
-如果同步失败，稍后重试即可。不要在同步完成前手动清理 App 数据。
+如果同步失败，稍后重试即可。App 会记录已经上传成功的分段，下次只继续上传未完成分段。不要在同步完成前手动清理 App 数据。
+
+当前是“分段级断点续传”：一个分段上传成功后不会重复上传；如果某个分段上传到一半断网，需要重新上传这一小段。系统默认滚动分段较短，目的是把弱网重传成本控制在单个分段内。
 
 ## 查看记录
 
@@ -250,7 +252,7 @@ The app saves audio in rolling segments while recording. Long meetings are split
 
 ### Bad Network
 
-Recordings are saved on the phone first. They sync to the server when the network is stable.
+Recordings are saved as local rolling segments first. They sync to the server when the network is stable.
 
 You can tap:
 
@@ -258,7 +260,9 @@ You can tap:
 Sync latest meeting to server
 ```
 
-If sync fails, retry later. Do not uninstall the app or clear app data before sync completes.
+If sync fails, retry later. The app remembers which segments were accepted by the server and uploads only pending segments next time. Do not uninstall the app or clear app data before sync completes.
+
+This is segment-level resume. A segment that already reached the server is skipped on retry. If the network drops midway through a segment, that small segment is uploaded again. Rolling segments keep the retry cost bounded.
 
 ### Records
 

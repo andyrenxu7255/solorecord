@@ -1,7 +1,5 @@
 package com.solorecord.net;
 
-import android.util.Base64;
-
 import com.solorecord.model.ActionItem;
 import com.solorecord.model.AudioSegment;
 import com.solorecord.model.MeetingRecord;
@@ -11,14 +9,21 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public final class SoloServerClient {
     private final HttpJsonClient httpJsonClient = new HttpJsonClient();
+
+    public interface UploadProgressListener {
+        void onRemoteMeetingReady(MeetingRecord record) throws Exception;
+
+        void onSegmentUploaded(MeetingRecord record, AudioSegment segment) throws Exception;
+    }
 
     public LoginResult ldapLogin(String serverEndpoint, String username, String password) throws Exception {
         JSONObject body = new JSONObject();
@@ -68,17 +73,41 @@ public final class SoloServerClient {
     }
 
     public MeetingRecord uploadAndFinishMeeting(String serverEndpoint, String token, MeetingRecord record) throws Exception {
+        return uploadAndFinishMeeting(serverEndpoint, token, record, null);
+    }
+
+    public MeetingRecord uploadAndFinishMeeting(
+            String serverEndpoint,
+            String token,
+            MeetingRecord record,
+            UploadProgressListener listener) throws Exception {
         String remoteMeetingId = record.getId().startsWith("mtg_") ? record.getId() : "";
         MeetingRecord remote = remoteMeetingId.isEmpty()
                 ? createMeeting(serverEndpoint, token, record.getTitle())
                 : getMeeting(serverEndpoint, token, remoteMeetingId);
-        for (AudioSegment segment : record.getAudioSegments()) {
-            File file = new File(segment.getPath());
-            if (file.exists()) {
-                uploadSegmentBase64(serverEndpoint, token, remote.getId(), segment);
+        if (remoteMeetingId.isEmpty()) {
+            record = record.withId(remote.getId(), "uploading");
+            if (listener != null) {
+                listener.onRemoteMeetingReady(record);
             }
         }
-        return finishMeeting(serverEndpoint, token, remote.getId());
+        for (AudioSegment segment : record.getAudioSegments()) {
+            if (segment.isUploaded()) {
+                continue;
+            }
+            File file = new File(segment.getPath());
+            if (file.exists()) {
+                uploadSegment(serverEndpoint, token, remote.getId(), segment);
+                record = record.withSegmentUploadStatus(segment.getSegmentNo(), "uploaded");
+                if (listener != null) {
+                    listener.onSegmentUploaded(record, segment.withUploadStatus("uploaded"));
+                }
+            } else {
+                throw new java.io.IOException("本地音频分段不可用：" + segment.getSegmentNo());
+            }
+        }
+        MeetingRecord finished = finishMeeting(serverEndpoint, token, remote.getId());
+        return preserveLocalAudioPaths(finished, record);
     }
 
     public MeetingRecord finishMeeting(String serverEndpoint, String token, String meetingId) throws Exception {
@@ -125,23 +154,24 @@ public final class SoloServerClient {
                 body);
     }
 
-    public void uploadSegmentBase64(
+    public void uploadSegment(
             String serverEndpoint,
             String token,
             String meetingId,
             AudioSegment segment) throws Exception {
         File file = new File(segment.getPath());
-        JSONObject body = new JSONObject();
-        body.put("segment_no", segment.getSegmentNo());
-        body.put("start_ms", segment.getStartMillis());
-        body.put("end_ms", segment.getEndMillis());
-        body.put("duration_ms", segment.getEndMillis() - segment.getStartMillis());
-        body.put("file_name", file.getName());
-        body.put("audio_base64", readBase64(file));
-        httpJsonClient.postJson(
-                url(serverEndpoint, "/api/mobile/meetings/" + meetingId + "/segments-json"),
+        Map<String, String> fields = new LinkedHashMap<>();
+        fields.put("segment_no", String.valueOf(segment.getSegmentNo()));
+        fields.put("start_ms", String.valueOf(segment.getStartMillis()));
+        fields.put("end_ms", String.valueOf(segment.getEndMillis()));
+        fields.put("duration_ms", String.valueOf(segment.getEndMillis() - segment.getStartMillis()));
+        httpJsonClient.postMultipartFile(
+                url(serverEndpoint, "/api/mobile/meetings/" + meetingId + "/segments"),
                 token,
-                body);
+                fields,
+                "file",
+                file,
+                "audio/mp4");
     }
 
     public File downloadSegment(String serverEndpoint, String token, AudioSegment segment, File outputDir) throws Exception {
@@ -256,19 +286,37 @@ public final class SoloServerClient {
         }
     }
 
-    private String readBase64(File audioFile) throws Exception {
-        byte[] bytes = new byte[(int) audioFile.length()];
-        int offset = 0;
-        try (FileInputStream inputStream = new FileInputStream(audioFile)) {
-            while (offset < bytes.length) {
-                int read = inputStream.read(bytes, offset, bytes.length - offset);
-                if (read < 0) {
-                    break;
-                }
-                offset += read;
+    private MeetingRecord preserveLocalAudioPaths(MeetingRecord serverRecord, MeetingRecord localRecord) {
+        List<AudioSegment> merged = new ArrayList<>();
+        for (AudioSegment serverSegment : serverRecord.getAudioSegments()) {
+            AudioSegment localSegment = findSegment(localRecord, serverSegment.getSegmentNo());
+            if (localSegment != null && new File(localSegment.getPath()).exists()) {
+                merged.add(new AudioSegment(
+                        serverSegment.getSegmentNo(),
+                        localSegment.getPath(),
+                        localSegment.getStartMillis(),
+                        localSegment.getEndMillis(),
+                        "uploaded",
+                        serverSegment.getDownloadUrl()));
+            } else {
+                merged.add(serverSegment);
             }
         }
-        return Base64.encodeToString(bytes, Base64.NO_WRAP);
+        if (merged.isEmpty()) {
+            for (AudioSegment localSegment : localRecord.getAudioSegments()) {
+                merged.add(localSegment.withUploadStatus("uploaded"));
+            }
+        }
+        return serverRecord.withAudioSegments(merged, serverRecord.getStatus());
+    }
+
+    private AudioSegment findSegment(MeetingRecord record, int segmentNo) {
+        for (AudioSegment segment : record.getAudioSegments()) {
+            if (segment.getSegmentNo() == segmentNo) {
+                return segment;
+            }
+        }
+        return null;
     }
 
     private String url(String serverEndpoint, String path) {

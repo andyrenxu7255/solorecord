@@ -1,5 +1,4 @@
 import argparse
-import base64
 import hashlib
 import json
 import sys
@@ -43,18 +42,17 @@ def main() -> int:
 
     audio_bytes = b"solo smoke audio"
     upload = client.post(
-        f"/api/mobile/meetings/{meeting_id}/segments-json",
-        json={
-            "segment_no": 1,
-            "file_name": "part_0001.m4a",
-            "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
+        f"/api/mobile/meetings/{meeting_id}/segments",
+        data={
+            "segment_no": "1",
             "start_ms": 0,
             "end_ms": 120000,
             "duration_ms": 120000,
         },
+        files={"file": ("part_0001.m4a", audio_bytes, "audio/mp4")},
         headers=headers,
     )
-    expect(upload, 200, "upload audio json")
+    expect(upload, 200, "upload audio multipart")
     assert upload.json()["sha256"] == hashlib.sha256(audio_bytes).hexdigest()
 
     audio = client.get(f"/api/mobile/meetings/{meeting_id}/segments/1/audio", headers=headers)
@@ -63,6 +61,11 @@ def main() -> int:
 
     finish = client.post(f"/api/mobile/meetings/{meeting_id}/finish", headers=headers)
     expect(finish, 200, "finish and process")
+    finish_payload = finish.json()
+    retry_finish = client.post(f"/api/mobile/meetings/{meeting_id}/finish", headers=headers)
+    expect(retry_finish, 200, "finish retry reuses job")
+    assert retry_finish.json()["jobId"] == finish_payload["jobId"]
+    assert retry_finish.json()["reused"] is True
 
     transcript = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers)
     expect(transcript, 200, "transcript")

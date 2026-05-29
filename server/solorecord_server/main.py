@@ -348,13 +348,28 @@ def upload_segment_json(meeting_id: str, request: SegmentJsonUpload, user: Curre
 def finish_meeting(meeting_id: str, user: CurrentUser) -> dict:
     _assert_access(meeting_id, user, write=True)
     with get_db() as db:
-        db.execute(
-            "UPDATE meetings SET status='uploaded', ended_at=?, updated_at=? WHERE id=?",
-            (now_iso(), now_iso(), meeting_id),
-        )
+        existing_job = db.execute(
+            """
+            SELECT * FROM processing_jobs
+            WHERE meeting_id = ?
+              AND type = 'transcribe'
+              AND status IN ('queued', 'running', 'succeeded', 'succeeded_with_publish_warning')
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (meeting_id,),
+        ).fetchone()
+        if not existing_job:
+            db.execute(
+                "UPDATE meetings SET status='uploaded', ended_at=?, updated_at=? WHERE id=?",
+                (now_iso(), now_iso(), meeting_id),
+            )
+    if existing_job:
+        audit(user["id"], "meeting.finish.retry", "meeting", meeting_id, {"job_id": existing_job["id"]})
+        return {"meetingId": meeting_id, "jobId": existing_job["id"], "reused": True}
     job_id = enqueue_transcription(meeting_id)
     audit(user["id"], "meeting.finish", "meeting", meeting_id, {"job_id": job_id})
-    return {"meetingId": meeting_id, "jobId": job_id}
+    return {"meetingId": meeting_id, "jobId": job_id, "reused": False}
 
 
 @app.post("/api/mobile/meetings/{meeting_id}/process")
