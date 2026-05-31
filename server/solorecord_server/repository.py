@@ -1059,8 +1059,14 @@ def _action_items_with_evidence(action_items, quality_report: dict) -> list[dict
         item["suggestedOwner"] = str(evidence.get("suggested_owner") or "")
         item["suggestedOwnerReason"] = str(evidence.get("suggested_owner_reason") or "")
         item["suggestedOwnerEvidence"] = evidence.get("suggested_owner_evidence") or []
-        item["knowledgeSafe"] = status == "supported"
-        item["requiresReview"] = status in {"unsupported", "weak_owner", "conflict", "unknown"}
+        item["knowledgeSafe"] = status in {"supported", "majority"}
+        item["requiresReview"] = status in {
+            "unsupported",
+            "weak_owner",
+            "conflict",
+            "majority",
+            "unknown",
+        }
         items.append(item)
     return items
 
@@ -1084,7 +1090,10 @@ def _action_evidence_items(
         suggestion = _suggest_action_owner(task, owner, segments)
         status = "supported"
         reason = "该待办可在转写中找到相关任务或负责人线索。"
-        if evidence and _evidence_has_multisource_conflict(evidence, segments):
+        if evidence and _evidence_has_majority_with_conflict(evidence, segments):
+            status = "majority"
+            reason = "该待办由多数录音源一致片段支撑，但同时间仍有少数冲突来源，建议督办前抽查回听。"
+        elif evidence and _evidence_has_multisource_conflict(evidence, segments):
             status = "conflict"
             reason = "该待办依据来自多源同录冲突片段，请回听确认日期、数量或负责人后再督办。"
         elif key in unsupported_keys:
@@ -1113,29 +1122,59 @@ def _action_evidence_items(
     return items
 
 
+def _evidence_has_majority_with_conflict(
+    evidence: list[dict],
+    segments: list[dict],
+) -> bool:
+    if not _evidence_has_multisource_conflict(evidence, segments):
+        return False
+    majority_ids = _segment_ids_with_flag(segments, "multi_source_majority")
+    majority_keys = _source_keys_with_flag(segments, "multi_source_majority")
+    for item in evidence:
+        if _evidence_item_matches_segments(item, majority_ids, majority_keys):
+            return True
+    return False
+
+
 def _evidence_has_multisource_conflict(evidence: list[dict], segments: list[dict]) -> bool:
-    conflict_segment_ids = {
+    conflict_segment_ids = _segment_ids_with_flag(segments, "multi_source_conflict")
+    conflict_source_keys = _source_keys_with_flag(segments, "multi_source_conflict")
+    if not conflict_segment_ids and not conflict_source_keys:
+        return False
+    return any(
+        _evidence_item_matches_segments(item, conflict_segment_ids, conflict_source_keys)
+        for item in evidence
+    )
+
+
+def _segment_ids_with_flag(segments: list[dict], flag: str) -> set[str]:
+    return {
         str(item.get("id") or "")
         for item in segments
-        if "multi_source_conflict" in _flags(item.get("flags"))
+        if flag in _flags(item.get("flags"))
     }
-    conflict_source_keys = {
+
+
+def _source_keys_with_flag(segments: list[dict], flag: str) -> set[tuple[str, str]]:
+    return {
         key
         for item in segments
         for key in [_source_segment_key(item)]
-        if "multi_source_conflict" in _flags(item.get("flags"))
+        if flag in _flags(item.get("flags"))
         if key is not None
     }
-    if not conflict_segment_ids and not conflict_source_keys:
-        return False
-    for item in evidence:
-        segment_id = str(item.get("segment_id") or "")
-        if segment_id and segment_id in conflict_segment_ids:
-            return True
-        source_key = _source_segment_key(item)
-        if source_key is not None and source_key in conflict_source_keys:
-            return True
-    return False
+
+
+def _evidence_item_matches_segments(
+    item: dict,
+    segment_ids: set[str],
+    source_keys: set[tuple[str, str]],
+) -> bool:
+    segment_id = str(item.get("segment_id") or "")
+    if segment_id and segment_id in segment_ids:
+        return True
+    source_key = _source_segment_key(item)
+    return source_key is not None and source_key in source_keys
 
 
 def _source_segment_key(item: dict) -> tuple[str, str] | None:
