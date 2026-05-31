@@ -207,7 +207,7 @@ SOLO_ENABLE_DIARIZATION=true
 SOLO_ENABLE_DENOISE=false
 ```
 
-Agent 必须把远程 STT endpoint、key、model 只写入服务器本地 `server/.env` 或密钥系统。接口优先走 `/audio/transcriptions`，必要时回退 `/asr`；空语音结果应保留 `empty_asr` 占位转写，方便人工复核。
+Agent 必须把远程 STT endpoint、key、model 只写入服务器本地 `server/.env` 或密钥系统。接口优先走 `/audio/transcriptions`，必要时回退 `/asr`；适配器应保留 `segments`、`sentence_info`、`sentences` 和嵌套 `data/result/output` 里的原始段落，支持 `timestamp`/`timestamps` 二元组或字词级二元组数组，以及 `speaker_id`、`speaker`、`spk`、`spk_id`、`speakerLabel`。空语音结果应保留 `empty_asr` 占位转写，方便人工复核。
 
 ASR 后语义分段：
 
@@ -217,7 +217,7 @@ SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
 
 Agent 验收时必须检查：
 
-- 如果 ASR 返回 `sentence_info`/`segments` 且带 `speaker_id`、`speaker`、`spk`、`spk_id` 或 `speakerLabel`，服务端应保留这些原生说话人字段，并写入 `asr_speaker` flag。
+- 如果 ASR 返回 `sentence_info`/`segments`/`sentences` 或嵌套 FunASR 原始结果，且带 `timestamp`/`timestamps` 或 `speaker_id`、`speaker`、`spk`、`spk_id`、`speakerLabel`，服务端应保留原生时间戳和说话人字段，并写入 `asr_speaker` flag。
 - 如果 ASR 只返回单段文本，或虽有多个原生 speaker 但单段很长、包含多个“某某说/某某：”标记或多个被点名人，服务端应通过 LLM 或规则拆成多个 `transcript_segments`。
 - 如果 ASR 没有在“某某你先说”和“我这边/我负责”回应之间插入标点，服务端仍应把主持人点名和被点名人回应拆成两个可复核段落，并给回应段保留 `speaker_review`。
 - 如果主持人点名某人负责某议题，后续段落没有“我”字但继续围绕同一议题、交付物或时间节点展开，服务端可以做 `contextual_speaker_inference`，但必须保留 `speaker_review` 和 `reason:*`，不能当成声纹确认。
@@ -658,7 +658,11 @@ SOLO_ENABLE_DENOISE=false
 The agent must store remote STT endpoint, key, and model only in server-local
 `server/.env` or a secret system. The adapter tries `/audio/transcriptions`
 first and falls back to `/asr` when needed. Empty-speech output should remain
-as an `empty_asr` placeholder transcript for human review.
+as an `empty_asr` placeholder transcript for human review. The adapter should
+preserve `segments`, `sentence_info`, `sentences`, and nested `data/result/output`
+raw chunks, support `timestamp`/`timestamps` pairs or word-level pairs, and keep
+native speaker fields such as `speaker_id`, `speaker`, `spk`, `spk_id`, or
+`speakerLabel`.
 
 Semantic segmentation after ASR:
 
@@ -668,7 +672,7 @@ SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
 
 Agent acceptance checks:
 
-- If ASR returns `sentence_info`/`segments` with `speaker_id`, `speaker`, `spk`, `spk_id`, or `speakerLabel`, the server should preserve native speaker fields and write the `asr_speaker` flag.
+- If ASR returns `sentence_info`/`segments`/`sentences` or nested FunASR raw output with `timestamp`/`timestamps` or `speaker_id`, `speaker`, `spk`, `spk_id`, or `speakerLabel`, the server should preserve native timestamps and speaker fields and write the `asr_speaker` flag.
 - If ASR returns one text segment, or native ASR speaker chunks are still long and contain multiple “name said/name:” markers or named call-outs, the server should split them into multiple `transcript_segments` through the LLM or rule fallback.
 - If ASR omits punctuation between a named call-out and a first-person reply, the server should still split the host prompt from the called person's reply and keep `speaker_review` on the inferred reply.
 - LLM semantic refinement input and output should carry `source_index`, `source_id`, and `source_segment_no`. New adapters must preserve these fields so final transcript rows remain traceable to source audio.

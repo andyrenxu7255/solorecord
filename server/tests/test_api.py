@@ -273,6 +273,80 @@ def test_remote_stt_adapter_keeps_funasr_speaker_segments(tmp_path: Path) -> Non
     assert all("asr_speaker" in item["flags"] for item in segments)
 
 
+def test_remote_stt_adapter_keeps_funasr_timestamp_segments(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    import solorecord_server.asr_adapters as asr_adapters
+
+    audio = tmp_path / "sample.wav"
+    audio.write_bytes(b"fake audio")
+    payload = {
+        "sentence_info": [
+            {
+                "text": "任旭确认客户名单。",
+                "timestamp": [[120, 480], [480, 2360]],
+                "spk": 0,
+            },
+            {
+                "text": "李娜准备物料。",
+                "timestamps": [2360, 4100],
+                "spk": 1,
+            },
+        ]
+    }
+    with patch("httpx.Client.post") as post:
+        post.return_value.status_code = 200
+        post.return_value.json.return_value = payload
+        post.return_value.raise_for_status.return_value = None
+        segments = asr_adapters.transcribe_with_openai_compatible(
+            "http://asr.example.com/v1",
+            "test-key",
+            "funasr-paraformer-zh",
+            [str(audio)],
+        )
+    assert [(item["start_ms"], item["end_ms"]) for item in segments] == [
+        (120, 2360),
+        (2360, 4100),
+    ]
+    assert [item["speaker_id"] for item in segments] == ["SPEAKER_01", "SPEAKER_02"]
+    assert all("asr_speaker" in item["flags"] for item in segments)
+
+
+def test_remote_stt_adapter_reads_nested_funasr_data(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    import solorecord_server.asr_adapters as asr_adapters
+
+    audio = tmp_path / "sample.wav"
+    audio.write_bytes(b"fake audio")
+    payload = {
+        "data": {
+            "result": {
+                "sentence_info": [
+                    {
+                        "sentence": "围城同步风险清单。",
+                        "start": 12,
+                        "end": 15,
+                        "speakerLabel": "spk1",
+                    }
+                ]
+            }
+        }
+    }
+    with patch("httpx.Client.post") as post:
+        post.return_value.status_code = 200
+        post.return_value.json.return_value = payload
+        post.return_value.raise_for_status.return_value = None
+        segments = asr_adapters.transcribe_with_openai_compatible(
+            "http://asr.example.com/v1",
+            "test-key",
+            "funasr-paraformer-zh",
+            [str(audio)],
+        )
+    assert segments[0]["text"] == "围城同步风险清单。"
+    assert segments[0]["speaker_id"] == "SPEAKER_02"
+    assert (segments[0]["start_ms"], segments[0]["end_ms"]) == (12000, 15000)
+    assert "asr_speaker" in segments[0]["flags"]
+
+
 def test_funasr_native_endpoint_is_used_for_rich_segments(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     import solorecord_server.asr_adapters as asr_adapters
@@ -335,6 +409,26 @@ def test_remote_stt_adapter_keeps_empty_audio_traceable(tmp_path: Path) -> None:
         )
     assert segments[0]["flags"] == ["empty_asr"]
     assert "未识别到有效语音" in segments[0]["text"]
+
+
+def test_command_asr_parser_accepts_funasr_sentence_info() -> None:
+    import solorecord_server.asr_adapters as asr_adapters
+
+    output = """
+    {
+      "sentence_info": [
+        {
+          "text": "海春确认合同。",
+          "timestamp": [[0, 640], [640, 1820]],
+          "spk_id": 2
+        }
+      ]
+    }
+    """
+    segments = asr_adapters._parse_segments(output)
+    assert segments[0]["speaker_id"] == "SPEAKER_03"
+    assert (segments[0]["start_ms"], segments[0]["end_ms"]) == (0, 1820)
+    assert "asr_speaker" in segments[0]["flags"]
 
 
 def test_multi_source_join_uploads_same_local_segment_without_conflict(tmp_path: Path) -> None:

@@ -275,7 +275,7 @@ stdout 必须是：
 
 命令适配器不使用 shell 执行命令，避免 shell 注入。新增占位符时，要在 `_render_command` 中显式加入。
 
-远程 STT 适配器同在 `asr_adapters.py`。`transcribe_with_openai_compatible()` 支持 `openai-compatible`、`remote-stt` 和 `funasr` Provider，优先调用 `/audio/transcriptions`，如果返回 404 再尝试 `/asr`。它会规范化 `text`、`transcript`、`result`、`data` 或 `segments` 数组。空文本不会让会议处理丢失状态，而是写入带 `empty_asr` 的占位转写。
+远程 STT 适配器同在 `asr_adapters.py`。`transcribe_with_openai_compatible()` 支持 `openai-compatible`、`remote-stt` 和 `funasr` Provider，优先调用 `/audio/transcriptions`，如果返回 404 再尝试 `/asr`。它会规范化 `text`、`transcript`、`result`、`data`、`segments`、`sentence_info`、`sentences`，也支持嵌套在 `data/result/output` 内的 FunASR 原始结果。时间字段支持 `start/end`、`start_ms/end_ms`、`startMillis/endMillis`，以及 `timestamp`/`timestamps` 二元组或字词级二元组数组；原生说话人字段支持 `speaker_id`、`speaker`、`spk`、`spk_id`、`speakerLabel`。空文本不会让会议处理丢失状态，而是写入带 `empty_asr` 的占位转写。
 
 ## 语义分段与发言人推断
 
@@ -293,7 +293,7 @@ server/solorecord_server/llm_adapters.py
 
 处理顺序：
 
-1. `asr_adapters.py` 尽量保留 ASR 原生 `sentence_info`、`segments`、`speaker_id`、`spk` 等字段，并把原生说话人标记为 `asr_speaker`。
+1. `asr_adapters.py` 尽量保留 ASR 原生 `sentence_info`、`segments`、`timestamp`/`timestamps`、`speaker_id`、`speaker`、`spk`、`spk_id`、`speakerLabel` 等字段，并把原生说话人标记为 `asr_speaker`。
 2. `processing._needs_semantic_segmentation()` 判断是否需要 LLM 重分段：如果 ASR 已经给出多个可靠 speaker id 且没有“某某你先说/某某你那个部分/我这边负责”等上下文线索，可以跳过重分段；只要出现点名、承接回应、被点名议题的后续延续、长文本单一发言人、多个“某某说/某某：”标记，或“某某负责/某某确认/某某后面看”这类未解析到人物的任务归属线索，仍会进入后处理。
 3. `llm_adapters.refine_segments_with_llm()` 要求模型只返回 `{"segments":[...]}`，每段包含 `source_index`、`source_id`、`source_segment_no`、`speaker`、`speaker_id`、`start_ms`、`end_ms`、`text`、`confidence`、`scenario`、`reason`。`source_index`、`source_id` 和 `source_segment_no` 用于把模型输出追溯到原始 ASR/音频分段。
 4. LLM 返回后，`processing._rule_refine_residual_mixed_segments()` 会再检查是否还残留明显的“某某说/某某：/某某你先说/某某后面看”混合段；如果有，会保守二次拆分并写入 `llm_residual_rule_refined` 和 `speaker_review`。
@@ -839,8 +839,13 @@ The remote STT adapter also lives in `asr_adapters.py`.
 `transcribe_with_openai_compatible()` supports `openai-compatible`,
 `remote-stt`, and `funasr` providers. It calls `/audio/transcriptions` first,
 then falls back to `/asr` on 404. It normalizes `text`, `transcript`, `result`,
-`data`, or `segments` responses. Empty text does not lose the meeting state;
-it is stored as an `empty_asr` placeholder transcript.
+`data`, `segments`, `sentence_info`, and `sentences` responses, including
+FunASR-style raw output nested under `data`, `result`, or `output`. Timing
+fields may be `start/end`, `start_ms/end_ms`, `startMillis/endMillis`, or
+`timestamp`/`timestamps` as a two-item pair or word-level pairs. Native speaker
+fields may be `speaker_id`, `speaker`, `spk`, `spk_id`, or `speakerLabel`.
+Empty text does not lose the meeting state; it is stored as an `empty_asr`
+placeholder transcript.
 
 ### Semantic Segmentation And Speaker Inference
 
@@ -858,7 +863,7 @@ server/solorecord_server/llm_adapters.py
 
 Processing order:
 
-1. `asr_adapters.py` preserves native ASR `sentence_info`, `segments`, `speaker_id`, `spk`, and related fields when present, and marks native speaker output with `asr_speaker`.
+1. `asr_adapters.py` preserves native ASR `sentence_info`, `segments`, `timestamp`/`timestamps`, `speaker_id`, `speaker`, `spk`, `spk_id`, `speakerLabel`, and related fields when present, and marks native speaker output with `asr_speaker`.
 2. `processing._needs_semantic_segmentation()` decides whether LLM refinement is needed. Multiple reliable native speaker IDs skip refinement only when there are no contextual call-outs. Long single-speaker text, multiple “name said/name:” markers, named call-outs, first-person replies, or same-topic continuations after a call-out enter refinement.
 3. `llm_adapters.refine_segments_with_llm()` asks the model to return only `{"segments":[...]}`, with `source_index`, `source_id`, `source_segment_no`, `speaker`, `speaker_id`, `start_ms`, `end_ms`, `text`, `confidence`, `scenario`, and `reason`.
 4. After the LLM returns, `processing._rule_refine_residual_mixed_segments()` checks whether clear mixed-person markers remain, such as “name said/name:/name please cover/name handle later”. If so, it applies a conservative second-pass split and writes `llm_residual_rule_refined` plus `speaker_review`.

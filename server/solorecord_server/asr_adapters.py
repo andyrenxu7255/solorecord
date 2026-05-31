@@ -150,46 +150,27 @@ def _post_funasr_native_transcription(base: str, headers: dict[str, str], path: 
 
 
 def _payload_has_rich_segments(payload: dict) -> bool:
-    for key in ("segments", "sentence_info", "sentences", "result"):
-        value = payload.get(key)
-        if not isinstance(value, list):
-            continue
-        for item in value:
+    for raw_segments in _iter_remote_segment_lists(payload):
+        for item in raw_segments:
             if not isinstance(item, dict):
                 continue
-            text = str(
-                item.get("text")
-                or item.get("sentence")
-                or item.get("onebest")
-                or item.get("value")
-                or ""
-            ).strip()
-            has_time = any(time_key in item for time_key in ("start", "end", "start_ms", "end_ms"))
-            has_speaker = any(
-                speaker_key in item
-                for speaker_key in ("spk", "spk_id", "speaker", "speaker_id", "speakerLabel")
+            text = _segment_text(item)
+            has_time = _timestamp_range(item) is not None or any(
+                time_key in item
+                for time_key in ("start", "end", "start_ms", "end_ms", "startMillis", "endMillis")
             )
+            has_speaker = _has_speaker_field(item)
             if text and (has_time or has_speaker):
                 return True
     return False
 
 
 def _segments_from_remote_result(payload: dict, offset_ms: int) -> list[dict]:
-    if isinstance(payload.get("segments"), list):
-        return _normalize_segments(payload["segments"], offset_ms)
-    if isinstance(payload.get("sentence_info"), list):
-        return _normalize_segments(payload["sentence_info"], offset_ms)
-    if isinstance(payload.get("sentences"), list):
-        return _normalize_segments(payload["sentences"], offset_ms)
-    if isinstance(payload.get("result"), list):
-        return _normalize_segments(payload["result"], offset_ms)
-    text = str(
-        payload.get("text")
-        or payload.get("transcript")
-        or payload.get("result")
-        or payload.get("data")
-        or ""
-    ).strip()
+    for raw_segments in _iter_remote_segment_lists(payload):
+        segments = _normalize_segments(raw_segments, offset_ms)
+        if segments:
+            return segments
+    text = _payload_text(payload)
     if not text:
         return []
     return [
@@ -210,13 +191,7 @@ def _normalize_segments(raw_segments: list, offset_ms: int) -> list[dict]:
     for index, item in enumerate(raw_segments):
         if not isinstance(item, dict):
             continue
-        text = str(
-            item.get("text")
-            or item.get("sentence")
-            or item.get("onebest")
-            or item.get("value")
-            or ""
-        ).strip()
+        text = _segment_text(item)
         if not text:
             continue
         speaker = (
@@ -228,13 +203,19 @@ def _normalize_segments(raw_segments: list, offset_ms: int) -> list[dict]:
             or "SPEAKER_01"
         )
         speaker_id = _normalize_speaker_id(speaker)
-        start_ms = offset_ms + _millis(item, "start_ms", "startMillis", "start", default=index * 1000)
-        end_ms = offset_ms + _millis(item, "end_ms", "endMillis", "end", default=start_ms + 1000 - offset_ms)
+        timestamp_range = _timestamp_range(item)
+        if timestamp_range:
+            raw_start_ms, raw_end_ms = timestamp_range
+        else:
+            raw_start_ms = _millis(item, "start_ms", "startMillis", "start", default=index * 1000)
+            raw_end_ms = _millis(item, "end_ms", "endMillis", "end", default=raw_start_ms + 1000)
+        start_ms = offset_ms + raw_start_ms
+        end_ms = offset_ms + raw_end_ms
         flags = item.get("flags", [])
         if not isinstance(flags, list):
             flags = [str(flags)]
-        if any(key in item for key in ("spk", "spk_id", "speaker", "speaker_id", "speakerLabel")):
-            flags = [*flags, "asr_speaker", "scenario:native_speaker"]
+        if _has_speaker_field(item):
+            flags = _append_unique_flags(flags, ["asr_speaker", "scenario:native_speaker"])
         normalized.append(
             {
                 "speaker_id": speaker_id or "SPEAKER_01",
@@ -271,20 +252,36 @@ def _parse_segments(output: str) -> list[dict]:
         data = json.loads(output)
     except json.JSONDecodeError as exc:
         raise AsrAdapterError("ASR command must print JSON to stdout") from exc
-    raw_segments = data.get("segments", data) if isinstance(data, dict) else data
+    raw_segments = _first_segment_list(data)
     if not isinstance(raw_segments, list):
         raise AsrAdapterError("ASR JSON must be a list or an object with a segments list")
     segments: list[dict] = []
     for index, item in enumerate(raw_segments):
         if not isinstance(item, dict):
             continue
-        text = str(item.get("text", "")).strip()
+        text = _segment_text(item)
         if not text:
             continue
-        speaker_id = _normalize_speaker_id(item.get("speaker_id") or item.get("speaker") or item.get("spk") or "SPEAKER_01")
+        speaker_id = _normalize_speaker_id(
+            item.get("speaker_id")
+            or item.get("speaker")
+            or item.get("spk")
+            or item.get("spk_id")
+            or item.get("speakerLabel")
+            or "SPEAKER_01"
+        )
         display_name = str(item.get("display_name") or item.get("speaker_name") or speaker_id).strip()
-        start_ms = _millis(item, "start_ms", "startMillis", "start", default=index * 1000)
-        end_ms = _millis(item, "end_ms", "endMillis", "end", default=start_ms + 1000)
+        timestamp_range = _timestamp_range(item)
+        if timestamp_range:
+            start_ms, end_ms = timestamp_range
+        else:
+            start_ms = _millis(item, "start_ms", "startMillis", "start", default=index * 1000)
+            end_ms = _millis(item, "end_ms", "endMillis", "end", default=start_ms + 1000)
+        flags = item.get("flags", [])
+        if not isinstance(flags, list):
+            flags = [str(flags)]
+        if _has_speaker_field(item):
+            flags = _append_unique_flags(flags, ["asr_speaker", "scenario:native_speaker"])
         segments.append(
             {
                 "speaker_id": speaker_id or "SPEAKER_01",
@@ -293,12 +290,97 @@ def _parse_segments(output: str) -> list[dict]:
                 "end_ms": max(max(0, start_ms), end_ms),
                 "text": text,
                 "confidence": item.get("confidence"),
-                "flags": item.get("flags", []),
+                "flags": flags,
             }
         )
     if not segments:
         raise AsrAdapterError("ASR command returned no transcript segments")
     return segments
+
+
+def _iter_remote_segment_lists(payload) -> list[list]:
+    lists: list[list] = []
+
+    def visit(value, depth: int = 0) -> None:
+        if depth > 4:
+            return
+        if isinstance(value, list):
+            if any(isinstance(item, dict) and _segment_text(item) for item in value):
+                lists.append(value)
+                return
+            for item in value:
+                visit(item, depth + 1)
+            return
+        if not isinstance(value, dict):
+            return
+        for key in ("segments", "sentence_info", "sentences", "result"):
+            child = value.get(key)
+            if isinstance(child, list) and any(
+                isinstance(item, dict) and _segment_text(item) for item in child
+            ):
+                lists.append(child)
+                return
+        for key in ("data", "result", "output"):
+            if key in value:
+                visit(value[key], depth + 1)
+
+    visit(payload)
+    return lists
+
+
+def _first_segment_list(data) -> list | None:
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for key in ("segments", "sentence_info", "sentences"):
+            if isinstance(data.get(key), list):
+                return data[key]
+    lists = _iter_remote_segment_lists(data)
+    return lists[0] if lists else None
+
+
+def _payload_text(payload) -> str:
+    if isinstance(payload, str):
+        return payload.strip()
+    if isinstance(payload, list):
+        return " ".join(_payload_text(item) for item in payload).strip()
+    if not isinstance(payload, dict):
+        return ""
+    for key in ("text", "transcript", "sentence", "onebest", "value"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    for key in ("result", "data", "output"):
+        text = _payload_text(payload.get(key))
+        if text:
+            return text
+    return ""
+
+
+def _segment_text(item: dict) -> str:
+    return str(
+        item.get("text")
+        or item.get("sentence")
+        or item.get("onebest")
+        or item.get("value")
+        or item.get("transcript")
+        or ""
+    ).strip()
+
+
+def _has_speaker_field(item: dict) -> bool:
+    return any(
+        speaker_key in item
+        for speaker_key in ("spk", "spk_id", "speaker", "speaker_id", "speakerLabel")
+    )
+
+
+def _append_unique_flags(flags: list, additions: list[str]) -> list:
+    merged = [str(flag) for flag in flags]
+    for flag in additions:
+        if flag not in merged:
+            merged.append(flag)
+    return merged
 
 
 def _millis(item: dict, *keys: str, default: int) -> int:
@@ -312,6 +394,75 @@ def _millis(item: dict, *keys: str, default: int) -> int:
             return default
         return int(number * 1000) if key in {"start", "end"} and number < 100_000 else int(number)
     return default
+
+
+def _timestamp_range(item: dict) -> tuple[int, int] | None:
+    for key in ("timestamp", "timestamps"):
+        if key not in item:
+            continue
+        pair = _timestamp_pair(item[key])
+        if pair is None:
+            continue
+        start_ms, end_ms = pair
+        if end_ms >= start_ms:
+            return start_ms, end_ms
+    return None
+
+
+def _timestamp_pair(value) -> tuple[int, int] | None:
+    if not isinstance(value, list) or len(value) < 2:
+        return None
+    unit = _timestamp_unit(value)
+    if all(_is_number(item) for item in value[:2]):
+        return _coerce_timestamp_ms(value[0], unit), _coerce_timestamp_ms(value[1], unit)
+    nested_pairs = [item for item in value if _is_timestamp_pair(item)]
+    if not nested_pairs:
+        return None
+    return (
+        _coerce_timestamp_ms(nested_pairs[0][0], unit),
+        _coerce_timestamp_ms(nested_pairs[-1][1], unit),
+    )
+
+
+def _timestamp_unit(value) -> str:
+    numbers = _flatten_numbers(value)
+    if not numbers:
+        return "ms"
+    if any(abs(number - int(number)) > 0 for number in numbers):
+        return "seconds"
+    start = numbers[0]
+    end = numbers[-1]
+    if max(abs(number) for number in numbers) <= 60 and abs(end - start) <= 30:
+        return "seconds"
+    return "ms"
+
+
+def _flatten_numbers(value) -> list[float]:
+    if _is_number(value):
+        return [float(value)]
+    if not isinstance(value, list):
+        return []
+    numbers: list[float] = []
+    for item in value:
+        numbers.extend(_flatten_numbers(item))
+    return numbers
+
+
+def _is_timestamp_pair(value) -> bool:
+    return isinstance(value, list) and len(value) >= 2 and _is_number(value[0]) and _is_number(value[1])
+
+
+def _is_number(value) -> bool:
+    try:
+        float(value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _coerce_timestamp_ms(value, unit: str) -> int:
+    number = float(value)
+    return int(number * 1000) if unit == "seconds" else int(number)
 
 
 def _normalize_speaker_id(value) -> str:
