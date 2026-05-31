@@ -1,4 +1,5 @@
 import importlib
+import json
 import os
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -84,6 +85,20 @@ def login_user(client: TestClient) -> dict:
     assert response.status_code == 200
     data = response.json()
     return {"Authorization": f"Bearer {data['access_token']}"}
+
+
+def parse_flags(value) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return [value] if value else []
+        if isinstance(parsed, list):
+            return [str(item) for item in parsed]
+        return [str(parsed)]
+    return [str(value)] if value else []
 
 
 def login_named_user(client: TestClient, name: str, email: str) -> dict:
@@ -1323,6 +1338,127 @@ def test_multi_source_final_processing_marks_majority_when_two_sources_agree(tmp
     assert report["metrics"]["multi_source_merged_count"] == 1
     assert report["metrics"]["multi_source_majority_count"] == 1
     assert report["metrics"]["multi_source_conflict_count"] == 1
+
+
+def test_multi_source_refs_preserve_all_eight_source_segments(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post(
+        "/api/web/meetings",
+        json={"title": "八源完整覆盖", "recording_mode": "multi_source", "max_sources": 8},
+        headers=headers,
+    )
+    meeting = create.json()["meeting"]
+    meeting_id = meeting["id"]
+    owner_id = meeting["owner_id"]
+    import solorecord_server.db as db
+    import solorecord_server.processing as processing
+
+    source_ids = [
+        f"room_recorder_{index:02d}_north_side_microphone"
+        for index in range(1, 9)
+    ]
+    audio_values = []
+    transcript_values = []
+    source_values = []
+    audio_params: list[str] = []
+    transcript_params: list[str] = []
+    source_params: list[str] = []
+    for index, source_id in enumerate(source_ids, start=1):
+        source_values.append("(?, ?, ?, ?, ?, ?, 'active', 'now', 'now')")
+        source_params.extend(
+            [
+                f"src_eight_{index}",
+                meeting_id,
+                source_id,
+                f"会议室第 {index} 台录音设备",
+                f"device-{index}",
+                owner_id,
+            ]
+        )
+        audio_values.append(
+            "(?, ?, ?, ?, ?, ?, ?, 'audio/wav', 1, ?, 60000, 0, 60000, 'uploaded', 'now')"
+        )
+        audio_params.extend(
+            [
+                f"aud_eight_{index}",
+                meeting_id,
+                source_id,
+                str(index),
+                str(index),
+                f"{source_id}.wav",
+                f"{source_id}.wav",
+                f"sha-eight-{index}",
+            ]
+        )
+        transcript_values.append(
+            "(?, ?, 1, ?, ?, 'SPEAKER_01', '任旭', ?, ?, "
+            "'客户名单今天定版，销售逐个通知客户，下午发消息。', "
+            "0.88, '[\"semantic_partial\"]', 'now')"
+        )
+        transcript_params.extend(
+            [
+                f"seg_eight_{index}",
+                meeting_id,
+                source_id,
+                str(index),
+                str(index * 100),
+                str(index * 100 + 60000),
+            ]
+        )
+    with db.get_db() as conn:
+        conn.execute(
+            f"""
+            INSERT INTO recording_sources
+            (id, meeting_id, source_id, label, device_name, user_id, status, created_at, updated_at)
+            VALUES {",".join(source_values)}
+            """,
+            source_params,
+        )
+        conn.execute(
+            f"""
+            INSERT INTO audio_segments
+            (id, meeting_id, source_id, source_segment_no, segment_no, file_name,
+             storage_path, mime_type, size_bytes, sha256, duration_ms, start_ms,
+             end_ms, upload_status, created_at)
+            VALUES {",".join(audio_values)}
+            """,
+            audio_params,
+        )
+        conn.execute(
+            f"""
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id,
+             display_name, start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES {",".join(transcript_values)}
+            """,
+            transcript_params,
+        )
+        conn.execute(
+            """
+            INSERT INTO processing_jobs
+            (id, meeting_id, type, status, current_stage, progress, asr_provider, created_at, updated_at)
+            VALUES ('job_multisource_eight_refs', ?, 'transcribe', 'queued', 'queued', 0, 'mock', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    processing.process_transcription_job("job_multisource_eight_refs")
+
+    transcript = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers).json()
+    assert len(transcript["segments"]) == 1
+    segment = transcript["segments"][0]
+    flags = parse_flags(segment["flags"])
+    assert "multi_source_merged" in flags
+    refs_flag = next(flag for flag in flags if flag.startswith("multi_source_refs:"))
+    for index, source_id in enumerate(source_ids, start=1):
+        assert f"{source_id}:{index}" in refs_flag
+
+    detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
+    report = detail["qualityReport"]
+    assert report["metrics"]["recording_source_count"] == 8
+    assert report["metrics"]["source_segment_coverage"] == 1
+    assert report["sourceCoverage"]["weakSegments"] == []
 
 
 def test_multi_source_final_processing_aligns_sources_started_late(tmp_path: Path) -> None:

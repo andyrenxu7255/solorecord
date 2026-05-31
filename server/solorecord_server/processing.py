@@ -639,7 +639,7 @@ def _merge_duplicate_source_group(group: list[dict]) -> dict:
     if complemented:
         merged["text"] = complemented_text
     source_ids = sorted({str(item.get("source_id") or "primary") for item in group})
-    source_numbers = sorted(
+    source_refs = sorted(
         {
             f"{item.get('source_id') or 'primary'}:{item.get('source_segment_no') or ''}"
             for item in group
@@ -657,7 +657,7 @@ def _merge_duplicate_source_group(group: list[dict]) -> dict:
     for flag in (
         "multi_source_merged",
         f"multi_source_count:{len(source_ids)}",
-        f"multi_source_refs:{','.join(source_numbers)[:120]}",
+        f"multi_source_refs:{','.join(source_refs)}",
     ):
         if flag not in flags:
             flags.append(flag)
