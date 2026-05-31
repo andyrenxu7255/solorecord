@@ -3214,6 +3214,163 @@ def test_quality_report_flags_action_items_without_transcript_evidence(tmp_path:
     assert any("不是模型补写" in item for item in report["recommendations"])
 
 
+def test_quality_report_does_not_double_count_unsupported_owner(
+    tmp_path: Path,
+) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post(
+        "/api/web/meetings",
+        json={"title": "缺证据待办不重复提示"},
+        headers=headers,
+    )
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_unsupported_only', ?, 1, 1, 'MANUAL_lina', '李娜', 0, 60000,
+             '客户名单今天定版，下午同步到销售工作区。',
+             0.9, '["semantic_final"]', 'now')
+            """,
+            (meeting_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO action_items
+            (id, meeting_id, owner, task, due, status, created_at, updated_at)
+            VALUES
+            ('act_unsupported_law', ?, '法务', '启动海外法务审批', '', 'open', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    report = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()[
+        "qualityReport"
+    ]
+    evidence = {item["id"]: item for item in report["actionEvidence"]}
+
+    assert evidence["act_unsupported_law"]["status"] == "unsupported"
+    assert report["metrics"]["unsupported_action_count"] == 1
+    assert report["metrics"]["weak_action_owner_count"] == 0
+    assert report["weakActionOwners"] == []
+    issue_types = {item["type"] for item in report["issues"]}
+    assert "unsupported_action_evidence" in issue_types
+    assert "weak_action_owner_evidence" not in issue_types
+
+
+def test_quality_report_suggests_addressed_action_owner_before_split(
+    tmp_path: Path,
+) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post(
+        "/api/web/meetings",
+        json={"title": "点名负责人建议"},
+        headers=headers,
+    )
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_addressed_owner', ?, 1, 1, 'MANUAL_aohan', '傲寒', 0, 180000,
+             '傲寒说先过整体节奏。翼天你说错误样例和自动测试。围城你那个部分讲 MySQL、PostgreSQL、Oracle 外接数据源。',
+             0.82, '["semantic_llm","speaker_review","scenario:context_bridge"]', 'now'),
+            ('seg_addressed_generic', ?, 1, 2, 'SPEAKER_01', '发言人 1', 180000, 240000,
+             '海春你来讲 deep flash 模型调优。李波后面看登录界面和图标。',
+             0.8, '["semantic_llm","speaker_review","scenario:context_bridge"]', 'now')
+            """,
+            (meeting_id, meeting_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO action_items
+            (id, meeting_id, owner, task, due, status, created_at, updated_at)
+            VALUES
+            ('act_addressed_yitian', ?, '待确认', '补充错误样例和自动测试', '', 'open', 'now', 'now'),
+            ('act_addressed_weicheng', ?, '傲寒', '确认外接数据源方案', '', 'open', 'now', 'now'),
+            ('act_addressed_haichun', ?, '待确认', 'deep flash 模型调优', '', 'open', 'now', 'now'),
+            ('act_addressed_libo', ?, '待确认', '登录界面和图标', '', 'open', 'now', 'now')
+            """,
+            (meeting_id, meeting_id, meeting_id, meeting_id),
+        )
+
+    report = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()[
+        "qualityReport"
+    ]
+    evidence = {item["id"]: item for item in report["actionEvidence"]}
+
+    assert evidence["act_addressed_yitian"]["status"] == "weak_owner"
+    assert evidence["act_addressed_yitian"]["suggested_owner"] == "翼天"
+    assert evidence["act_addressed_yitian"]["suggested_owner_evidence"][0][
+        "addressed_owner"
+    ] == "翼天"
+    assert evidence["act_addressed_weicheng"]["status"] == "weak_owner"
+    assert evidence["act_addressed_weicheng"]["suggested_owner"] == "围城"
+    assert evidence["act_addressed_weicheng"]["suggested_owner_evidence"][0][
+        "addressed_owner"
+    ] == "围城"
+    assert evidence["act_addressed_haichun"]["suggested_owner"] == "海春"
+    assert evidence["act_addressed_libo"]["suggested_owner"] == "李波"
+
+
+def test_quality_report_does_not_suggest_topic_phrase_owner(
+    tmp_path: Path,
+) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post(
+        "/api/web/meetings",
+        json={"title": "议题短语不是负责人"},
+        headers=headers,
+    )
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_topic_phrase_owner', ?, 1, 1, 'MANUAL_host', '主持人', 0, 60000,
+             '舞台音响后面看报价，客户名单周五前确认。',
+             0.82, '["semantic_final"]', 'now')
+            """,
+            (meeting_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO action_items
+            (id, meeting_id, owner, task, due, status, created_at, updated_at)
+            VALUES
+            ('act_topic_phrase_owner', ?, '待确认', '舞台音响报价', '', 'open', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    report = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()[
+        "qualityReport"
+    ]
+    evidence = {item["id"]: item for item in report["actionEvidence"]}
+
+    assert evidence["act_topic_phrase_owner"]["status"] == "weak_owner"
+    assert evidence["act_topic_phrase_owner"]["suggested_owner"] == ""
+    assert evidence["act_topic_phrase_owner"]["suggested_owner_evidence"] == []
+
+
 def test_quality_evidence_contains_source_id_for_multisource_navigation(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)

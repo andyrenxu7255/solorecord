@@ -1772,11 +1772,21 @@ def _extract_addressed_speakers(text: str) -> list[dict]:
                     "scenario": scenario,
                 }
             )
-    return sorted(candidates, key=lambda item: item["start"])
+    deduped: dict[tuple[str, int], dict] = {}
+    for item in sorted(
+        candidates,
+        key=lambda value: (
+            value["start"],
+            0 if value["scenario"] == "task_ownership" else 1,
+        ),
+    ):
+        key = (str(item.get("speaker") or ""), int(item.get("start") or 0))
+        deduped.setdefault(key, item)
+    return list(deduped.values())
 
 
 def _addressed_topic_text(text: str, addressed: dict) -> str:
-    marker_start = int(addressed.get("marker_start") or 0)
+    marker_start = int(addressed.get("start") or addressed.get("marker_start") or 0)
     next_boundary = re.search(r"[。！？!?；;\n\r]", text[marker_start:])
     if next_boundary:
         return text[marker_start : marker_start + next_boundary.start()]

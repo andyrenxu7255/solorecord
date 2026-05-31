@@ -235,7 +235,15 @@ def build_quality_report(
     duplicate_actions = _duplicate_action_items(actions)
     owner_distribution = _owner_distribution(actions)
     unsupported_actions = _unsupported_action_evidence(actions, segments)
-    weak_action_owners = _weak_action_owner_evidence(actions, segments, candidate_people)
+    unsupported_action_keys = {
+        _action_quality_key(item) for item in unsupported_actions
+    }
+    weak_action_owners = _weak_action_owner_evidence(
+        actions,
+        segments,
+        candidate_people,
+        unsupported_action_keys,
+    )
     action_evidence = _action_evidence_items(
         actions,
         segments,
@@ -1217,9 +1225,11 @@ def _weak_action_owner_evidence(
     actions: list[dict],
     segments: list[dict],
     candidate_people: dict[str, list[str]],
+    unsupported_action_keys: set[str] | None = None,
 ) -> list[dict]:
     if not actions or not segments:
         return []
+    unsupported_action_keys = unsupported_action_keys or set()
     weak: list[dict] = []
     speaker_names = {
         str(item.get("display_name") or item.get("speaker_id") or "").strip()
@@ -1228,6 +1238,8 @@ def _weak_action_owner_evidence(
     }
     known_people = set(candidate_people) | speaker_names | _org_owners_in_segments(segments)
     for item in actions:
+        if _action_quality_key(item) in unsupported_action_keys:
+            continue
         owner = str(item.get("owner") or "").strip()
         task = str(item.get("task") or "").strip()
         if not owner or _is_generic_owner(owner) or not task:
@@ -2038,11 +2050,20 @@ def _action_owner_has_assignment_evidence(
     for segment in segments:
         text = str(segment.get("text") or "")
         speaker = str(segment.get("display_name") or segment.get("speaker_id") or "").strip()
+        addressed_candidates = _addressed_owner_task_candidates(task, segment)
+        if any(item["owner"] == owner for item in addressed_candidates):
+            return True
+        competing_addressed_owner = any(
+            item["owner"] != owner for item in addressed_candidates
+        )
         window_texts: list[str] = []
-        if speaker == owner:
+        if speaker == owner and not competing_addressed_owner:
             window_texts.append(text)
         if owner in text:
-            window_texts.extend(_mention_windows(text, owner, radius=90))
+            for window in _mention_windows(text, owner, radius=90):
+                if _has_competing_addressed_owner(task, window, owner):
+                    continue
+                window_texts.append(window)
         for window_text in window_texts:
             window_tokens = set(_evidence_tokens(window_text))
             overlap = task_tokens & window_tokens
@@ -2067,46 +2088,51 @@ def _suggest_action_owner(
     candidates: dict[str, dict] = {}
     for segment in segments:
         speaker = str(segment.get("display_name") or segment.get("speaker_id") or "").strip()
-        if not speaker or _is_generic_speaker_label(speaker):
-            continue
         text = str(segment.get("text") or "")
         segment_tokens = set(_evidence_tokens(text))
         overlap = task_tokens & segment_tokens
-        if not overlap:
-            continue
-        score = sum(_evidence_token_weight(token) for token in overlap)
-        assignment = _owner_assignment_phrase(text, speaker)
-        if assignment:
-            score += 9
-        if speaker == current_owner:
-            score -= 2
-        if not assignment and speaker != current_owner:
-            score += 2
-        if score < 6:
-            continue
-        item = candidates.setdefault(
-            speaker,
-            {
-                "owner": speaker,
-                "score": 0,
-                "evidence": [],
-                "assignment": False,
-            },
+        can_use_segment_speaker = (
+            bool(speaker)
+            and not _is_generic_speaker_label(speaker)
+            and not _is_generic_owner(speaker)
         )
-        item["score"] += score
-        item["assignment"] = bool(item["assignment"] or assignment)
-        item["evidence"].append(
-            {
-                "speaker": speaker,
-                "segment_id": segment.get("id", ""),
-                "source_id": segment.get("source_id") or "",
-                "source_segment_no": segment.get("source_segment_no"),
-                "start_ms": int(segment.get("start_ms") or 0),
-                "end_ms": int(segment.get("end_ms") or 0),
-                "text": _compact_snippet(text, 140),
-                "matched_terms": sorted(overlap, key=lambda token: (-len(token), token))[:8],
-            }
-        )
+        if overlap and can_use_segment_speaker:
+            score = sum(_evidence_token_weight(token) for token in overlap)
+            assignment = _owner_assignment_phrase(text, speaker)
+            if assignment:
+                score += 9
+            if speaker == current_owner:
+                score -= 2
+            if not assignment and speaker != current_owner:
+                score += 2
+            if score >= 6:
+                _add_owner_suggestion_candidate(
+                    candidates,
+                    speaker,
+                    score,
+                    assignment,
+                    {
+                        "speaker": speaker,
+                        "segment_id": segment.get("id", ""),
+                        "source_id": segment.get("source_id") or "",
+                        "source_segment_no": segment.get("source_segment_no"),
+                        "start_ms": int(segment.get("start_ms") or 0),
+                        "end_ms": int(segment.get("end_ms") or 0),
+                        "text": _compact_snippet(text, 140),
+                        "matched_terms": sorted(
+                            overlap,
+                            key=lambda token: (-len(token), token),
+                        )[:8],
+                    },
+                )
+        for addressed in _addressed_owner_task_candidates(task, segment):
+            _add_owner_suggestion_candidate(
+                candidates,
+                addressed["owner"],
+                int(addressed["score"]),
+                True,
+                addressed["evidence"],
+            )
     if not candidates:
         return {}
     ranked = sorted(
@@ -2129,6 +2155,270 @@ def _suggest_action_owner(
         ),
         "evidence": best["evidence"][:3],
     }
+
+
+def _add_owner_suggestion_candidate(
+    candidates: dict[str, dict],
+    owner: str,
+    score: int,
+    assignment: bool,
+    evidence: dict,
+) -> None:
+    if not owner or _is_generic_speaker_label(owner):
+        return
+    item = candidates.setdefault(
+        owner,
+        {
+            "owner": owner,
+            "score": 0,
+            "evidence": [],
+            "assignment": False,
+        },
+    )
+    item["score"] += score
+    item["assignment"] = bool(item["assignment"] or assignment)
+    item["evidence"].append(evidence)
+
+
+def _has_competing_addressed_owner(task: str, text: str, owner: str) -> bool:
+    segment = {"text": text, "display_name": ""}
+    return any(
+        item["owner"] != owner
+        for item in _addressed_owner_task_candidates(task, segment)
+    )
+
+
+def _addressed_owner_task_candidates(task: str, segment: dict) -> list[dict]:
+    task_tokens = set(_evidence_tokens(task))
+    if not task_tokens:
+        return []
+    text = str(segment.get("text") or "")
+    speaker = str(segment.get("display_name") or segment.get("speaker_id") or "").strip()
+    candidates: list[dict] = []
+    for addressed in _extract_addressed_owner_spans(text):
+        owner = str(addressed.get("owner") or "").strip()
+        if _is_invalid_addressed_owner(owner):
+            continue
+        window = _addressed_owner_topic_text(text, addressed)
+        topic = _remove_address_prefix(window, owner) or window
+        overlap = task_tokens & set(_evidence_tokens(topic))
+        if not overlap:
+            continue
+        score = sum(_evidence_token_weight(token) for token in overlap) + 12
+        if addressed.get("scenario") == "task_ownership":
+            score += 4
+        if _has_long_evidence_phrase(list(overlap)):
+            score += 3
+        if score < 8:
+            continue
+        candidates.append(
+            {
+                "owner": owner,
+                "score": score,
+                "evidence": {
+                    "speaker": speaker,
+                    "addressed_owner": owner,
+                    "segment_id": segment.get("id", ""),
+                    "source_id": segment.get("source_id") or "",
+                    "source_segment_no": segment.get("source_segment_no"),
+                    "start_ms": int(segment.get("start_ms") or 0),
+                    "end_ms": int(segment.get("end_ms") or 0),
+                    "text": _compact_snippet(window, 140),
+                    "matched_terms": sorted(
+                        overlap,
+                        key=lambda token: (-len(token), token),
+                    )[:8],
+                },
+            }
+        )
+    return candidates
+
+
+def _extract_addressed_owner_spans(text: str) -> list[dict]:
+    value = str(text or "")
+    candidates: list[dict] = []
+    patterns = [
+        (
+            re.compile(
+                r"(?:^|[\s，,。！？!?；;、])"
+                r"([\u4e00-\u9fa5A-Za-z][\u4e00-\u9fa5A-Za-z0-9·]{1,5})"
+                r"(?:你|您)(?:那个部分|这个部分|那块|这块|那边|这边|部分)"
+            ),
+            "task_ownership",
+        ),
+        (
+            re.compile(
+                r"(?:^|[\s，,。！？!?；;、])"
+                r"([\u4e00-\u9fa5A-Za-z][\u4e00-\u9fa5A-Za-z0-9·]{1,5})"
+                r"(?:你|您)(?:先|再|来|把|帮|看|说|讲|分享|确认|负责|处理|弄|搞|发|补|改|调|那|这)"
+            ),
+            "context_bridge",
+        ),
+        (
+            re.compile(
+                r"(?:^|[\s，,。！？!?；;、])"
+                r"([\u4e00-\u9fa5A-Za-z][\u4e00-\u9fa5A-Za-z0-9·]{1,5})"
+                r"(?:的)?(?:部分|那块|这块|那边|这边|那个部分|这个部分)"
+            ),
+            "task_ownership",
+        ),
+        (
+            re.compile(
+                r"(?:^|[\s，,。！？!?；;、])"
+                r"([\u4e00-\u9fa5A-Za-z][\u4e00-\u9fa5A-Za-z0-9·]{1,5})"
+                r"(?:后面|后续|回头|稍后|之后)"
+                r"(?:看|确认|负责|跟进|处理|补|改|调|发|做|给|整理|输出)"
+            ),
+            "task_ownership",
+        ),
+        (
+            re.compile(
+                r"(?:^|[\s，,。！？!?；;、])"
+                r"([\u4e00-\u9fa5A-Za-z][\u4e00-\u9fa5A-Za-z0-9·]{1,5})"
+                r"(?:负责|跟进|处理|确认|补充|准备|整理|输出|完成|推进|看|改|发|做|搞)"
+            ),
+            "task_ownership",
+        ),
+    ]
+    for pattern, scenario in patterns:
+        for match in pattern.finditer(value):
+            owner = _clean_addressed_owner(match.group(1))
+            if not owner:
+                continue
+            candidates.append(
+                {
+                    "owner": owner,
+                    "marker_start": match.start(),
+                    "start": match.start(1),
+                    "scenario": scenario,
+                }
+            )
+    deduped: dict[tuple[str, int], dict] = {}
+    for item in sorted(
+        candidates,
+        key=lambda value: (
+            value["start"],
+            0 if value["scenario"] == "task_ownership" else 1,
+        ),
+    ):
+        key = (str(item.get("owner") or ""), int(item.get("start") or 0))
+        deduped.setdefault(key, item)
+    return list(deduped.values())
+
+
+def _addressed_owner_topic_text(text: str, addressed: dict) -> str:
+    value = str(text or "")
+    marker_start = int(addressed.get("start") or addressed.get("marker_start") or 0)
+    next_boundary = re.search(r"[。！？!?；;\n\r]", value[marker_start:])
+    if next_boundary:
+        return value[marker_start : marker_start + next_boundary.start()]
+    return value[marker_start : min(len(value), marker_start + 120)]
+
+
+def _remove_address_prefix(text: str, owner: str) -> str:
+    address_words = (
+        r"那个部分|这个部分|的部分|那块|这块|那边|这边|部分|那个|这个|"
+        r"后面|后续|回头|稍后|之后|你|您|先|再|来|把|帮|看|说|讲|"
+        r"分享|确认|负责|处理|弄|搞|发|补|改|调|一下|下|那|这"
+    )
+    pattern = (
+        r"^[\s，,。！？!?；;、]*"
+        + re.escape(owner)
+        + rf"(?:(?:{address_words}))*[，,、：:\s]*"
+    )
+    return re.sub(pattern, "", str(text or ""), count=1).strip()
+
+
+def _clean_addressed_owner(owner: str) -> str:
+    value = re.sub(
+        r"^[\s，,。！？!?；;、:：]+|[\s，,。！？!?；;、:：]+$",
+        "",
+        str(owner or ""),
+    )
+    value = re.sub(r"^(?:然后|接下来|请)", "", value)
+    value = re.sub(
+        r"(今天|明天|后天|昨天|本周|下周|月底|月初|周[一二三四五六日天]|\d{1,2}月|\d{1,2}[日号]).*$",
+        "",
+        value,
+    )
+    value = re.sub(
+        r"(?:负责|跟进|处理|确认|补充|准备|整理|输出|完成|推进|看|改|发|做|搞).*$",
+        "",
+        value,
+    )
+    return re.sub(
+        r"(?:你|您|你那个|您那个|你这个|您这个|这个|那个|这边|那边|后面|先|再|来|把|帮|看|说|讲|分享|确认|负责|处理|弄|搞|发|补|改|调)+$",
+        "",
+        value,
+    ).strip()
+
+
+def _is_invalid_addressed_owner(owner: str) -> bool:
+    value = str(owner or "").strip()
+    if not value:
+        return True
+    if _is_generic_speaker_label(value) or _is_generic_owner(value):
+        return True
+    if value in {
+        "这个",
+        "那个",
+        "我",
+        "你",
+        "您",
+        "他",
+        "她",
+        "咱们",
+        "大家",
+        "我们",
+        "你们",
+        "他们",
+        "会议",
+        "客户",
+        "问题",
+        "功能",
+        "系统",
+        "模型",
+        "数据",
+        "前端",
+        "后端",
+        "团队",
+        "负责人",
+        "事项",
+        "待办",
+    }:
+        return True
+    return _looks_like_due_time_phrase(value) or _looks_like_topic_owner_phrase(value)
+
+
+def _looks_like_topic_owner_phrase(value: str) -> bool:
+    text = str(value or "").strip()
+    if not re.fullmatch(r"[\u4e00-\u9fa5]{3,8}", text):
+        return False
+    topic_words = {
+        "错误",
+        "样例",
+        "自动",
+        "测试",
+        "外接",
+        "数据源",
+        "登录",
+        "界面",
+        "图标",
+        "模型",
+        "质量",
+        "部署",
+        "下载",
+        "截图",
+        "客户",
+        "名单",
+        "物料",
+        "舞台",
+        "音响",
+        "报价",
+        "合同",
+        "审批",
+    }
+    return any(word in text for word in topic_words)
 
 
 def _mention_windows(text: str, name: str, radius: int = 70) -> list[str]:

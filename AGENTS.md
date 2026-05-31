@@ -222,6 +222,13 @@ GET  /api/auth/sso/callback
 - 不要让外部系统直接读取 SQLite。
 - 企业知识平台 Agent 读取转写走 `/api/external/meetings/{meetingId}/transcript?include_history=true`；不要绕过 API 读数据库或文件。
 
+质量层维护：
+
+- `unsupported` 待办代表任务本身缺转写证据，不应再进入 `weakActionOwners`，避免 UI 和外部 Agent 把一个缺证据问题读成两个风险。
+- 被点名句可用于建议负责人：即使当前粗分段 speaker 是主持人或 `发言人 1`，`repository.py` 也应从“某某你说/某某你那个部分/某某后面看”的窗口里给出 `suggested_owner`。
+- 议题短语仍要过滤：不要把“舞台音响、自动测试、测试覆盖、数据源”等任务词当成发言人、负责人或团队。
+- `suggested_owner` 只是人工复核建议；自动修正只允许发生在已有处理流程明确调用的 owner 归一化阶段，不能绕过用户确认改写人工维护的待办。
+
 ## 文档地图
 
 - 运维：`docs/human-ops/README.md`
@@ -485,6 +492,13 @@ Use one of:
 
 Do not let external systems read SQLite directly.
 Enterprise knowledge agents should read transcripts through `/api/external/meetings/{meetingId}/transcript?include_history=true`; never bypass the API to read SQLite or files directly.
+
+### Maintain Quality Layer
+
+- `unsupported` actions mean the task itself lacks transcript evidence; do not also place the same action in `weakActionOwners`.
+- Named call-outs may provide `suggested_owner` before a coarse transcript row is split, even when the row speaker is a host or generic speaker label.
+- Keep filtering topic phrases such as stage audio, automated testing, test coverage, and data source so they never become people, owners, or teams.
+- `suggested_owner` is a human-review aid. Do not silently overwrite user-maintained actions outside the explicit owner-normalization processing path.
 
 ## Documentation Map
 

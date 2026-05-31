@@ -223,7 +223,7 @@ Web 详情页的“整理质量”会提示候选人名、需要校对的段落�
 
 ### 待办负责人不准怎么办？
 
-先看待办下面的证据提示。“负责人证据弱”表示任务内容能在转写里找到，但负责人可能不对；即使该任务被多数录音源确认，也不能直接拿去督办。“待办与原文相反”表示原文可能是“先不要、暂缓、不能、取消”，但待办被写成了执行动作，比如原文说“先不要发客户通知”，待办却是“发送客户通知”。这种情况要先按原文改写或删除，不能直接复制给 IM 或同步给督办系统。如果看到“按转写原文复核待办”，说明模型原始待办被系统判定为缺证据或不安全，请先按旁边的原文片段重新整理真实待办。可以点击证据旁边的“定位转写”跳到原文。如果出现“建议负责人”，可以点击单条“应用建议”，也可以点击“应用全部建议负责人”批量填入，再保存待办。建议负责人只是辅助判断，重要会议仍建议结合转写或录音确认。
+先看待办下面的证据提示。“负责人证据弱”表示任务内容能在转写里找到，但负责人可能不对；即使该任务被多数录音源确认，也不能直接拿去督办。“缺转写证据”表示任务本身在转写里找不到可靠依据，优先按缺证据处理，系统不会再把同一条待办重复算成负责人证据弱。“待办与原文相反”表示原文可能是“先不要、暂缓、不能、取消”，但待办被写成了执行动作，比如原文说“先不要发客户通知”，待办却是“发送客户通知”。这种情况要先按原文改写或删除，不能直接复制给 IM 或同步给督办系统。如果看到“按转写原文复核待办”，说明模型原始待办被系统判定为缺证据或不安全，请先按旁边的原文片段重新整理真实待办。可以点击证据旁边的“定位转写”跳到原文。如果出现“建议负责人”，可以点击单条“应用建议”，也可以点击“应用全部建议负责人”批量填入，再保存待办。建议负责人会参考“某某你说/某某你那个部分/某某后面看”这类点名句，即使当前段落还没完全拆开，也会尽量避免把任务归给主持人；但建议负责人只是辅助判断，重要会议仍建议结合转写或录音确认。
 
 ### 找不到某场会议怎么办？
 
@@ -449,7 +449,7 @@ Rename the role in record details and apply the change to all segments with the 
 
 If a row is marked “needs review”, the speaker was inferred from context and should be checked against the text or audio. Rows can also be marked “LLM segmented” or “rule segmented”, meaning SoloRecord reorganized the ASR text into dialogue turns after transcription.
 
-The Web detail page includes a quality panel with candidate names, rows needing review, speaker-evidence risk, and action evidence coverage. This is a review aid: if a speaker lacks source evidence, an action item lacks transcript evidence, or an action owner is marked weak, check the transcript or audio before sending it to IM or another system. A majority-source task still needs owner confirmation when it is marked weak.
+The Web detail page includes a quality panel with candidate names, rows needing review, speaker-evidence risk, and action evidence coverage. This is a review aid: if a speaker lacks source evidence, an action item lacks transcript evidence, or an action owner is marked weak, check the transcript or audio before sending it to IM or another system. Unsupported actions are shown as missing transcript evidence and are not also counted as weak-owner issues. A majority-source task still needs owner confirmation when it is marked weak. Suggested owners may come from named call-outs such as “Yitian, cover automated testing” even before the row is fully split; treat the suggestion as a review aid and save the action list after applying it.
 
 In multi-source meetings, Web transcript filters and “jump to transcript” links use both the recording source and that device's local segment number. If two devices both upload segment 1, SoloRecord keeps them separate in review and evidence navigation.
 
