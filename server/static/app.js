@@ -778,6 +778,7 @@ function renderQualityReport(report, knowledgeReadiness = null) {
   const weakSpeakerEvidenceCount = Number(metrics.speaker_evidence_weak_count || 0);
   const weakActionOwnerCount = Number(metrics.weak_action_owner_count || 0);
   const summaryUnsupportedCount = Number(metrics.summary_unsupported_count || 0);
+  const summaryContradictionCount = Number(metrics.summary_contradiction_count || 0);
   const summaryConflictCount = Number(metrics.summary_conflict_count || 0);
   const speakerReviewCount = Number(metrics.speaker_review_count || 0);
   const speakerAliasConflictCount = Number(metrics.speaker_alias_conflict_count || 0);
@@ -823,7 +824,7 @@ function renderQualityReport(report, knowledgeReadiness = null) {
       { label: "查看覆盖不足分段", filter: "risk:source_coverage", count: sourceWeakCount },
       { label: "查看多源冲突", filter: "risk:multi_source_conflict", count: multiSourceConflict },
       { label: "查看大模型分段", filter: "flag:semantic_llm", count: llmSegmentCount },
-      { label: "查看纪要风险", filter: "summary:evidence_weak", count: summaryUnsupportedCount + summaryConflictCount },
+      { label: "查看纪要风险", filter: "summary:evidence_weak", count: summaryUnsupportedCount + summaryContradictionCount + summaryConflictCount },
     ])}
     <div class="quality-issues">
       ${issues.map(renderQualityIssue).join("") || "<span class='quality-ok'>暂无明显质量风险。</span>"}
@@ -990,6 +991,7 @@ function knowledgeIssueLabel(type) {
     generic_owner: "泛化负责人",
     unsupported_action_evidence: "待办缺证据",
     summary_evidence_weak: "纪要证据弱",
+    summary_evidence_contradiction: "纪要与原文相反",
     source_segment_coverage_weak: "音频覆盖不足",
     speaker_review: "发言人需确认",
     speaker_evidence_weak: "发言人证据弱",
@@ -1102,6 +1104,7 @@ function renderSummaryEvidence(summaryEvidence) {
 
 function summaryEvidenceStatusClass(status) {
   if (status === "conflict") return "conflict";
+  if (status === "contradiction") return "contradiction";
   if (status === "majority") return "majority";
   if (status === "unsupported") return "unsupported";
   return "supported";
@@ -1109,6 +1112,7 @@ function summaryEvidenceStatusClass(status) {
 
 function summaryEvidenceStatusLabel(status) {
   if (status === "conflict") return "纪要多源冲突待核对";
+  if (status === "contradiction") return "纪要与原文相反";
   if (status === "majority") return "纪要多数源确认";
   if (status === "unsupported") return "纪要缺少转写依据";
   return "纪要有依据";

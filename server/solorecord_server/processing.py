@@ -2045,6 +2045,13 @@ def _looks_like_due_time_phrase(name: str) -> bool:
             r"\d{1,2}[日号](?:前|后|之前|以前|之后|左右)?)",
             value,
         )
+        or bool(
+            re.match(
+                r"^(?:今天|明天|后天|昨天|上午|下午|晚上|早上|中午|今晚|明晚)"
+                r"(?:先|再|不要|不|暂不|不能|可以|要|需要|得|会|去|把|发|做|补|改|看|确认|通知)",
+                value,
+            )
+        )
     )
 
 
@@ -2289,7 +2296,10 @@ def _summary_is_grounded(
     metrics = report.get("metrics") or {}
     coverage = float(metrics.get("summary_evidence_coverage") or 0)
     unsupported = int(metrics.get("summary_unsupported_count") or 0)
+    contradictions = int(metrics.get("summary_contradiction_count") or 0)
     unqualified_conflicts = int(metrics.get("summary_unqualified_conflict_count") or 0)
+    if contradictions:
+        return False
     if unqualified_conflicts:
         return False
     if unsupported == 0:

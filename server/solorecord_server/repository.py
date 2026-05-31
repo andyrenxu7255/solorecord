@@ -456,6 +456,15 @@ def build_quality_report(
                 f"{summary_evidence['unsupported_count']} 个纪要要点与转写文本关联较弱，建议复核纪要是否由模型补写。",
             )
         )
+    if summary_evidence.get("contradiction_count"):
+        issues.append(
+            _quality_issue(
+                "high",
+                "summary_evidence_contradiction",
+                "纪要与转写证据相反",
+                f"{summary_evidence['contradiction_count']} 个纪要要点与可匹配转写片段存在否定或完成状态冲突，建议改写或删除。",
+            )
+        )
     if summary_evidence.get("conflict_count"):
         severity = "medium" if summary_evidence.get("unqualified_conflict_count") else "low"
         issues.append(
@@ -487,6 +496,7 @@ def build_quality_report(
             "action_evidence_coverage": round(evidence_coverage, 4),
             "summary_evidence_coverage": summary_evidence["coverage"],
             "summary_unsupported_count": summary_evidence["unsupported_count"],
+            "summary_contradiction_count": summary_evidence.get("contradiction_count", 0),
             "summary_majority_count": summary_evidence.get("majority_count", 0),
             "summary_conflict_count": summary_evidence.get("conflict_count", 0),
             "summary_unqualified_conflict_count": summary_evidence.get(
@@ -576,6 +586,7 @@ def _quality_recommendations(issues: list[dict]) -> list[str]:
         "unsupported_action_evidence": "对缺少证据的待办回看转写或录音，确认不是模型补写。",
         "weak_action_owner_evidence": "优先核对负责人和任务是否在同一议题上下文中被明确关联。",
         "summary_evidence_weak": "逐条核对纪要要点，删除或改写转写原文无法支撑的内容。",
+        "summary_evidence_contradiction": "纪要要点与原文表达相反，先按转写原文改写后再入库。",
         "summary_multisource_conflict": "多源冲突支撑的纪要要保留待确认语气，必要时回听对应来源。",
         "source_segment_coverage_weak": "优先检查对应音频分段，必要时重新转写或回退到 ASR 原始结果。",
         "multi_source_conflict": "打开多源冲突清单，逐条定位转写并回听对应录音源。",
@@ -829,6 +840,7 @@ def build_knowledge_readiness(quality_report: dict) -> dict:
         "generic_owner",
         "unsupported_action_evidence",
         "summary_evidence_weak",
+        "summary_evidence_contradiction",
         "source_segment_coverage_weak",
     }
     review_types = {
@@ -860,6 +872,9 @@ def build_knowledge_readiness(quality_report: dict) -> dict:
             "unsupportedActionCount": int(metrics.get("unsupported_action_count") or 0),
             "weakActionOwnerCount": int(metrics.get("weak_action_owner_count") or 0),
             "summaryUnsupportedCount": int(metrics.get("summary_unsupported_count") or 0),
+            "summaryContradictionCount": int(
+                metrics.get("summary_contradiction_count") or 0
+            ),
             "sourceSegmentWeakCount": int(metrics.get("source_segment_weak_count") or 0),
             "multiSourceMergedCount": int(metrics.get("multi_source_merged_count") or 0),
             "multiSourceMajorityCount": int(metrics.get("multi_source_majority_count") or 0),
@@ -891,6 +906,8 @@ def _knowledge_readiness_notes(blockers: list[str], review_warnings: list[str]) 
         notes.append("待办缺少转写证据，知识平台不要直接生成督办记录。")
     if "summary_evidence_weak" in blockers:
         notes.append("纪要存在缺证据要点，知识平台应以转写为准重建摘要。")
+    if "summary_evidence_contradiction" in blockers:
+        notes.append("纪要与转写原文存在反向证据，知识平台必须以转写原文为准，暂缓自动入库。")
     if "summary_multisource_conflict" in review_warnings:
         notes.append("纪要包含多源冲突证据，知识平台应保留待确认语气或等待人工回听。")
     if "source_segment_coverage_weak" in blockers:
@@ -909,7 +926,10 @@ def _knowledge_review_evidence(quality_report: dict) -> dict:
     summary_evidence = quality_report.get("summaryEvidence") or {}
     summary_claims = []
     for item in summary_evidence.get("supportedClaims") or []:
-        if item.get("status") in {"majority", "conflict"}:
+        if item.get("status") in {"majority", "conflict", "contradiction"}:
+            summary_claims.append(item)
+    for item in summary_evidence.get("contradictedClaims") or []:
+        if item not in summary_claims:
             summary_claims.append(item)
     for item in summary_evidence.get("unsupportedClaims") or []:
         copy = dict(item)
@@ -1363,17 +1383,31 @@ def _summary_evidence_report(summary: str, role_notes: str, segments: list[dict]
             "coverage": 1,
             "claim_count": 0,
             "unsupported_count": 0,
+            "contradiction_count": 0,
             "majority_count": 0,
             "conflict_count": 0,
             "unqualified_conflict_count": 0,
             "supportedClaims": [],
+            "contradictedClaims": [],
             "unsupportedClaims": [],
         }
     unsupported = []
     supported = []
+    contradictions = []
     for claim in claims:
         evidence = _claim_reference_evidence(claim, segments)
         if evidence:
+            contradiction = _summary_claim_contradiction(claim, evidence)
+            if contradiction:
+                contradictions.append(
+                    {
+                        "claim": claim[:160],
+                        "status": "contradiction",
+                        "reason": contradiction,
+                        "evidence": evidence,
+                    }
+                )
+                continue
             status, reason = _summary_claim_status(claim, evidence, segments)
             supported.append(
                 {
@@ -1391,6 +1425,7 @@ def _summary_evidence_report(summary: str, role_notes: str, segments: list[dict]
         "coverage": round(coverage, 4),
         "claim_count": len(claims),
         "unsupported_count": len(unsupported),
+        "contradiction_count": len(contradictions),
         "majority_count": sum(1 for item in supported if item.get("status") == "majority"),
         "conflict_count": conflict_count,
         "unqualified_conflict_count": sum(
@@ -1399,9 +1434,199 @@ def _summary_evidence_report(summary: str, role_notes: str, segments: list[dict]
             if item.get("status") == "conflict"
             and not _claim_has_review_language(str(item.get("claim") or ""))
         ),
-        "supportedClaims": supported[:8],
+        "supportedClaims": [*contradictions, *supported][:8],
+        "contradictedClaims": contradictions[:8],
         "unsupportedClaims": unsupported[:8],
     }
+
+
+_SUMMARY_CONTRADICTION_EVENTS = (
+    {
+        "name": "定版/敲定",
+        "positive": (
+            r"(?:已|已经|确认|明确|完成|正式|最终).{0,6}(?:定版|定稿|敲定)",
+            r"(?:定版|定稿|敲定)(?:完成|了|好了|确认|明确)",
+            r"(?:最终版|正式版)(?:已|已经)?(?:确认|完成)",
+        ),
+        "negative": (
+            r"(?:还没|尚未|未|没有|没|暂未|待|不能|无法).{0,6}(?:定版|定稿|敲定|确认最终版)",
+            r"(?:不|别|不要|先不|暂不).{0,6}(?:定版|定稿|敲定)",
+        ),
+    },
+    {
+        "name": "发送/通知",
+        "positive": (
+            r"(?:已|已经).{0,4}(?:发送|发出|发了|推送|通知)",
+            r"(?:今天|明天|后天|上午|下午|晚上|本周|下周|周[一二三四五六日天]).{0,8}(?:发送|发出|发|推送|通知)",
+            r"(?:决定|确认|安排|要求|负责|会|要|需要).{0,8}(?:发送|发出|发|推送|通知)",
+            r"(?:客户|名单|消息|通知|邮件).{0,4}(?:已|已经|完成).{0,4}(?:发送|发出|推送|通知)",
+        ),
+        "negative": (
+            r"(?:还没|尚未|未|没有|没|暂未|待).{0,6}(?:发送|发出|发|推送|通知)",
+            r"(?:不|别|不要|先不|暂不|不能|无法).{0,6}(?:发送|发出|发|推送|通知)",
+        ),
+    },
+    {
+        "name": "完成/准备",
+        "positive": (
+            r"(?:已|已经).{0,4}(?:完成|做完|补完|准备好|解决|闭环)",
+            r"(?:完成|做完|补完|准备好)(?:了|啦)?",
+        ),
+        "negative": (
+            r"(?:还没|尚未|未|没有|没|暂未|待|不能|无法).{0,6}(?:完成|做完|补完|准备好|解决|闭环)",
+            r"(?:不|别|不要|先不|暂不).{0,6}(?:完成|做完|补完|准备)",
+        ),
+    },
+    {
+        "name": "确认/确定",
+        "positive": (
+            r"(?:已|已经).{0,4}(?:确认|明确|确定|定下来)",
+            r"(?:确认|明确|确定|定下来)(?:完成|了)",
+            r"(?:达成|形成).{0,4}(?:共识|结论)",
+        ),
+        "negative": (
+            r"(?:还没|尚未|未|没有|没|暂未|待|不能|无法).{0,6}(?:确认|明确|确定|定下来)",
+            r"(?:不确定|待确认|待明确)",
+        ),
+    },
+    {
+        "name": "审批/通过",
+        "positive": (
+            r"(?:已|已经)?(?:通过|批准|审批通过)",
+            r"(?:审批|评审).{0,4}(?:已|已经)?(?:通过|批准)",
+        ),
+        "negative": (
+            r"(?:还没|尚未|未|没有|没|暂未|待|不能|无法).{0,6}(?:通过|批准|审批)",
+            r"(?:不通过|未批准|驳回)",
+        ),
+    },
+    {
+        "name": "上线/发布",
+        "positive": (
+            r"(?:已|已经)?(?:上线|发布|投产)",
+            r"(?:上线|发布|投产).{0,4}(?:完成|了)",
+        ),
+        "negative": (
+            r"(?:还没|尚未|未|没有|没|暂未|待|不能|无法).{0,6}(?:上线|发布|投产)",
+            r"(?:不|别|不要|先不|暂不|暂缓|延期).{0,6}(?:上线|发布|投产)",
+        ),
+    },
+    {
+        "name": "启动/开始",
+        "positive": (
+            r"(?:已|已经|决定|确认)?(?:启动|开始|开展)",
+        ),
+        "negative": (
+            r"(?:还没|尚未|未|没有|没|暂未|待|不能|无法).{0,6}(?:启动|开始|开展)",
+            r"(?:不|别|不要|先不|暂不|暂缓|延期|取消).{0,6}(?:启动|开始|开展)",
+        ),
+    },
+    {
+        "name": "同意/认可",
+        "positive": (
+            r"(?:已|已经)?(?:同意|认可)",
+        ),
+        "negative": (
+            r"(?:不同意|不认可|反对)",
+            r"(?:还没|尚未|未|没有|没|暂未|待).{0,6}(?:同意|认可)",
+        ),
+    },
+)
+
+
+def _summary_claim_contradiction(claim: str, evidence: list[dict]) -> str:
+    claim_text = str(claim or "")
+    if not claim_text:
+        return ""
+    for item in evidence:
+        evidence_text = str(item.get("text") or "")
+        if not evidence_text or not _summary_contradiction_same_topic(
+            claim_text,
+            evidence_text,
+            item,
+        ):
+            continue
+        for event in _SUMMARY_CONTRADICTION_EVENTS:
+            claim_polarity = _summary_event_polarity(claim_text, event)
+            evidence_polarity = _summary_event_polarity(evidence_text, event)
+            if not claim_polarity or not evidence_polarity:
+                continue
+            if claim_polarity == evidence_polarity:
+                continue
+            if claim_polarity == "positive":
+                return "纪要写成已完成或已确认，但匹配转写片段包含未完成、暂缓或否定表达。"
+            return "纪要写成未完成或未确认，但匹配转写片段表达为已完成或已确认。"
+    return ""
+
+
+def _summary_event_polarity(text: str, event: dict) -> str:
+    value = str(text or "")
+    if any(re.search(pattern, value) for pattern in event.get("negative") or ()):
+        return "negative"
+    if any(re.search(pattern, value) for pattern in event.get("positive") or ()):
+        return "positive"
+    return ""
+
+
+def _summary_contradiction_same_topic(claim: str, evidence_text: str, item: dict) -> bool:
+    matched_terms = [
+        str(token)
+        for token in (item.get("matched_terms") or [])
+        if _is_summary_contradiction_topic_token(str(token))
+    ]
+    if any(len(token) >= 3 for token in matched_terms):
+        return True
+    claim_tokens = set(_summary_contradiction_topic_tokens(claim))
+    evidence_tokens = set(_summary_contradiction_topic_tokens(evidence_text))
+    overlap = claim_tokens & evidence_tokens
+    overlap_weight = sum(_evidence_token_weight(token) for token in overlap)
+    if overlap_weight >= 6:
+        return True
+    return bool(overlap and any(len(token) >= 3 for token in overlap))
+
+
+def _summary_contradiction_topic_tokens(text: str) -> list[str]:
+    return [
+        token
+        for token in _evidence_tokens(text)
+        if _is_summary_contradiction_topic_token(token)
+    ]
+
+
+def _is_summary_contradiction_topic_token(token: str) -> bool:
+    value = str(token or "").strip().lower()
+    if not value or _is_evidence_stopword(value):
+        return False
+    stop_tokens = {
+        "已经",
+        "还没",
+        "尚未",
+        "没有",
+        "暂未",
+        "不能",
+        "无法",
+        "不要",
+        "先不",
+        "暂不",
+        "已完",
+        "未完",
+        "完成",
+        "确认",
+        "明确",
+        "确定",
+        "决定",
+        "通过",
+        "同意",
+        "认可",
+        "上午",
+        "下午",
+        "晚上",
+        "今晚",
+        "明早",
+        "本周",
+        "下周",
+    }
+    return value not in stop_tokens
 
 
 def _summary_claim_status(

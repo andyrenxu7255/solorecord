@@ -219,6 +219,8 @@ Web 详情页的“整理质量”会提示候选人名、需要校对的段落�
 
 先检查转写是否准确。转写有错时先改转写，再重新整理会议。
 
+如果“整理质量”里出现“纪要与原文相反”，说明系统找到了相关转写，但纪要把“未完成/不要发/还没确认”写成了“已完成/已发送/已确认”等相反意思。这类风险比普通“纪要待核对”更高，应先点“定位转写”回到原文或回听录音，按原文改写后再复制纪要或让知识平台入库。
+
 ### 待办负责人不准怎么办？
 
 先看待办下面的证据提示。“负责人证据弱”表示任务内容能在转写里找到，但负责人可能不对；即使该任务被多数录音源确认，也不能直接拿去督办。可以点击证据旁边的“定位转写”跳到原文。如果出现“建议负责人”，可以点击单条“应用建议”，也可以点击“应用全部建议负责人”批量填入，再保存待办。建议负责人只是辅助判断，重要会议仍建议结合转写或录音确认。
@@ -451,6 +453,8 @@ The quality panel may also show a multi-source complementary merge. This means d
 What if the summary is inaccurate?
 
 Check the transcript first. Fix transcript errors, then regenerate or edit the summary.
+
+If the quality panel shows "summary contradicts transcript", SoloRecord found transcript evidence on the same topic but the summary reversed the meaning, such as turning "not sent yet" into "sent". Review the linked transcript or audio before copying the summary or sending it to a knowledge base.
 
 What if I cannot find a meeting?
 

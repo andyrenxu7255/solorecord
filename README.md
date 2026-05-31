@@ -160,7 +160,7 @@ python /opt/solorecord-asr/run_asr.py --audios-json {audio_json} --sample-rate {
 
 如果自建 ASR 已经提供 OpenAI 兼容 HTTP 服务，可以在 Web 管理页选择 `openai-compatible` 或 `funasr`，并在服务器端配置 Endpoint、API Key 和 Model。服务端优先调用 `/audio/transcriptions`，必要时回退尝试 `/asr`；空语音会保留可追踪占位转写，避免会议记录变成不可用。
 
-ASR 返回原生说话人字段时，服务端会优先使用；如果只返回单段文本、单一发言人，或虽有多个原始 speaker 但文本中出现点名和承接回应，服务端会再调用配置好的 LLM 做语义重分段和发言人推断。分段上传后的阶段结果标记为 `semantic_partial`，结束会议后服务端会基于整场上下文再生成标记为 `semantic_final` 的最终时间线，避免 5 分钟分片割裂“点名、回应、交付物、截止时间”之间的关系。LLM 不可用时会用规则兜底拆分“张三说”“李四：”，并保守处理“翼天你先说”后接“我这边负责”，包括 ASR 没有在点名句和回应句之间加标点的场景，以及被点名议题后续继续围绕同一交付物、时间节点展开的上下文归属。Web 时间线会显示“需确认”“大模型分段”“规则分段”等校对提示；需要校对的行会展示推断依据和相邻上下文。整理质量区会显示发言人证据风险、纪要证据率、待办证据率和待办归属风险；纪要区会列出“纪要有依据”的引用片段和“纪要待核对”的缺证据结论，待办区会逐条显示“有转写依据/负责人证据弱/缺转写证据”。这些证据帮助发现模型把议题误当人名、补写缺少依据的结论/待办，或把任务错误归给只是在全文出现过的人。多数源证据只能增强任务文本可信度；如果负责人仍是 `待确认`、代词或泛化角色，待办仍会优先标记为 `weak_owner`、`knowledgeSafe=false`，并给出可人工应用的 `suggestedOwner`。用户手动把某个发言人改成具体人名后，后续同一 `speaker_id` 会优先保留人工校正；普通 `发言人 N` 泛化旧名不会阻止模型识别新名字。
+ASR 返回原生说话人字段时，服务端会优先使用；如果只返回单段文本、单一发言人，或虽有多个原始 speaker 但文本中出现点名和承接回应，服务端会再调用配置好的 LLM 做语义重分段和发言人推断。分段上传后的阶段结果标记为 `semantic_partial`，结束会议后服务端会基于整场上下文再生成标记为 `semantic_final` 的最终时间线，避免 5 分钟分片割裂“点名、回应、交付物、截止时间”之间的关系。LLM 不可用时会用规则兜底拆分“张三说”“李四：”，并保守处理“翼天你先说”后接“我这边负责”，包括 ASR 没有在点名句和回应句之间加标点的场景，以及被点名议题后续继续围绕同一交付物、时间节点展开的上下文归属。Web 时间线会显示“需确认”“大模型分段”“规则分段”等校对提示；需要校对的行会展示推断依据和相邻上下文。整理质量区会显示发言人证据风险、纪要证据率、待办证据率和待办归属风险；纪要区会列出“纪要有依据”的引用片段、“纪要与原文相反”的高风险结论和“纪要待核对”的缺证据结论。`summaryEvidence.status=contradiction` 会阻断知识入库，并触发服务端把 LLM 纪要降级为“基于转写原文的保守整理”。待办区会逐条显示“有转写依据/负责人证据弱/缺转写证据”。这些证据帮助发现模型把议题误当人名、补写缺少依据的结论/待办，或把任务错误归给只是在全文出现过的人。多数源证据只能增强任务文本可信度；如果负责人仍是 `待确认`、代词、时间短语或泛化角色，待办仍会优先标记为 `weak_owner`、`knowledgeSafe=false`，并给出可人工应用的 `suggestedOwner`。用户手动把某个发言人改成具体人名后，后续同一 `speaker_id` 会优先保留人工校正；普通 `发言人 N` 泛化旧名不会阻止模型识别新名字。
 
 语义重分段会把每个模型输出段继续关联回 `source_index`/`source_segment_no`，所以 UI、导出和外部知识平台都能追溯到原始音频分段。如果 LLM 只是把同一个 ASR 原生 speaker 的长段拆成多段，并且仍使用同一个 `speaker_id` 与 `native_speaker` 场景，最终段会保留 `asr_speaker`，表示它仍来自 ASR 原生说话人证据。通过上下文、任务归属或议题延续推断出的发言人会保留 `speaker_review`、`scenario:*` 和 `reason:*` 标记，但不会伪装成 `asr_speaker`；这表示“可用的会议上下文推断”，不是声纹确认。若 ASR 已经返回多个原生 speaker，但仍存在“李波后面看登录界面”“围城负责外接数据源”等未落到具体人物的线索，服务端也会触发语义后处理，而不是简单相信 ASR 粗分段。
 
@@ -255,6 +255,11 @@ are shared or indexed by downstream knowledge agents. Majority-source evidence
 only strengthens the task text; if the owner is still unknown, a pronoun, or a
 generic role, the action stays `weak_owner` with `knowledgeSafe=false` and may
 carry a `suggestedOwner` for human review.
+Summary evidence also flags `contradiction` when a summary or role-note claim
+matches transcript text on the same topic but reverses completion or negation,
+for example writing "sent" when the transcript says "do not send yet". This is
+a hard knowledge-ingestion blocker and causes generated summaries to fall back
+to the conservative transcript-grounded version.
 
 For multi-source recording, final processing merges near-overlapping text from
 different sources only when the key facts agree. If one device starts tens of

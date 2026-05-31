@@ -132,7 +132,7 @@ Docker smoke fallback 见 `docs/human-ops/README.md`。
 9. 配置 Provider：通过 Web 管理端或 API 保存 ASR/LLM/Hermes/ES 配置；密钥字段留空表示保持不变。
 10. 发布终端应用：Android 使用 `-PSOLO_SERVER_ENDPOINT=<SOLO_BASE_URL>` 构建 APK；Windows 使用 `clients/desktop` 构建 portable ZIP；macOS/iOS/HarmonyOS 在对应构建机签名出包；全部通过 `/api/admin/releases` 上传并设置 `platform`。
 11. 端到端联调：测试 LDAP 登录、录音上传、弱网重试只补传未完成分段、转写/纪要、说话人改名、服务器恢复记录、服务器音频下载、外部 API 拉取。
-12. 质量联调：检查 `qualityReport` 中的 `speaker_review_count`、`speaker_evidence_weak_count`、`speakerEvidence`、`summaryEvidence.supportedClaims`、`summaryEvidence.unsupportedClaims`、`actionEvidence`、`multiSourceConflicts`、`generic_owner_count`、`unsupported_action_count`、`action_evidence_coverage`、`timeline_repaired_count` 和 `scenario_counts`；真实会议不要只看纪要是否“像样”，还要看发言人、纪要和待办是否能从转写原文中找到证据。先跑 `quality_probe --postprocess` 看本地规则模拟，再按需跑 `--run-llm`；两种模拟结果里的 `delta.improved_metrics`、`delta.regressed_metrics`、`delta.speaker_names_added`、`delta.suggested_owner_changes` 可以快速判断混合段、发言人和待办负责人是否真的变好。`summaryEvidence.supportedClaims[].status=majority` 可作为多数源主证据但要保留抽查提示，`status=conflict` 只由冲突源支撑，纪要必须保留待确认语气；如果 LLM 把冲突事实写成确定结论，服务端应降级为保守整理。若会议纪要标题为“基于转写原文的保守整理”，表示 LLM 原始纪要证据不足或冲突语气不合格，服务端已自动降级为证据优先版本。
+12. 质量联调：检查 `qualityReport` 中的 `speaker_review_count`、`speaker_evidence_weak_count`、`speakerEvidence`、`summaryEvidence.supportedClaims`、`summaryEvidence.contradictedClaims`、`summaryEvidence.unsupportedClaims`、`actionEvidence`、`multiSourceConflicts`、`generic_owner_count`、`unsupported_action_count`、`summary_contradiction_count`、`action_evidence_coverage`、`timeline_repaired_count` 和 `scenario_counts`；真实会议不要只看纪要是否“像样”，还要看发言人、纪要和待办是否能从转写原文中找到证据。先跑 `quality_probe --postprocess` 看本地规则模拟，再按需跑 `--run-llm`；两种模拟结果里的 `delta.improved_metrics`、`delta.regressed_metrics`、`delta.speaker_names_added`、`delta.suggested_owner_changes` 可以快速判断混合段、发言人和待办负责人是否真的变好。`summaryEvidence.supportedClaims[].status=majority` 可作为多数源主证据但要保留抽查提示，`status=conflict` 只由冲突源支撑，纪要必须保留待确认语气，`status=contradiction` 表示纪要与同主题转写证据相反，必须阻断知识入库；如果 LLM 把冲突事实写成确定结论，或把“未完成/不要发”等原文写成“已完成/已发送”，服务端应降级为保守整理。若会议纪要标题为“基于转写原文的保守整理”，表示 LLM 原始纪要证据不足、反向证据或冲突语气不合格，服务端已自动降级为证据优先版本。
 13. 输出交付摘要：只列 URL、版本、健康状态、已启用能力、待接入项和下一步，不输出任何密钥。
 
 ### `server/.env` 写入规则
@@ -235,6 +235,7 @@ Agent 验收时必须检查：
 - `qualityReport.metrics.action_evidence_coverage` 应反映待办是否有转写证据；`unsupported_action_count` 大于 0 时，前端应提示“待办缺少转写证据”，便于人工复核模型是否补写。
 - `qualityReport.metrics.source_segment_coverage` 和 `qualityReport.sourceCoverage.weakSegments` 应按 `(source_id, source_segment_no)` 反映每个上传音频分段是否被最终转写覆盖。`source_segment_coverage_weak` 是知识入库阻塞项，外部知识 Agent 不得把该会议视为完整证据。`multi_source_conflict_count` 大于 0 时也应保留人工复核状态。
 - `qualityReport.multiSourceConflicts` 是多源冲突的结构化回听清单，条目包含 `segment_id`、`source_id`、`source_segment_no`、发言人、时间、文本、flags 和附近其它冲突来源。外部知识 Agent 应直接消费该字段做证据复核，不要只根据 `multi_source_conflict_count` 写入确定知识。
+- `qualityReport.metrics.summary_contradiction_count` 大于 0 或出现 `summary_evidence_contradiction` 时，说明纪要/分角色整理把同主题转写证据写反了，例如原文是“还没定版/先不要发”，纪要却写成“已定版/已发送”。这是知识入库阻塞项，Agent 必须以转写原文为准，不能把该纪要沉淀为确定知识。
 - 多源合并前应检查关键事实。若不同录音源在日期、数量或负责人上冲突，应保留多条 `multi_source_conflict` 证据，不得为了去重合并成单条结论。
 - 多源错峰对齐只能作为去重和覆盖辅助：当 `multi_source_time_aligned` 出现时，Agent 应保留原始 `multi_source_refs:*` 追溯；若同一来源附近存在关键事实冲突，仍以 `multi_source_conflict` 和人工复核为准。
 - 多源互补只能复制原始转写中存在、且与当前合并段不冲突的短语；`multi_source_complemented` 表示证据融合，不表示 LLM 生成了新事实。若至少两个来源一致且多于附近冲突来源，可把一致合并段标记为 `multi_source_majority`，同时保留少数冲突源供人工回听；没有多数时必须优先标记 `multi_source_conflict`。
@@ -378,7 +379,7 @@ macOS/iOS/HarmonyOS 发布：
 - 不要把 ES 当成唯一存储。
 - 不要绕过 `_assert_access` 暴露会议数据。
 - 转写是知识平台的原始证据层。外部知识整理 Agent 只能通过 `/api/external/meetings/{meetingId}/transcript?include_history=true` 拉取，不能直接读 SQLite、`var/` 或音频文件路径。
-- 外部响应里的 `knowledgeReadiness` 是入库门禁摘要。`status=hold` 时不要自动沉淀纪要或督办；`status=review_first` 时可以入库但必须保留风险标记；`status=ready` 才适合无人工介入地进入知识库。`knowledgeReadiness.reviewEvidence` 会把多源冲突、覆盖不足分段、发言人风险、纪要风险和待办风险汇总成复核清单，Agent 应把它作为人工复核入口，而不是当成新的事实来源。Web 会议详情的“整理质量”会同步展示“知识入库复核”，便于人工验收；覆盖不足分段可能没有可跳转转写，此时应回听音频或触发重转写。
+- 外部响应里的 `knowledgeReadiness` 是入库门禁摘要。`status=hold` 时不要自动沉淀纪要或督办；`status=review_first` 时可以入库但必须保留风险标记；`status=ready` 才适合无人工介入地进入知识库。`summary_evidence_contradiction` 属于 `hold` 阻塞项，表示纪要与转写原文相反，外部 Agent 必须回到转写证据重建摘要。`knowledgeReadiness.reviewEvidence` 会把多源冲突、覆盖不足分段、发言人风险、纪要风险和待办风险汇总成复核清单，Agent 应把它作为人工复核入口，而不是当成新的事实来源。Web 会议详情的“整理质量”会同步展示“知识入库复核”，便于人工验收；覆盖不足分段可能没有可跳转转写，此时应回听音频或触发重转写。
 - 外部响应里的 `actionItems` 已直接携带 `evidenceStatus`、`evidenceReason`、`evidence`、`suggestedOwner`、`suggestedOwnerEvidence`、`knowledgeSafe` 和 `requiresReview`。`evidenceStatus=majority` 表示多数源主结果支撑且负责人不是泛化/待确认，`knowledgeSafe=true` 且 `requiresReview=true`，可以作为主证据使用但要保留抽查回听提示；`evidenceStatus=weak_owner` 表示任务文本可能有证据但当前负责人不可直接督办，即使任务文本由多数源支撑也要保持 `knowledgeSafe=false`；`evidenceStatus=conflict` 表示只由冲突片段支撑，必须阻断自动督办和确定知识入库。只做督办的 Agent 可以先读这些字段；需要完整证据审计时再读 `qualityReport.actionEvidence`。
 - 非 admin 不允许删除转写段；转写重处理、分段重传或人工替换前必须保留 `transcript_segment_history`。
 - 不要在 Web 使用未转义的动态 HTML。
@@ -852,6 +853,9 @@ The repository can be public only if no real secrets, runtime data, databases, c
   means do not automatically store summaries or actions; `status=review_first`
   means ingestion is possible only with risk markers preserved; `status=ready`
   is the only state suitable for unattended knowledge ingestion.
+  `summary_evidence_contradiction` is a `hold` blocker: the summary reversed
+  same-topic transcript evidence, so agents must rebuild the summary from the
+  transcript instead of storing it as confirmed knowledge.
   `knowledgeReadiness.reviewEvidence` summarizes multi-source conflicts, weak
   coverage segments, speaker risks, summary risks, and action risks as the
   human-review entry point; agents should not treat it as a new fact source.

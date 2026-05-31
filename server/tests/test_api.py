@@ -3761,6 +3761,56 @@ def test_quality_report_flags_summary_without_transcript_evidence(tmp_path: Path
     assert any("纪要要点" in item for item in report["recommendations"])
 
 
+def test_quality_report_blocks_summary_that_contradicts_transcript(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "反向证据"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            UPDATE meetings
+            SET summary = '会议确认客户名单已定版，下午发送客户通知。',
+                role_notes = '李娜负责客户名单定版。'
+            WHERE id = ?
+            """,
+            (meeting_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_summary_contradiction_1', ?, 1, 'front', 1, 'MANUAL_lina', '李娜',
+             0, 60000,
+             '客户名单还没定版，下午先不要发客户通知。',
+             0.86, '["semantic_final"]', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
+    report = detail["qualityReport"]
+    summary_evidence = report["summaryEvidence"]
+    contradicted = summary_evidence["contradictedClaims"][0]
+    assert summary_evidence["contradiction_count"] == 1
+    assert contradicted["status"] == "contradiction"
+    assert "客户名单已定版" in contradicted["claim"]
+    assert contradicted["evidence"][0]["segment_id"] == "seg_summary_contradiction_1"
+    assert contradicted["evidence"][0]["source_id"] == "front"
+    assert contradicted["evidence"][0]["source_segment_no"] == 1
+    assert report["metrics"]["summary_contradiction_count"] == 1
+    issue_types = {item["type"] for item in report["issues"]}
+    assert "summary_evidence_contradiction" in issue_types
+    assert detail["knowledgeReadiness"]["status"] == "hold"
+    assert "summary_evidence_contradiction" in detail["knowledgeReadiness"]["blockers"]
+    readiness_evidence = detail["knowledgeReadiness"]["reviewEvidence"]["summaryClaims"]
+    assert readiness_evidence[0]["status"] == "contradiction"
+
+
 def test_llm_summary_falls_back_when_not_grounded() -> None:
     import solorecord_server.processing as processing
     import solorecord_server.repository as repository
@@ -3822,6 +3872,45 @@ def test_llm_summary_falls_back_when_not_grounded() -> None:
     )
     assert report["metrics"]["summary_evidence_coverage"] == 1
     assert report["metrics"]["summary_unsupported_count"] == 0
+
+
+def test_llm_summary_falls_back_when_summary_contradicts_transcript() -> None:
+    import solorecord_server.processing as processing
+
+    segments = [
+        {
+            "speaker_id": "MANUAL_lina",
+            "display_name": "李娜",
+            "source_id": "front",
+            "source_segment_no": 1,
+            "start_ms": 0,
+            "end_ms": 60000,
+            "text": "客户名单还没定版，下午先不要发客户通知。",
+            "confidence": 0.86,
+            "flags": ["semantic_final"],
+        }
+    ]
+
+    summary, role_notes, actions = processing._grounded_summary_result(
+        "会议确认客户名单已定版，下午发送客户通知。",
+        "李娜负责客户名单定版。",
+        [
+            {
+                "owner": "李娜",
+                "task": "继续确认客户名单",
+                "due": "",
+                "status": "open",
+            }
+        ],
+        segments,
+    )
+
+    assert "客户名单已定版" not in summary
+    assert "下午发送客户通知" not in summary
+    assert "基于转写原文的保守整理" in summary
+    assert "客户名单还没定版" in summary
+    assert "先不要发客户通知" in role_notes
+    assert actions[0]["owner"] == "李娜"
 
 
 def test_grounded_summary_prefers_suggested_action_owner_without_fallback() -> None:
@@ -4259,6 +4348,9 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "纪要有依据" in app_js
     assert "纪要多数源确认" in app_js
     assert "纪要多源冲突待核对" in app_js
+    assert "summary_contradiction_count" in app_js
+    assert "summary_evidence_contradiction" in app_js
+    assert "纪要与原文相反" in app_js
     assert "summaryEvidenceStatusLabel" in app_js
     assert "knowledgeReadiness" in app_js
     assert "reviewEvidence" in app_js
@@ -4274,6 +4366,8 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "sourceConflictLabel" in app_js
     assert ".summary-evidence-item.majority" in styles
     assert ".summary-evidence-item.conflict" in styles
+    assert ".summary-evidence-item.contradiction" in styles
+    assert ".knowledge-review-item.contradiction" in styles
     assert ".knowledge-readiness" in styles
     assert ".knowledge-review-item" in styles
     assert ".knowledge-readiness-tags .blocker" in styles

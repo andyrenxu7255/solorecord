@@ -93,8 +93,9 @@ Authorization: Bearer replace-with-long-random-token
 - `status=ready`：可自动入库。
 - `status=review_first`：可入库但应保留风险标记或等待人工校对。
 - `status=hold`：存在阻塞风险，建议暂缓自动入库。
-- `blockers`：阻塞入库的问题类型，例如缺少转写证据的待办或缺证据纪要。
+- `blockers`：阻塞入库的问题类型，例如缺少转写证据的待办、缺证据纪要或 `summary_evidence_contradiction` 反向纪要证据。
 - `reviewWarnings`：建议人工复核的问题类型，例如发言人证据弱、负责人归属弱。
+- `qualityReport.summaryEvidence.contradictedClaims`：纪要/分角色整理与同主题转写证据在完成、发送、确认、启动等状态上相反。知识平台必须以 `transcript.segments` 原文为准，不能把这些结论写入确定知识。
 - `actionItems[].evidenceStatus=majority`：待办由 `multi_source_majority` 主结果支撑，且负责人不是泛化/待确认；此时 `knowledgeSafe=true`、`requiresReview=true`，可以进入主证据链，但应保留抽查回听提示。
 - `actionItems[].evidenceStatus=weak_owner`：任务文本可能有多数源或普通转写证据，但负责人是 `待确认`、代词、时间短语或缺少负责人-任务上下文；此时 `knowledgeSafe=false`，应先人工应用或确认 `suggestedOwner`。
 - `actionItems[].evidenceStatus=conflict`：待办由 `multi_source_conflict` 片段支撑，通常表示不同录音源在日期、数量或负责人上不一致；此时 `knowledgeSafe=false`、`requiresReview=true`。
@@ -274,6 +275,12 @@ the task, the action must stay `weak_owner` with `knowledgeSafe=false`, and
 `multi_source_conflict` rows; downstream systems must keep it under human review
 and must not auto-send or store it as confirmed knowledge while
 `knowledgeSafe=false` and `requiresReview=true`.
+`qualityReport.summaryEvidence.contradictedClaims` lists summary or role-note
+claims that match transcript evidence on the same topic but reverse completion,
+sending, confirmation, or launch status. This produces the
+`summary_evidence_contradiction` blocker; knowledge agents must trust
+`transcript.segments` and must not store those summary claims as confirmed
+facts.
 
 `knowledgeGraph` is an auxiliary relationship graph for people and agents. It
 contains meeting, speaker, topic, action, and time nodes. Topic nodes are

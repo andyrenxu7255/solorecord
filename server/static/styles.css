@@ -878,6 +878,11 @@ textarea.input {
   border-color: #fecdd3;
 }
 
+.summary-evidence-item.contradiction {
+  background: #fff1f2;
+  border-color: #fb7185;
+}
+
 .summary-evidence-item.unsupported {
   background: #fff8e6;
   border-color: #f0c36a;
@@ -989,6 +994,11 @@ textarea.input {
 .knowledge-review-item.conflict {
   background: #fff1f2;
   border-color: #fecdd3;
+}
+
+.knowledge-review-item.contradiction {
+  background: #fff1f2;
+  border-color: #fb7185;
 }
 
 .summary-evidence-item small {

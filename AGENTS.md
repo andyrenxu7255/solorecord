@@ -101,6 +101,7 @@ Android 上传可靠性：
 - 最终处理会合并关键事实一致的重复多源片段并标记 `multi_source_merged`。
 - 设备错峰起录但来源分段相邻、时间差和文本相似度满足保守阈值时，合并片段还会标记 `multi_source_time_aligned`。
 - 日期、数量或负责人等关键事实冲突时必须保留多条 `multi_source_conflict` 证据，不得为了去重覆盖冲突。
+- `summary_evidence_contradiction` 是知识入库阻塞项，表示纪要/分角色整理与同主题转写原文在完成、发送、确认等状态上相反。外部 Agent 必须以转写原文为准重建摘要，不能把该纪要沉淀为确定知识。
 
 ## 数据与权限
 
@@ -347,6 +348,7 @@ Multi-source recording reliability:
 - Final processing merges duplicate multi-source rows only when key facts agree and marks them with `multi_source_merged`.
 - If devices start at different times but neighboring source-local segment numbers, start-time delta, and text similarity pass conservative checks, merged rows also carry `multi_source_time_aligned`.
 - If sources conflict on dates, amounts, or owners, keep separate `multi_source_conflict` evidence rows instead of deduplicating away the disagreement.
+- `summary_evidence_contradiction` is a knowledge-ingestion blocker. It means a summary or role-note claim reverses same-topic transcript evidence around completion, sending, confirmation, or similar status. External agents must rebuild the summary from transcript evidence instead of storing that summary as confirmed knowledge.
 
 ## Data Model
 
