@@ -1204,7 +1204,7 @@ def _apply_contextual_speaker_inference(segments: list[dict]) -> list[dict]:
             )
             if speaker_id and preserve_speaker_id:
                 speaker_id_map[speaker_id] = str(pending["speaker"])
-            pending = None
+            pending = _followup_pending_speaker(pending, item)
 
         result.append(item)
         addressed = _extract_addressed_speakers(str(item.get("text") or ""))
@@ -1230,6 +1230,32 @@ def _apply_contextual_speaker_inference(segments: list[dict]) -> list[dict]:
     return result
 
 
+def _followup_pending_speaker(pending: dict, segment: dict) -> dict | None:
+    speaker = str(pending.get("speaker") or "").strip()
+    if not speaker:
+        return None
+    text = str(segment.get("text") or "")
+    tokens = _pending_topic_tokens(
+        " ".join(
+            part
+            for part in [str(pending.get("topic_text") or ""), text]
+            if part
+        ),
+        speaker,
+    )
+    return {
+        **pending,
+        "topic_tokens": tokens or pending.get("topic_tokens") or [],
+        "topic_text": " ".join(
+            part
+            for part in [str(pending.get("topic_text") or ""), text]
+            if part
+        )[:180],
+        "ttl": 2,
+        "reason": str(pending.get("reason") or "前文点名后，当前段落承接该上下文。"),
+    }
+
+
 def _can_apply_pending_speaker(pending: dict, segment: dict) -> bool:
     speaker = str(pending.get("speaker") or "").strip()
     if not speaker or _is_rule_speaker_stopword(speaker):
@@ -1244,6 +1270,8 @@ def _can_apply_pending_speaker(pending: dict, segment: dict) -> bool:
     if explicit and explicit.get("speaker") != speaker:
         return False
     if _looks_like_addressed_response(text):
+        return True
+    if _has_first_person_assignment(text):
         return True
     if _matches_pending_topic(pending, text):
         return True
@@ -2725,7 +2753,7 @@ def _infer_owner_from_pronoun(owner: str, task: str, segments: list[dict]) -> st
 def _has_first_person_assignment(text: str) -> bool:
     return bool(
         re.search(
-            r"(我|我们|咱们)(这边)?(?:来|负责|跟进|处理|确认|补充|准备|整理|输出|完成|推进|看|改|发|做|搞|检查)",
+            r"(我|我们|咱们)(这边)?(?:来|会|负责|跟进|处理|确认|补充|准备|整理|输出|完成|推进|看|改|发|做|搞|检查)",
             str(text or ""),
         )
     )

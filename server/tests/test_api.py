@@ -1621,6 +1621,66 @@ def test_final_processing_rechecks_reused_partial_context(tmp_path: Path) -> Non
     assert transcript["segments"][1]["speaker_id"] == "SPEAKER_02"
 
 
+def test_final_processing_keeps_called_person_followup_commitments(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "跨分段连续承接"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+    import solorecord_server.processing as processing
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO audio_segments
+            (id, meeting_id, segment_no, file_name, storage_path, mime_type, size_bytes,
+             sha256, duration_ms, start_ms, end_ms, upload_status, created_at)
+            VALUES
+            ('aud_follow_1', ?, 1, 'part1.wav', 'missing1.wav', 'audio/wav', 1,
+             'sha-follow-1', 5000, 0, 5000, 'uploaded', 'now'),
+            ('aud_follow_2', ?, 2, 'part2.wav', 'missing2.wav', 'audio/wav', 1,
+             'sha-follow-2', 5000, 5000, 10000, 'uploaded', 'now'),
+            ('aud_follow_3', ?, 3, 'part3.wav', 'missing3.wav', 'audio/wav', 1,
+             'sha-follow-3', 6000, 10000, 16000, 'uploaded', 'now')
+            """,
+            (meeting_id, meeting_id, meeting_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_follow_1', ?, 1, 1, 'SPEAKER_01', '主持人', 0, 5000,
+             '翼天你先说一下错误样例和自动测试。', 0.82,
+             '["semantic_partial"]', 'now'),
+            ('seg_follow_2', ?, 1, 2, 'SPEAKER_01', '发言人 1', 5000, 10000,
+             '错误样例已经准备了三个，自动测试明天能补完。', 0.81,
+             '["semantic_partial"]', 'now'),
+            ('seg_follow_3', ?, 1, 3, 'SPEAKER_01', '发言人 1', 10000, 16000,
+             '周三前我会把可观测截图一起发出来。', 0.8,
+             '["semantic_partial"]', 'now')
+            """,
+            (meeting_id, meeting_id, meeting_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO processing_jobs
+            (id, meeting_id, type, status, current_stage, progress, asr_provider, created_at, updated_at)
+            VALUES ('job_followup_final', ?, 'transcribe', 'queued', 'queued', 0, 'mock', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    processing.process_transcription_job("job_followup_final")
+
+    transcript = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers).json()
+    assert [item["display_name"] for item in transcript["segments"]] == ["主持人", "翼天", "翼天"]
+    assert transcript["segments"][2]["source_segment_no"] == 3
+    assert "contextual_speaker_inference" in transcript["segments"][2]["flags"]
+    assert "speaker_review" in transcript["segments"][2]["flags"]
+
+
 def test_insert_transcript_preserves_manual_speaker_names_only(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)
