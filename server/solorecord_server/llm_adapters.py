@@ -430,12 +430,19 @@ def _is_invalid_person_name(name: str) -> bool:
 
 
 def _looks_like_topic_or_time_phrase(name: str) -> bool:
-    if not re.fullmatch(r"[\u4e00-\u9fa5]{3,8}", name):
-        return False
+    value = str(name or "").strip()
     time_words = {
         "今天",
         "明天",
         "昨天",
+        "后天",
+        "上午",
+        "下午",
+        "晚上",
+        "早上",
+        "中午",
+        "今晚",
+        "明晚",
         "周一",
         "周二",
         "周三",
@@ -450,6 +457,10 @@ def _looks_like_topic_or_time_phrase(name: str) -> bool:
         "年前",
         "年后",
     }
+    if value in time_words:
+        return True
+    if not re.fullmatch(r"[\u4e00-\u9fa5]{3,8}", value):
+        return False
     topic_words = {
         "物料",
         "名单",
@@ -475,8 +486,8 @@ def _looks_like_topic_or_time_phrase(name: str) -> bool:
         "截图",
         "下载",
     }
-    return any(word in name for word in time_words) or any(
-        word in name for word in topic_words
+    return any(word in value for word in time_words) or any(
+        word in value for word in topic_words
     )
 
 

@@ -2469,7 +2469,7 @@ def _action_status_rank(value) -> int:
 def _owner_alias_candidates(segments: list[dict], speaker_names: list[str]) -> dict[str, str]:
     aliases: dict[str, str] = {}
     for name in speaker_names:
-        if not _is_generic_owner(name):
+        if not _is_invalid_owner_candidate(name):
             aliases[name] = name
     keyword_map = {
         "前端": ("前端", "UI", "界面", "登录", "图标", "样式", "页面"),
@@ -2482,7 +2482,7 @@ def _owner_alias_candidates(segments: list[dict], speaker_names: list[str]) -> d
     }
     for segment in segments:
         name = str(segment.get("display_name") or "").strip()
-        if not name or _is_generic_owner(name):
+        if not name or _is_invalid_owner_candidate(name):
             continue
         text = str(segment.get("text") or "")
         for owner in _org_owners_in_text(text):
@@ -2507,10 +2507,10 @@ def _owner_context_candidates(segments: list[dict]) -> dict[str, dict]:
             "mentions": list(snippets),
         }
         for name, snippets in people.items()
-        if not _is_generic_owner(name)
+        if not _is_invalid_owner_candidate(name)
     }
     for name in speaker_names:
-        if not _is_generic_owner(name):
+        if not _is_invalid_owner_candidate(name):
             candidates.setdefault(name, {"score": 1, "keywords": set(), "mentions": []})
     for segment in segments:
         for owner in _org_owners_in_text(str(segment.get("text") or "")):
@@ -2518,19 +2518,49 @@ def _owner_context_candidates(segments: list[dict]) -> dict[str, dict]:
     for index, segment in enumerate(segments):
         text = str(segment.get("text") or "")
         speaker = str(segment.get("display_name") or "").strip()
+        for addressed in _extract_addressed_speakers(text):
+            name = str(addressed.get("speaker") or "").strip()
+            if _is_invalid_owner_candidate(name):
+                continue
+            if name in ORG_OWNER_TERMS:
+                topic_text = _org_owner_assignment_windows(text).get(name, "")
+            else:
+                topic_text = _remove_address_prefix(
+                    _addressed_topic_text(text, addressed),
+                    name,
+                )
+            if not topic_text:
+                continue
+            item = candidates.setdefault(
+                name,
+                {"score": 1, "keywords": set(), "mentions": []},
+            )
+            boost = 7 if addressed.get("scenario") == "task_ownership" else 5
+            _add_owner_context(item, topic_text, speaker_boost=boost)
         if speaker and speaker in candidates:
             other_names = [
-                name for name in candidates if name and name != speaker and name in text
+                name
+                for name in candidates
+                if name
+                and name != speaker
+                and name not in ORG_OWNER_TERMS
+                and name in text
             ]
             speaker_contexts = _speaker_context_windows(text, speaker, other_names)
             for speaker_text in speaker_contexts:
                 _add_owner_context(candidates[speaker], speaker_text, speaker_boost=2)
-        for name in candidates:
+        candidate_names = list(candidates.keys())
+        for name in candidate_names:
             if not name or name == speaker or name not in text:
                 continue
             if name in ORG_OWNER_TERMS:
                 continue
-            mention_windows = _mention_windows(text, name)
+            other_names = [
+                other
+                for other in candidate_names
+                if other and other != name and other in text
+            ]
+            mention_windows = _speaker_context_windows(text, name, other_names)
             for window_text in mention_windows:
                 boost = 3 if _has_owner_assignment(window_text, name) else 1
                 _add_owner_context(candidates[name], window_text, speaker_boost=boost)
@@ -2555,11 +2585,14 @@ def _speaker_context_windows(text: str, speaker: str, other_names: list[str]) ->
         if chunk.strip()
     ]
     safe_chunks = [
-        chunk for chunk in chunks if not any(name and name in chunk for name in other_names)
+        chunk
+        for chunk in chunks
+        if not any(name and name in chunk for name in other_names)
+        or _has_first_person_assignment(chunk)
     ]
     if safe_chunks:
         return safe_chunks[:2]
-    return [] if len(text) > 180 else [text]
+    return []
 
 
 def _add_owner_context(item: dict, text: str, speaker_boost: int) -> None:
@@ -2815,6 +2848,13 @@ def _is_context_stopword(token: str) -> bool:
         "今天",
         "明天",
         "昨天",
+        "上午",
+        "下午",
+        "晚上",
+        "早上",
+        "中午",
+        "今晚",
+        "明晚",
         "周一",
         "周二",
         "周三",
@@ -2844,6 +2884,8 @@ def _is_generic_owner(owner: str) -> bool:
         return True
     if owner in ORG_OWNER_TERMS:
         return False
+    if _looks_like_due_time_phrase(owner) or _looks_like_rule_topic_phrase(owner):
+        return True
     generic_words = {
         "负责人",
         "相关负责人",
@@ -2855,6 +2897,17 @@ def _is_generic_owner(owner: str) -> bool:
         "待确认",
     }
     return owner in generic_words or owner.endswith("负责人")
+
+
+def _is_invalid_owner_candidate(owner: str) -> bool:
+    value = str(owner or "").strip()
+    if not value:
+        return True
+    return (
+        _is_generic_owner(value)
+        or _looks_like_due_time_phrase(value)
+        or _looks_like_rule_topic_phrase(value)
+    )
 
 
 def _is_pronoun_owner(owner: str) -> bool:

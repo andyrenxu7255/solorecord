@@ -837,6 +837,8 @@ def _is_generic_owner(owner: str) -> bool:
         return True
     if owner in ORG_OWNER_TERMS:
         return False
+    if _looks_like_due_time_phrase(owner):
+        return True
     generic_words = {
         "负责人",
         "相关负责人",
@@ -848,6 +850,46 @@ def _is_generic_owner(owner: str) -> bool:
         "待确认",
     }
     return owner in generic_words or _is_pronoun_owner(owner) or owner.endswith("负责人")
+
+
+def _looks_like_due_time_phrase(value: str) -> bool:
+    text = re.sub(r"\s+", "", str(value or "").strip())
+    if not text:
+        return False
+    if text in {
+        "今天",
+        "明天",
+        "后天",
+        "昨天",
+        "今晚",
+        "明晚",
+        "上午",
+        "下午",
+        "晚上",
+        "早上",
+        "中午",
+        "下班前",
+        "会前",
+        "会后",
+        "会中",
+        "本周",
+        "下周",
+        "月底",
+        "月初",
+        "年前",
+        "年后",
+    }:
+        return True
+    return bool(
+        re.fullmatch(
+            r"(?:(?:今天|明天|后天|昨天)?(?:上午|下午|晚上|早上|中午)|"
+            r"(?:本周|下周)?周[一二三四五六日天](?:前|后|之前|以前|之后|左右)?|"
+            r"(?:本周|下周|月底|月初|年前|年后)(?:前|后|之前|以前|之后|左右)?|"
+            r"\d{1,2}月\d{1,2}[日号]?(?:前|后|之前|以前|之后|左右)?|"
+            r"\d{1,2}[日号](?:前|后|之前|以前|之后|左右)?)",
+            text,
+        )
+    )
 
 
 def _is_pronoun_owner(owner: str) -> bool:
@@ -1042,6 +1084,9 @@ def _action_evidence_items(
         if key in unsupported_keys:
             status = "unsupported"
             reason = "待办事项和转写原文关联较弱，请回看转写或录音。"
+        elif _is_generic_owner(owner):
+            status = "weak_owner"
+            reason = "任务内容有转写依据，但负责人是泛化、代词或时间短语，建议人工确认。"
         elif key in weak_owner_keys:
             status = "weak_owner"
             reason = "任务内容有转写依据，但负责人和任务之间缺少明确上下文关联。"

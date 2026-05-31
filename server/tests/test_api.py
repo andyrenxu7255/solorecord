@@ -2186,6 +2186,51 @@ def test_action_owner_normalization_uses_department_owner_context() -> None:
     assert normalized[0]["owner"] == "销售"
 
 
+def test_action_owner_normalization_uses_addressed_followup_not_host() -> None:
+    import solorecord_server.processing as processing
+
+    actions = [
+        {
+            "owner": "待确认",
+            "task": "补完自动测试覆盖脚本",
+            "due": "明天",
+            "status": "open",
+        },
+    ]
+    segments = [
+        {
+            "display_name": "傲寒",
+            "text": "翼天你先说一下错误样例和自动测试。",
+        },
+        {
+            "display_name": "发言人 2",
+            "text": "这块覆盖脚本明天补完，质量检查也一起跑。",
+        },
+    ]
+
+    normalized = processing._normalize_action_owners(actions, segments)
+
+    assert normalized[0]["owner"] == "翼天"
+
+
+def test_action_owner_normalization_does_not_promote_time_phrase_owner() -> None:
+    import solorecord_server.processing as processing
+
+    actions = [
+        {"owner": "待确认", "task": "下午发消息", "due": "下午", "status": "open"},
+    ]
+    segments = [
+        {
+            "display_name": "任旭",
+            "text": "客户名单今天定版，销售逐个通知客户，下午发消息。",
+        },
+    ]
+
+    normalized = processing._normalize_action_owners(actions, segments)
+
+    assert normalized[0]["owner"] == "任旭"
+
+
 def test_action_owner_normalization_uses_compact_org_deadline_context() -> None:
     import solorecord_server.processing as processing
 
@@ -2269,6 +2314,10 @@ def test_llm_prompts_include_named_people_candidates() -> None:
     assert "王强" in noisy_people
     assert "物料周五前" not in noisy_people
     assert "舞台音响周三" not in noisy_people
+    time_people = llm_adapters.mentioned_people_candidates(
+        [{"speaker_id": "SPEAKER_01", "display_name": "发言人 1", "text": "下午发消息通知销售。"}]
+    )
+    assert "下午" not in time_people
 
 
 def test_action_owner_normalization_uses_context_when_model_over_collapses() -> None:
@@ -2703,6 +2752,43 @@ def test_quality_report_treats_pronoun_owner_as_generic(tmp_path: Path) -> None:
 
     assert report["metrics"]["generic_owner_count"] == 1
     assert report["metrics"]["owner_distribution"]["我们"] == 1
+    issue_types = {item["type"] for item in report["issues"]}
+    assert "generic_owner" in issue_types
+
+
+def test_quality_report_treats_due_time_owner_as_generic(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "时间负责人"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_due_owner_1', ?, 1, 1, 'MANUAL_renxu', '任旭', 0, 60000,
+             '客户名单今天定版，销售逐个通知客户，下午发消息。',
+             0.82, '["semantic_llm"]', 'now')
+            """,
+            (meeting_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO action_items (id, meeting_id, owner, task, due, status, created_at, updated_at)
+            VALUES
+            ('act_due_owner', ?, '下午', '发消息通知销售', '下午', 'open', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    report = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()["qualityReport"]
+
+    assert report["metrics"]["generic_owner_count"] == 1
+    assert report["actionEvidence"][0]["status"] in {"weak_owner", "unsupported"}
     issue_types = {item["type"] for item in report["issues"]}
     assert "generic_owner" in issue_types
 
