@@ -2273,6 +2273,7 @@ def _grounded_summary_result(
     normalized_actions = _normalize_action_owners(actions, segments)
     grounded_actions = _prefer_suggested_action_owners(normalized_actions, segments)
     grounded_actions = _drop_contradictory_action_items(grounded_actions, segments)
+    grounded_actions = _drop_unsupported_action_items(grounded_actions, segments)
     if _summary_is_grounded(summary, role_notes, grounded_actions, segments):
         return summary, role_notes, grounded_actions
     fallback_summary, fallback_role_notes = _grounded_summary_from_segments(segments)
@@ -2303,9 +2304,7 @@ def _summary_is_grounded(
         return False
     if unqualified_conflicts:
         return False
-    if unsupported == 0:
-        return True
-    return coverage >= 0.6 and unsupported <= 1
+    return unsupported == 0 and coverage >= 0.6
 
 
 def _grounded_summary_from_segments(segments: list[dict]) -> tuple[str, str]:
@@ -2442,14 +2441,71 @@ def _drop_contradictory_action_items(actions: list[dict], segments: list[dict]) 
         kept.append(action)
     if kept:
         return kept
+    return _review_fallback_actions(
+        "按转写原文复核待办，原模型待办与原文存在反向证据",
+        segments,
+    )
+
+
+def _review_fallback_actions(task: str, segments: list[dict]) -> list[dict]:
+    evidence = _review_fallback_evidence_text(segments)
+    if evidence:
+        task = f"{task}：{evidence}"
     return [
         {
             "owner": "待确认",
-            "task": "按转写原文复核待办，原模型待办与原文存在反向证据",
+            "task": _clean_summary_text(task, limit=160),
             "due": "",
             "status": "open",
         }
     ]
+
+
+def _drop_unsupported_action_items(actions: list[dict], segments: list[dict]) -> list[dict]:
+    if not actions:
+        return actions
+    report = build_quality_report(
+        [_segment_row_like(item) for item in segments],
+        [
+            _action_row_like(
+                item,
+                fallback_id=f"act_probe_{index + 1}",
+            )
+            for index, item in enumerate(actions)
+        ],
+        [],
+        "",
+        "",
+    )
+    unsupported_ids = {
+        str(item.get("id") or "").strip()
+        for item in report.get("actionEvidence") or []
+        if item.get("status") == "unsupported"
+    }
+    if not unsupported_ids:
+        return actions
+    kept: list[dict] = []
+    for index, action in enumerate(actions):
+        action_id = str(action.get("id") or f"act_probe_{index + 1}").strip()
+        if action_id in unsupported_ids:
+            continue
+        kept.append(action)
+    if kept:
+        return kept
+    return _review_fallback_actions(
+        "按转写原文复核待办，原模型待办缺少转写证据",
+        segments,
+    )
+
+
+def _review_fallback_evidence_text(segments: list[dict]) -> str:
+    for item in _speaker_segments(segments):
+        speaker = str(item.get("speaker") or "").strip()
+        text = _clean_summary_text(str(item.get("text") or ""), limit=90)
+        if not text:
+            continue
+        return f"{speaker}：{text}" if speaker else text
+    return ""
 
 
 def _segment_row_like(segment: dict) -> dict:

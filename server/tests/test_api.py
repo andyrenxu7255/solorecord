@@ -4150,6 +4150,109 @@ def test_llm_summary_drops_contradictory_action_items_before_saving() -> None:
     assert report["metrics"]["action_contradiction_count"] == 0
 
 
+def test_llm_summary_drops_unsupported_action_items_before_saving() -> None:
+    import solorecord_server.processing as processing
+    import solorecord_server.repository as repository
+
+    segments = [
+        {
+            "speaker_id": "MANUAL_lina",
+            "display_name": "李娜",
+            "source_id": "front",
+            "source_segment_no": 1,
+            "start_ms": 0,
+            "end_ms": 60000,
+            "text": "客户名单今天定版，销售工作区后续同步。",
+            "confidence": 0.86,
+            "flags": ["semantic_final"],
+        }
+    ]
+
+    summary, role_notes, actions = processing._grounded_summary_result(
+        "会议确认客户名单今天定版。另决定启动海外法务审批。",
+        "李娜：客户名单今天定版。",
+        [
+            {
+                "owner": "李娜",
+                "task": "同步客户名单到销售工作区",
+                "due": "今天",
+                "status": "open",
+            },
+            {
+                "owner": "法务",
+                "task": "启动海外法务审批",
+                "due": "",
+                "status": "open",
+            },
+        ],
+        segments,
+    )
+
+    tasks = [item["task"] for item in actions]
+    assert "同步客户名单到销售工作区" in tasks
+    assert "启动海外法务审批" not in tasks
+    assert "海外法务审批" not in summary
+    assert "基于转写原文的保守整理" in summary
+    report = repository.build_quality_report(
+        [processing._segment_row_like(item) for item in segments],
+        [processing._action_row_like(item) for item in actions],
+        [],
+        summary,
+        role_notes,
+    )
+    assert report["metrics"]["unsupported_action_count"] == 0
+    assert report["metrics"]["summary_unsupported_count"] == 0
+
+
+def test_llm_summary_keeps_review_fallback_when_all_actions_unsupported() -> None:
+    import solorecord_server.processing as processing
+    import solorecord_server.repository as repository
+
+    segments = [
+        {
+            "speaker_id": "MANUAL_lina",
+            "display_name": "李娜",
+            "source_id": "front",
+            "source_segment_no": 1,
+            "start_ms": 0,
+            "end_ms": 60000,
+            "text": "客户名单今天定版。",
+            "confidence": 0.86,
+            "flags": ["semantic_final"],
+        }
+    ]
+
+    summary, _, actions = processing._grounded_summary_result(
+        "会议决定启动海外法务审批。",
+        "",
+        [
+            {
+                "owner": "法务",
+                "task": "启动海外法务审批",
+                "due": "",
+                "status": "open",
+            }
+        ],
+        segments,
+    )
+
+    assert "海外法务审批" not in summary
+    assert actions[0]["owner"] == "待确认"
+    assert actions[0]["task"].startswith("按转写原文复核待办，原模型待办缺少转写证据")
+    assert "客户名单今天定版" in actions[0]["task"]
+    assert actions[0]["due"] == ""
+    assert actions[0]["status"] == "open"
+    report = repository.build_quality_report(
+        [processing._segment_row_like(item) for item in segments],
+        [processing._action_row_like(item) for item in actions],
+        [],
+        summary,
+        "",
+    )
+    assert report["metrics"]["unsupported_action_count"] == 0
+    assert report["metrics"]["generic_owner_count"] == 1
+
+
 def test_grounded_summary_prefers_suggested_action_owner_without_fallback() -> None:
     import solorecord_server.processing as processing
 
