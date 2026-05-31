@@ -4043,11 +4043,23 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "纪要多数源确认" in app_js
     assert "纪要多源冲突待核对" in app_js
     assert "summaryEvidenceStatusLabel" in app_js
+    assert "knowledgeReadiness" in app_js
+    assert "reviewEvidence" in app_js
+    assert "renderKnowledgeReadiness" in app_js
+    assert "knowledgeReviewEvidenceItems" in app_js
+    assert "knowledgeIssueLabel" in app_js
+    assert "知识入库复核" in app_js
+    assert "先复核再入库" in app_js
+    assert "暂缓入库" in app_js
+    assert "sourceCoverageWeakSegments" in app_js
     assert "multiSourceConflicts" in app_js
     assert "renderMultiSourceConflicts" in app_js
     assert "sourceConflictLabel" in app_js
     assert ".summary-evidence-item.majority" in styles
     assert ".summary-evidence-item.conflict" in styles
+    assert ".knowledge-readiness" in styles
+    assert ".knowledge-review-item" in styles
+    assert ".knowledge-readiness-tags .blocker" in styles
     assert ".summary-evidence-item p" in styles
     assert "detailRoleNotes" in app_js
     assert "分角色整理" in app_js

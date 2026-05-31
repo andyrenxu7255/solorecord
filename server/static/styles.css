@@ -883,6 +883,114 @@ textarea.input {
   border-color: #f0c36a;
 }
 
+.knowledge-readiness {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #fbfcfd;
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px;
+}
+
+.knowledge-readiness.review_first {
+  background: #fffaf0;
+  border-color: #efd493;
+}
+
+.knowledge-readiness.hold {
+  background: #fff7f7;
+  border-color: #f2b8bd;
+}
+
+.knowledge-readiness-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.knowledge-readiness-head div {
+  display: grid;
+  gap: 2px;
+}
+
+.knowledge-readiness-head b {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.knowledge-readiness-head span,
+.knowledge-readiness-head small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.knowledge-readiness-tags,
+.knowledge-readiness-notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.knowledge-readiness-tags span,
+.knowledge-readiness-notes span {
+  border-radius: var(--radius-sm);
+  background: #eef5f3;
+  color: #285d4b;
+  font-size: 12px;
+  padding: 5px 8px;
+}
+
+.knowledge-readiness-tags .blocker {
+  background: #ffe4e6;
+  color: #9f1239;
+}
+
+.knowledge-review-list {
+  display: grid;
+  gap: 8px;
+}
+
+.knowledge-review-item {
+  border: 1px solid #d8e0ea;
+  border-radius: var(--radius-sm);
+  background: #fff;
+  display: grid;
+  gap: 5px;
+  padding: 8px;
+}
+
+.knowledge-review-item b {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.knowledge-review-item p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-review-item.blocker,
+.knowledge-review-item.unsupported {
+  background: #fff8e6;
+  border-color: #f0c36a;
+}
+
+.knowledge-review-item.warning,
+.knowledge-review-item.majority {
+  background: #eef6ff;
+  border-color: #b7d7ff;
+}
+
+.knowledge-review-item.conflict {
+  background: #fff1f2;
+  border-color: #fecdd3;
+}
+
 .summary-evidence-item small {
   color: var(--muted);
 }

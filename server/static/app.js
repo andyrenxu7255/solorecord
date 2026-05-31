@@ -317,6 +317,7 @@ function renderMeetingDetail(data, transcriptSegments) {
   const exports = data.exports || [];
   const knowledgeGraph = data.knowledgeGraph || { nodes: [], edges: [] };
   const qualityReport = data.qualityReport || buildClientQualityReport(transcriptSegments, actions);
+  const knowledgeReadiness = data.knowledgeReadiness || null;
   const audioSegments = data.audioSegments || [];
   const uploadedAudio = audioSegments.filter((segment) => segment.upload_status === "uploaded").length;
   const recordingSources = data.recordingSources || [];
@@ -360,7 +361,7 @@ function renderMeetingDetail(data, transcriptSegments) {
           <h3>整理质量</h3>
           <span class="quality-score ${escapeAttr(qualityReport.status || "review_recommended")}">${qualityScoreLabel(qualityReport)}</span>
         </div>
-        ${renderQualityReport(qualityReport)}
+        ${renderQualityReport(qualityReport, knowledgeReadiness)}
       </div>
       <div class="summary-box">
         <div class="section-row">
@@ -678,7 +679,7 @@ function renderActionRisk(risk) {
 function renderEvidenceJumpButton(item) {
   const segmentId = item?.segment_id || "";
   const sourceId = item?.source_id || "";
-  const sourceSegmentNo = item?.source_segment_no || "";
+  const sourceSegmentNo = item?.source_segment_no || item?.segment_no || "";
   if (!segmentId && !sourceSegmentNo) return "";
   return `
     <button type="button" class="evidence-jump jump-transcript"
@@ -768,7 +769,7 @@ function renderKnowledgeGraph(graph) {
   `;
 }
 
-function renderQualityReport(report) {
+function renderQualityReport(report, knowledgeReadiness = null) {
   const metrics = report.metrics || {};
   const issues = Array.isArray(report.issues) ? report.issues : [];
   const recommendations = Array.isArray(report.recommendations) ? report.recommendations : [];
@@ -809,6 +810,7 @@ function renderQualityReport(report) {
       <div><span>多源冲突</span><b>${multiSourceConflict}</b></div>
       <div><span>待办归属风险</span><b>${ownerRisk}</b></div>
     </div>
+    ${renderKnowledgeReadiness(knowledgeReadiness)}
     ${renderSummaryEvidence(report.summaryEvidence)}
     ${renderMultiSourceConflicts(report.multiSourceConflicts)}
     ${renderSourceCoverage(report.sourceCoverage)}
@@ -832,6 +834,175 @@ function renderQualityReport(report) {
       </div>
     ` : ""}
   `;
+}
+
+function renderKnowledgeReadiness(readiness) {
+  if (!readiness) return "";
+  const blockers = Array.isArray(readiness.blockers) ? readiness.blockers : [];
+  const warnings = Array.isArray(readiness.reviewWarnings) ? readiness.reviewWarnings : [];
+  const notes = Array.isArray(readiness.notes) ? readiness.notes : [];
+  const evidence = readiness.reviewEvidence || {};
+  const evidenceItems = knowledgeReviewEvidenceItems(evidence);
+  const hasReview = blockers.length || warnings.length || notes.length || evidenceItems.length;
+  const status = readiness.status || (readiness.canIndex ? "ready" : "hold");
+  return `
+    <div class="knowledge-readiness ${escapeAttr(status)}">
+      <div class="knowledge-readiness-head">
+        <div>
+          <b>知识入库复核</b>
+          <span>${escapeHtml(knowledgeReadinessStatusLabel(status))}</span>
+        </div>
+        <small>${escapeHtml(readiness.canIndex === false ? "暂缓自动入库" : "可按风险标记入库")}</small>
+      </div>
+      ${!hasReview ? "<p class='hint'>当前没有明显入库阻塞或人工复核项。</p>" : ""}
+      ${blockers.length || warnings.length ? `
+        <div class="knowledge-readiness-tags">
+          ${blockers.map((item) => `<span class="blocker">${escapeHtml(knowledgeIssueLabel(item))}</span>`).join("")}
+          ${warnings.map((item) => `<span>${escapeHtml(knowledgeIssueLabel(item))}</span>`).join("")}
+        </div>
+      ` : ""}
+      ${notes.length ? `
+        <div class="knowledge-readiness-notes">
+          ${notes.slice(0, 3).map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+        </div>
+      ` : ""}
+      ${evidenceItems.length ? `
+        <div class="knowledge-review-list">
+          ${evidenceItems.slice(0, 10).map(renderKnowledgeReviewEvidenceItem).join("")}
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function knowledgeReviewEvidenceItems(evidence) {
+  const items = [];
+  const addItems = (type, list) => {
+    (Array.isArray(list) ? list : []).forEach((item) => items.push({ type, item }));
+  };
+  addItems("multi_source_conflict", evidence.multiSourceConflicts);
+  addItems("source_coverage", evidence.sourceCoverageWeakSegments);
+  addItems("speaker", evidence.speakerEvidence);
+  addItems("speaker_alias", evidence.speakerAliasConflicts);
+  addItems("summary", evidence.summaryClaims);
+  addItems("action", evidence.actionEvidence);
+  return items;
+}
+
+function renderKnowledgeReviewEvidenceItem(entry) {
+  const item = entry.item || {};
+  const type = entry.type || "";
+  const { title, detail, className } = knowledgeReviewEvidenceText(type, item);
+  return `
+    <article class="knowledge-review-item ${escapeAttr(className)}">
+      <b>${escapeHtml(title)}</b>
+      ${detail ? `<p>${escapeHtml(detail)}</p>` : ""}
+      ${renderKnowledgeReviewEvidenceRefs(type, item)}
+    </article>
+  `;
+}
+
+function renderKnowledgeReviewEvidenceRefs(type, item) {
+  if (type === "source_coverage") {
+    return `
+      <div class="summary-evidence-refs">
+        <span>${escapeHtml(sourceConflictLabel(item))} · ${escapeHtml(formatTime(item.start_ms || 0))} - ${escapeHtml(formatTime(item.end_ms || 0))} · 转写 ${Number(item.transcript_segment_count || 0)} 段</span>
+        ${renderEvidenceJumpButton(item)}
+      </div>
+    `;
+  }
+  if (type === "speaker_alias") {
+    return `<div class="summary-evidence-refs"><span>${escapeHtml((item.speaker_ids || []).join(" / ") || "多个 speaker_id")}</span></div>`;
+  }
+  if (type === "summary" && Array.isArray(item.evidence)) {
+    return renderSummaryEvidenceRefs(item.evidence);
+  }
+  if (type === "action") {
+    const evidence = Array.isArray(item.evidence) && item.evidence.length
+      ? item.evidence
+      : item.suggested_owner_evidence;
+    return renderSummaryEvidenceRefs(evidence || []);
+  }
+  return renderSummaryEvidenceRefs([item]);
+}
+
+function knowledgeReviewEvidenceText(type, item) {
+  if (type === "multi_source_conflict") {
+    return {
+      title: `多源冲突：${sourceConflictLabel(item)}`,
+      detail: `${formatTime(item.start_ms || 0)} ${item.speaker || "发言人"}：${item.text || ""}`,
+      className: "conflict",
+    };
+  }
+  if (type === "source_coverage") {
+    return {
+      title: `音频覆盖不足：${sourceConflictLabel(item)}`,
+      detail: item.sample || "该录音分段当前缺少足够转写文本，建议回听或重转写。",
+      className: "blocker",
+    };
+  }
+  if (type === "speaker") {
+    return {
+      title: `发言人待复核：${item.speaker || item.display_name || item.speaker_id || "待识别"}`,
+      detail: item.reason || item.text || "该发言人由模型或上下文推断，建议人工确认。",
+      className: "warning",
+    };
+  }
+  if (type === "speaker_alias") {
+    return {
+      title: `同名多标签：${item.display_name || "同名发言人"}`,
+      detail: "同一显示名对应多个原始说话人标签，入库前建议合并口径。",
+      className: "warning",
+    };
+  }
+  if (type === "summary") {
+    return {
+      title: `纪要复核：${item.claim || "待核对要点"}`,
+      detail: summaryEvidenceStatusLabel(item.status),
+      className: summaryEvidenceStatusClass(item.status),
+    };
+  }
+  if (type === "action") {
+    return {
+      title: `待办复核：${item.task || "待办事项"}`,
+      detail: `${actionEvidenceStatusLabel(item.status)}${item.owner ? ` · 负责人：${item.owner}` : ""}${item.reason ? ` · ${item.reason}` : ""}`,
+      className: item.status === "conflict" ? "conflict" : "warning",
+    };
+  }
+  return {
+    title: "复核项",
+    detail: "",
+    className: "warning",
+  };
+}
+
+function knowledgeReadinessStatusLabel(status) {
+  return {
+    ready: "可入库",
+    review_first: "先复核再入库",
+    hold: "暂缓入库",
+  }[status] || "先复核再入库";
+}
+
+function knowledgeIssueLabel(type) {
+  return {
+    empty_transcript: "转写为空",
+    generic_owner: "泛化负责人",
+    unsupported_action_evidence: "待办缺证据",
+    summary_evidence_weak: "纪要证据弱",
+    source_segment_coverage_weak: "音频覆盖不足",
+    speaker_review: "发言人需确认",
+    speaker_evidence_weak: "发言人证据弱",
+    speaker_alias_conflict: "同名多标签",
+    weak_action_owner_evidence: "负责人证据弱",
+    multi_source_conflict: "多源冲突",
+    summary_multisource_conflict: "纪要含冲突",
+    owner_over_concentrated: "负责人过集中",
+    candidate_people_not_speakers: "候选人未成发言人",
+    long_segment: "长段落",
+    mixed_speaker_markers: "混合发言",
+    single_speaker: "单一发言人",
+  }[type] || type || "复核项";
 }
 
 function renderMultiSourceConflicts(conflicts) {
@@ -932,13 +1103,25 @@ function renderSummaryEvidence(summaryEvidence) {
 function summaryEvidenceStatusClass(status) {
   if (status === "conflict") return "conflict";
   if (status === "majority") return "majority";
+  if (status === "unsupported") return "unsupported";
   return "supported";
 }
 
 function summaryEvidenceStatusLabel(status) {
   if (status === "conflict") return "纪要多源冲突待核对";
   if (status === "majority") return "纪要多数源确认";
+  if (status === "unsupported") return "纪要缺少转写依据";
   return "纪要有依据";
+}
+
+function actionEvidenceStatusLabel(status) {
+  return {
+    supported: "有转写依据",
+    majority: "多数源确认",
+    conflict: "多源冲突待核对",
+    weak_owner: "负责人证据弱",
+    unsupported: "缺转写证据",
+  }[status] || "待核对";
 }
 
 function renderSummaryEvidenceRefs(evidence) {
@@ -1238,15 +1421,9 @@ function jumpToTranscriptEvidence(button) {
     : sourceId
       ? $(`#transcriptList .transcript-row[data-source-id="${cssEscape(sourceId)}"][data-source-segment="${cssEscape(sourceSegment)}"]`)
       : $(`#transcriptList .transcript-row[data-source-segment="${cssEscape(sourceSegment)}"]`);
-  if (!target && sourceSegment) {
-    selectMeeting(state.selectedMeetingId).then(() => {
-      requestAnimationFrame(() => jumpToTranscriptEvidence(button));
-    });
-    return;
-  }
   if (!target) {
     $("#transcriptWorkspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    toast("已切换到对应音频分段，请在转写列表中查看");
+    toast(sourceSegment ? "该音频分段暂缺可定位转写，请回听录音或重新转写" : "未找到对应转写段落");
     return;
   }
   target.scrollIntoView({ behavior: "smooth", block: "center" });
