@@ -1198,7 +1198,9 @@ def _rule_refine_residual_mixed_segments(segments: list[dict]) -> list[dict]:
     refined: list[dict] = []
     for segment in segments:
         text = str(segment.get("text") or "")
-        if _speaker_marker_count(text) < 2:
+        has_multiple_markers = _speaker_marker_count(text) >= 2
+        has_inline_response = bool(_split_inline_addressed_response(segment))
+        if not has_multiple_markers and not has_inline_response:
             refined.append(segment)
             continue
         split = _rule_refine_segments([segment])

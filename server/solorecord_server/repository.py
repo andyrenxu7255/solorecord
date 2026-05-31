@@ -270,7 +270,7 @@ def build_quality_report(
     ]
     possible_mixed_segments = [
         item for item in segments
-        if _speaker_marker_count(str(item.get("text") or "")) >= 2
+        if _looks_like_unresolved_mixed_segment(str(item.get("text") or ""))
     ]
     llm_segments = sum(
         1
@@ -860,6 +860,33 @@ def _speaker_marker_count(text: str) -> int:
         len(pattern.findall(text)),
         len(addressed.findall(text)) + len(ownership.findall(text)),
     )
+
+
+def _looks_like_unresolved_mixed_segment(text: str) -> bool:
+    value = str(text or "")
+    if _speaker_marker_count(value) >= 2:
+        return True
+    return _has_inline_addressed_response(value)
+
+
+def _has_inline_addressed_response(text: str) -> bool:
+    value = str(text or "")
+    if not value:
+        return False
+    addressed = re.compile(
+        r"(?:^|[\s，,。！？!?；;、])"
+        r"([\u4e00-\u9fa5A-Za-z][\u4e00-\u9fa5A-Za-z0-9·]{1,5})"
+        r"(?:你|您)(?:先|再|来|把|帮|看|说|讲|分享|确认|负责|处理|弄|搞|发|补|改|调|那|这)"
+    )
+    response = re.compile(
+        r"(?:好的?|可以|行|没问题)?[\s，,、。！？!?；;]*"
+        r"(?:我这边|我们这边|我来|我负责|我们负责|我准备|我已经|我们已经|"
+        r"我先|我们先|我会|我们会|这块我|这边我|这部分我|这部分我们)"
+    )
+    match = addressed.search(value)
+    if not match:
+        return False
+    return bool(response.search(value[match.end() :]))
 
 
 def _is_generic_owner(owner: str) -> bool:

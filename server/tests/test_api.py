@@ -4395,6 +4395,73 @@ def test_llm_residual_rule_refinement_splits_mixed_callout_segment() -> None:
     assert all(float(item["confidence"]) <= 0.74 for item in split)
 
 
+def test_llm_residual_rule_refinement_splits_inline_addressed_response() -> None:
+    import solorecord_server.processing as processing
+
+    refined = [
+        {
+            "speaker_id": "SPEAKER_01",
+            "display_name": "主持人",
+            "start_ms": 0,
+            "end_ms": 18000,
+            "text": (
+                "翼天你先说一下错误样例和自动测试。"
+                "我这边准备了三个错误样例，自动测试明天能补完。"
+            ),
+            "confidence": 0.82,
+            "flags": ["llm_refined", "semantic_llm"],
+        }
+    ]
+
+    split = processing._rule_refine_residual_mixed_segments(refined)
+
+    assert [item["display_name"] for item in split] == ["主持人", "翼天"]
+    assert split[0]["speaker_id"] == "SPEAKER_01"
+    assert split[1]["speaker_id"] == "MANUAL_翼天"
+    assert "inline_address_prompt" in split[0]["flags"]
+    assert "inline_addressed_response" in split[1]["flags"]
+    assert "llm_residual_rule_refined" in split[1]["flags"]
+    assert "speaker_review" in split[1]["flags"]
+    assert split[1]["text"].startswith("我这边准备")
+
+
+def test_quality_report_flags_inline_addressed_response_as_mixed_segment() -> None:
+    import solorecord_server.repository as repository
+
+    report = repository.build_quality_report(
+        [
+            {
+                "id": "seg_inline_mixed_1",
+                "meeting_id": "meeting_inline_mixed",
+                "version": 1,
+                "source_id": "primary",
+                "source_segment_no": 1,
+                "speaker_id": "SPEAKER_01",
+                "display_name": "主持人",
+                "start_ms": 0,
+                "end_ms": 18000,
+                "text": (
+                    "翼天你先说一下错误样例和自动测试。"
+                    "我这边准备了三个错误样例，自动测试明天能补完。"
+                ),
+                "confidence": 0.82,
+                "flags": '["semantic_llm"]',
+                "created_at": "now",
+            }
+        ],
+        [],
+        [],
+        "",
+        "",
+    )
+
+    assert report["metrics"]["mixed_marker_segment_count"] == 1
+    assert any(
+        item["type"] == "mixed_speaker_markers"
+        for item in report["issues"]
+    )
+
+
 def test_release_schema_migrates_existing_apk_table(tmp_path: Path) -> None:
     os.environ["SOLO_DATA_DIR"] = str(tmp_path / "var")
     os.environ["SOLO_DATABASE_PATH"] = str(tmp_path / "var" / "legacy.db")

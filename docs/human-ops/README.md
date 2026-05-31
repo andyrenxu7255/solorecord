@@ -263,7 +263,7 @@ SoloRecord 会把说话人拆分分成三层处理：
 
 1. 优先使用 ASR 返回的原生说话人字段，例如 `speaker_id`、`speaker`、`spk`、`spk_id`、`speakerLabel`。
 2. 如果 ASR 只返回整段文本、单一发言人，或虽有多个原生 speaker 但出现“某某你先说”“某某你那个部分”“我这边负责”“某某负责/确认/后面看”等上下文线索，服务端会调用已配置的 LLM，对转写做语义重分段，并根据上下文、姓名前缀、冒号、任务归属、议题延续和指代关系推断发言人。
-3. 如果 LLM 返回后仍残留明显的多人点名长段，例如“某某说/某某：/某某你先说/某某后面看”，服务端会再做一次规则细拆，并给这些段落保留 `speaker_review`。
+3. 如果 LLM 返回后仍残留明显的多人点名长段，例如“某某说/某某：/某某你先说/某某后面看”，服务端会再做一次规则细拆，并给这些段落保留 `speaker_review`。单个被点名人后紧跟“我这边/我负责/我会”等回应时，也会拆成主持人点名和被点名人回应两个段落。
 4. 如果 LLM 不可用，服务端会用轻量规则识别“张三说”“李四：”这类明确标记，也会对“被点名后下一段以我这边/我负责回应”、“同一 ASR 段里没有标点地连着某某你先说和我这边回应”，以及“没有我字但继续同一议题、交付物、时间节点”的场景做保守归属，至少把明显多人段拆开。
 
 配置开关：
@@ -835,7 +835,8 @@ SoloRecord handles speaker splitting in three layers:
 
 1. Prefer native speaker fields returned by ASR, such as `speaker_id`, `speaker`, `spk`, `spk_id`, or `speakerLabel`.
 2. If ASR returns only plain text, a single speaker, or contextual call-outs, the server calls the configured LLM to re-segment the transcript and infer speakers from names, colons, task ownership, topic continuation, references, and surrounding context.
-3. If the LLM is unavailable, the server uses lightweight rules for clear markers such as “Alice said” or “Bob:”. It also conservatively handles a named call-out followed by first-person replies or same-topic deliverable/deadline updates, while keeping review flags because this is not voiceprint confirmation.
+3. After the LLM returns, the server still runs a residual split pass. If one row still contains “Alice said/Bob:/Alice please cover” style mixed turns, or one named call-out followed by a same-row reply such as “I will handle it”, it splits those turns and keeps `speaker_review`.
+4. If the LLM is unavailable, the server uses lightweight rules for clear markers such as “Alice said” or “Bob:”. It also conservatively handles a named call-out followed by first-person replies or same-topic deliverable/deadline updates, while keeping review flags because this is not voiceprint confirmation.
 
 Configuration switch:
 
