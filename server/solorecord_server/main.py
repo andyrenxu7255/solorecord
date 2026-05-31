@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from concurrent.futures import ThreadPoolExecutor
 import json
 import sqlite3
 from pathlib import Path
@@ -27,6 +28,7 @@ from .config import get_settings
 from .db import get_db, init_db
 from .exports import create_export
 from .processing import enqueue_transcription, process_uploaded_segment
+from .processing import process_transcription_job
 from .repository import (
     list_documents_for_external,
     list_documents_for_user,
@@ -53,6 +55,7 @@ from .utils import new_id, now_iso, row_to_dict, sha256_file
 
 app = FastAPI(title="SoloRecord Internal API", version="0.7.0")
 settings = get_settings()
+job_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="solorecord-job")
 
 SUPPORTED_RELEASE_PLATFORMS = {"android", "windows", "macos", "ios", "harmony"}
 PLATFORM_FILE_NAMES = {
@@ -660,7 +663,7 @@ def finish_meeting(meeting_id: str, user: CurrentUser) -> dict:
     if existing_job:
         audit(user["id"], "meeting.finish.retry", "meeting", meeting_id, {"job_id": existing_job["id"]})
         return {"meetingId": meeting_id, "jobId": existing_job["id"], "reused": True}
-    job_id = enqueue_transcription(meeting_id)
+    job_id = _enqueue_background_transcription(meeting_id)
     audit(user["id"], "meeting.finish", "meeting", meeting_id, {"job_id": job_id})
     return {"meetingId": meeting_id, "jobId": job_id, "reused": False}
 
@@ -669,7 +672,7 @@ def finish_meeting(meeting_id: str, user: CurrentUser) -> dict:
 @app.post("/api/web/meetings/{meeting_id}/process")
 def process_meeting(meeting_id: str, user: CurrentUser) -> dict:
     _assert_access(meeting_id, user, write=True)
-    job_id = enqueue_transcription(meeting_id)
+    job_id = _enqueue_background_transcription(meeting_id)
     audit(user["id"], "meeting.process", "meeting", meeting_id, {"job_id": job_id})
     return {"jobId": job_id}
 
@@ -1179,9 +1182,15 @@ def retry_job(job_id: str, user: CurrentUser) -> dict:
         job = db.execute("SELECT * FROM processing_jobs WHERE id = ?", (job_id,)).fetchone()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    new_job = enqueue_transcription(job["meeting_id"], job["asr_provider"])
+    new_job = _enqueue_background_transcription(job["meeting_id"], job["asr_provider"])
     audit(user["id"], "job.retry", "job", job_id, {"new_job": new_job})
     return {"jobId": new_job}
+
+
+def _enqueue_background_transcription(meeting_id: str, asr_provider: str | None = None) -> str:
+    job_id = enqueue_transcription(meeting_id, asr_provider, run_inline=False)
+    job_executor.submit(process_transcription_job, job_id)
+    return job_id
 
 
 def _assert_access(meeting_id: str, user: dict, write: bool = False) -> None:

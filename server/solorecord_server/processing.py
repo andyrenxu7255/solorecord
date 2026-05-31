@@ -20,7 +20,12 @@ from .transcripts import archive_transcript_rows
 from .utils import new_id, now_iso
 
 
-def enqueue_transcription(meeting_id: str, asr_provider: str | None = None) -> str:
+def enqueue_transcription(
+    meeting_id: str,
+    asr_provider: str | None = None,
+    *,
+    run_inline: bool = True,
+) -> str:
     settings = get_settings()
     job_id = new_id("job")
     provider = asr_provider or _current_asr_provider(settings.asr_provider)
@@ -37,7 +42,8 @@ def enqueue_transcription(meeting_id: str, asr_provider: str | None = None) -> s
             "UPDATE meetings SET status = 'queued', updated_at = ? WHERE id = ?",
             (now_iso(), meeting_id),
         )
-    process_transcription_job(job_id)
+    if run_inline:
+        process_transcription_job(job_id)
     return job_id
 
 

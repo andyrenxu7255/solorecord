@@ -1,6 +1,7 @@
 import importlib
 import json
 import os
+import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
@@ -99,6 +100,22 @@ def parse_flags(value) -> list[str]:
             return [str(item) for item in parsed]
         return [str(parsed)]
     return [str(value)] if value else []
+
+
+def wait_for_job(client: TestClient, meeting_id: str, headers: dict, timeout_seconds: float = 5) -> dict:
+    deadline = time.monotonic() + timeout_seconds
+    last_payload: dict = {}
+    while time.monotonic() < deadline:
+        response = client.get(f"/api/web/meetings/{meeting_id}/status", headers=headers)
+        assert response.status_code == 200
+        last_payload = response.json()
+        job = last_payload.get("job") or {}
+        if job.get("status") in {"succeeded", "succeeded_with_publish_warning"}:
+            return last_payload
+        if job.get("status") == "failed":
+            raise AssertionError(job.get("error_message") or job)
+        time.sleep(0.02)
+    raise AssertionError(f"job did not finish: {last_payload}")
 
 
 def login_named_user(client: TestClient, name: str, email: str) -> dict:
@@ -6611,6 +6628,10 @@ def test_full_user_story_permissions_sync_export_and_release(tmp_path: Path) -> 
     assert finish_retry.status_code == 200
     assert finish_retry.json()["jobId"] == finish_data["jobId"]
     assert finish_retry.json()["reused"] is True
+    status_after_finish = client.get(f"/api/web/meetings/{meeting_id}/status", headers=headers)
+    assert status_after_finish.status_code == 200
+    assert status_after_finish.json()["job"]["status"] in {"queued", "running", "succeeded"}
+    wait_for_job(client, meeting_id, headers)
 
     transcript = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers)
     assert transcript.status_code == 200
@@ -6880,3 +6901,56 @@ def test_full_user_story_permissions_sync_export_and_release(tmp_path: Path) -> 
     )
     assert admin_trim.status_code == 200
     assert len(admin_trim.json()["segments"]) == 1
+
+
+def test_finish_returns_before_background_transcription_completes(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "后台处理验证"}, headers=headers)
+    assert create.status_code == 200
+    meeting_id = create.json()["meeting"]["id"]
+    upload = client.post(
+        f"/api/mobile/meetings/{meeting_id}/segments",
+        headers=headers,
+        data={"segment_no": "1", "start_ms": "0", "end_ms": "1000", "duration_ms": "1000"},
+        files={"file": ("part.wav", b"fake audio", "audio/wav")},
+    )
+    assert upload.status_code == 200
+
+    import solorecord_server.db as db
+    import solorecord_server.main as main
+
+    submitted: list[str] = []
+
+    class DelayedExecutor:
+        def submit(self, fn, job_id):
+            submitted.append(job_id)
+            return None
+
+    original_executor = main.job_executor
+    main.job_executor = DelayedExecutor()
+    try:
+        finish = client.post(f"/api/mobile/meetings/{meeting_id}/finish", headers=headers)
+    finally:
+        main.job_executor = original_executor
+
+    assert finish.status_code == 200
+    finish_data = finish.json()
+    assert finish_data["reused"] is False
+    assert submitted == [finish_data["jobId"]]
+    with db.get_db() as conn:
+        job = conn.execute(
+            "SELECT status FROM processing_jobs WHERE id=?",
+            (finish_data["jobId"],),
+        ).fetchone()
+        meeting = conn.execute(
+            "SELECT status FROM meetings WHERE id=?",
+            (meeting_id,),
+        ).fetchone()
+    assert job["status"] == "queued"
+    assert meeting["status"] == "queued"
+
+    retry = client.post(f"/api/mobile/meetings/{meeting_id}/finish", headers=headers)
+    assert retry.status_code == 200
+    assert retry.json()["jobId"] == finish_data["jobId"]
+    assert retry.json()["reused"] is True

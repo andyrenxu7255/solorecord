@@ -5,6 +5,7 @@ import json
 import math
 import struct
 import sys
+import time
 import uuid
 import wave
 from pathlib import Path
@@ -18,10 +19,12 @@ def main() -> int:
     parser.add_argument("--external-token", default="test-token")
     parser.add_argument("--email", default="admin@example.com")
     parser.add_argument("--name", default="Smoke Admin")
+    parser.add_argument("--timeout", type=float, default=30)
+    parser.add_argument("--job-timeout", type=float, default=300)
     args = parser.parse_args()
 
     base_url = args.base_url.rstrip("/")
-    client = httpx.Client(base_url=base_url, timeout=30, follow_redirects=True, trust_env=False)
+    client = httpx.Client(base_url=base_url, timeout=args.timeout, follow_redirects=True, trust_env=False)
 
     health = client.get("/api/health")
     expect(health, 200, "health")
@@ -101,6 +104,7 @@ def main() -> int:
     expect(retry_finish, 200, "finish retry reuses job")
     assert retry_finish.json()["jobId"] == finish_payload["jobId"]
     assert retry_finish.json()["reused"] is True
+    wait_for_job(client, headers, meeting_id, args.job_timeout)
 
     transcript = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers)
     expect(transcript, 200, "transcript")
@@ -185,7 +189,7 @@ def main() -> int:
     assert external.json()["items"], "expected external meeting items"
 
     smoke_run_id = uuid.uuid4().hex[:8].upper()
-    multi = _run_multi_source_story(client, headers, smoke_run_id)
+    multi = _run_multi_source_story(client, headers, smoke_run_id, args.external_token, args.job_timeout)
 
     print(
         json.dumps(
@@ -220,6 +224,8 @@ def _run_multi_source_story(
     client: httpx.Client,
     owner_headers: dict[str, str],
     run_id: str,
+    external_token: str,
+    job_timeout: float,
 ) -> dict:
     join_code = f"SMK{run_id}"
     user_login = client.post(
@@ -302,6 +308,7 @@ def _run_multi_source_story(
 
     finish = client.post(f"/api/mobile/meetings/{meeting_id}/finish", headers=owner_headers)
     expect(finish, 200, "multi-source finish")
+    wait_for_job(client, owner_headers, meeting_id, job_timeout)
 
     detail = client.get(f"/api/web/meetings/{meeting_id}", headers=owner_headers)
     expect(detail, 200, "multi-source detail")
@@ -312,7 +319,7 @@ def _run_multi_source_story(
 
     external = client.get(
         f"/api/external/meetings/{meeting_id}/transcript?include_history=true",
-        headers={"Authorization": "Bearer test-token"},
+        headers={"Authorization": f"Bearer {external_token}"},
     )
     expect(external, 200, "multi-source external transcript")
     transcript = external.json()["transcript"]
@@ -324,6 +331,28 @@ def _run_multi_source_story(
 def expect(response: httpx.Response, status_code: int, label: str) -> None:
     if response.status_code != status_code:
         raise AssertionError(f"{label}: expected HTTP {status_code}, got {response.status_code}: {response.text[:500]}")
+
+
+def wait_for_job(
+    client: httpx.Client,
+    headers: dict[str, str],
+    meeting_id: str,
+    timeout_seconds: float,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    last_payload: dict = {}
+    while time.monotonic() < deadline:
+        response = client.get(f"/api/web/meetings/{meeting_id}/status", headers=headers)
+        expect(response, 200, "meeting job status")
+        last_payload = response.json()
+        job = last_payload.get("job") or {}
+        status = job.get("status")
+        if status in {"succeeded", "succeeded_with_publish_warning"}:
+            return
+        if status == "failed":
+            raise AssertionError(f"job failed: {job.get('error_message') or job}")
+        time.sleep(2)
+    raise AssertionError(f"job did not finish within {timeout_seconds}s: {last_payload}")
 
 
 if __name__ == "__main__":
