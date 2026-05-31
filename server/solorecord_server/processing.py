@@ -871,12 +871,28 @@ def _segment_start_delta_ms(left: dict, right: dict) -> int:
 def _segments_have_critical_fact_conflict(left: dict, right: dict) -> bool:
     left_facts = _critical_fact_sets(str(left.get("text") or ""))
     right_facts = _critical_fact_sets(str(right.get("text") or ""))
-    for key in ("date", "day_part", "amount", "owner"):
+    if _date_facts_conflict(left_facts.get("date", set()), right_facts.get("date", set())):
+        return True
+    for key in ("day_part", "amount", "owner"):
         left_values = left_facts.get(key, set())
         right_values = right_facts.get(key, set())
         if left_values and right_values and not left_values & right_values:
             return True
     return False
+
+
+def _date_facts_conflict(left_values: set[str], right_values: set[str]) -> bool:
+    if not left_values or not right_values:
+        return False
+    if not left_values & right_values:
+        return True
+    weak_shared_dates = {"今天", "昨天", "本周", "下周"}
+    left_only = left_values - right_values
+    right_only = right_values - left_values
+    if not left_only or not right_only:
+        return False
+    shared = left_values & right_values
+    return shared <= weak_shared_dates
 
 
 def _critical_fact_sets(text: str) -> dict[str, set[str]]:
@@ -1753,12 +1769,15 @@ _ADDRESSED_SPEAKER_PATTERNS = [
 
 
 def _remove_address_prefix(text: str, speaker: str) -> str:
+    address_words = (
+        r"你|您|那个部分|这个部分|的部分|那块|这块|那边|这边|部分|"
+        r"那个|这个|后面|后续|回头|稍后|之后|先|再|来|把|帮|看|"
+        r"说|讲|分享|确认|负责|处理|弄|搞|发|补|改|调|一下|下|那|这"
+    )
     pattern = (
         r"^[\s，,。！？!?；;、]*"
         + re.escape(speaker)
-        + r"(?:你|您)?(?:那个部分|这个部分|的部分|那块|这块|那边|这边|部分|"
-        r"后面|后续|回头|稍后|之后|先|再|来|把|帮|看|说|讲|分享|确认|负责|"
-        r"处理|弄|搞|发|补|改|调|那|这)?[，,、：:\s]*"
+        + rf"(?:(?:{address_words}))*[，,、：:\s]*"
     )
     return re.sub(pattern, "", text, count=1).strip()
 
@@ -1770,6 +1789,16 @@ def _clean_addressed_speaker(name: str) -> str:
         str(name or ""),
     )
     value = re.sub(r"^(?:然后|接下来|请)", "", value)
+    value = re.sub(
+        r"(今天|明天|后天|昨天|本周|下周|月底|月初|周[一二三四五六日天]|\d{1,2}月|\d{1,2}[日号]).*$",
+        "",
+        value,
+    )
+    value = re.sub(
+        r"(?:负责|跟进|处理|确认|补充|准备|整理|输出|完成|推进|看|改|发|做|搞).*$",
+        "",
+        value,
+    )
     if len(value) > 2 and value.startswith("那"):
         value = value[1:]
     if len(value) > 3 and value.startswith(("这个", "那个")):
@@ -1810,9 +1839,51 @@ def _is_rule_speaker_stopword(name: str) -> bool:
         "待办",
     }:
         return True
+    if _looks_like_due_time_phrase(name):
+        return True
     if _looks_like_rule_topic_phrase(name):
         return True
     return False
+
+
+def _looks_like_due_time_phrase(name: str) -> bool:
+    value = re.sub(r"\s+", "", str(name or "").strip())
+    if not value:
+        return False
+    if value in {
+        "今天",
+        "明天",
+        "后天",
+        "昨天",
+        "今晚",
+        "明晚",
+        "上午",
+        "下午",
+        "晚上",
+        "早上",
+        "中午",
+        "下班前",
+        "会前",
+        "会后",
+        "会中",
+        "本周",
+        "下周",
+        "月底",
+        "月初",
+        "年前",
+        "年后",
+    }:
+        return True
+    return bool(
+        re.fullmatch(
+            r"(?:(?:今天|明天|后天|昨天)?(?:上午|下午|晚上|早上|中午)|"
+            r"(?:本周|下周)?周[一二三四五六日天](?:前|后|之前|以前|之后|左右)?|"
+            r"(?:本周|下周|月底|月初|年前|年后)(?:前|后|之前|以前|之后|左右)?|"
+            r"\d{1,2}月\d{1,2}[日号]?(?:前|后|之前|以前|之后|左右)?|"
+            r"\d{1,2}[日号](?:前|后|之前|以前|之后|左右)?)",
+            value,
+        )
+    )
 
 
 def _looks_like_rule_topic_phrase(name: str) -> bool:
@@ -2215,13 +2286,12 @@ def _normalize_action_owners(actions: list[dict], segments: list[dict]) -> list[
         item = dict(action)
         owner = str(item.get("owner") or "").strip()
         task = str(item.get("task") or "")
+        generic_owner = _is_generic_owner(owner)
         replacement = ""
         if _is_pronoun_owner(owner):
             replacement = _infer_owner_from_pronoun(owner, task, segments)
-        if not replacement and (
-            _is_generic_owner(owner) or _owner_overrides_context(owner, task, context_hints)
-        ):
-            query = " ".join(part for part in [owner, task] if part)
+        if not replacement and (generic_owner or _owner_overrides_context(owner, task, context_hints)):
+            query = task if generic_owner else " ".join(part for part in [owner, task] if part)
             replacement = _infer_owner_from_context(query, context_hints, excluded_owner=owner)
             if not replacement:
                 replacement = _infer_owner_from_task(query, owner_aliases)
@@ -2427,10 +2497,18 @@ def _owner_context_candidates(segments: list[dict]) -> dict[str, dict]:
         for name in candidates:
             if not name or name == speaker or name not in text:
                 continue
+            if name in ORG_OWNER_TERMS:
+                continue
             mention_windows = _mention_windows(text, name)
             for window_text in mention_windows:
                 boost = 3 if _has_owner_assignment(window_text, name) else 1
                 _add_owner_context(candidates[name], window_text, speaker_boost=boost)
+        for owner, window_text in _org_owner_assignment_windows(text).items():
+            item = candidates.setdefault(
+                owner,
+                {"score": 1, "keywords": set(), "mentions": []},
+            )
+            _add_owner_context(item, window_text, speaker_boost=4)
     return candidates
 
 
@@ -2487,10 +2565,50 @@ def _org_owners_in_text(text: str) -> set[str]:
     owners: set[str] = set()
     value = str(text or "")
     for owner in ORG_OWNER_TERMS:
+        if _org_owner_is_task_phrase(owner, value):
+            continue
         escaped = re.escape(owner)
-        if re.search(rf"{escaped}(?:这边|那边|团队|部门|组)", value):
+        if re.search(
+            rf"{escaped}(?:这边|那边|团队|部门|组)?[^。！？!?；;\n\r]{{0,12}}"
+            rf"(?:负责|跟进|处理|确认|补充|准备|整理|输出|完成|推进|看|改|发|做|搞|检查)",
+            value,
+        ):
             owners.add(owner)
     return owners
+
+
+def _org_owner_assignment_windows(text: str) -> dict[str, str]:
+    windows: dict[str, str] = {}
+    value = str(text or "")
+    chunks = [
+        chunk.strip()
+        for chunk in re.split(r"[，,、。！？!?；;\n\r]+", value)
+        if chunk.strip()
+    ]
+    for chunk in chunks:
+        for owner in ORG_OWNER_TERMS:
+            if _org_owner_is_task_phrase(owner, chunk):
+                continue
+            escaped = re.escape(owner)
+            if re.search(
+                rf"{escaped}(?:这边|那边|团队|部门|组)?[^。！？!?；;\n\r]{{0,12}}"
+                rf"(?:负责|跟进|处理|确认|补充|准备|整理|输出|完成|推进|看|改|发|做|搞|检查)",
+                chunk,
+            ):
+                existing = windows.get(owner, "")
+                windows[owner] = " ".join(part for part in [existing, chunk] if part).strip()
+    return windows
+
+
+def _org_owner_is_task_phrase(owner: str, text: str) -> bool:
+    value = str(text or "")
+    if owner == "测试" and re.search(r"(自动测试|测试覆盖|回归测试|质量测试)", value):
+        return True
+    if owner == "数据" and re.search(r"(数据源|数据表|数据字段|数据同步)", value):
+        return True
+    if owner == "产品" and re.search(r"(产品化|产品页面|产品功能)", value):
+        return True
+    return False
 
 
 def _infer_owner_from_context(
@@ -2501,6 +2619,25 @@ def _infer_owner_from_context(
     task_tokens = set(_context_tokens(task))
     if not task_tokens:
         return ""
+    org_best_name = ""
+    org_best_score = 0
+    for name, hint in context_hints.items():
+        if name == excluded_owner or name not in ORG_OWNER_TERMS:
+            continue
+        mentions = [str(item) for item in hint.get("mentions") or [] if str(item)]
+        if not any(_has_owner_assignment(mention, name) for mention in mentions):
+            continue
+        mention_overlap = _best_context_overlap(task_tokens, mentions)
+        if mention_overlap <= 0:
+            continue
+        score = mention_overlap * 5 + int(hint.get("score") or 0) + 24
+        if name in task:
+            score += 8
+        if score > org_best_score:
+            org_best_name = name
+            org_best_score = score
+    if org_best_name:
+        return org_best_name
     best_name = ""
     best_score = 0
     for name, hint in context_hints.items():
@@ -2510,18 +2647,33 @@ def _infer_owner_from_context(
         overlap = task_tokens & keywords
         if not overlap:
             continue
-        score = len(overlap) * 4 + int(hint.get("score") or 0)
-        if _has_owner_assignment(" ".join(str(item) for item in hint.get("mentions") or []), name):
-            score += 6
+        mentions = [str(item) for item in hint.get("mentions") or [] if str(item)]
+        mention_overlap = _best_context_overlap(task_tokens, mentions)
+        score = mention_overlap * 5 + int(hint.get("score") or 0)
+        if mention_overlap < len(overlap):
+            score += min(len(overlap) - mention_overlap, 4)
+        has_assignment = any(_has_owner_assignment(mention, name) for mention in mentions)
+        if has_assignment:
+            score += 18
+            if name in ORG_OWNER_TERMS:
+                score += 6
         if name in task:
             score += 8
-        mention_text = " ".join(str(item) for item in hint.get("mentions") or [])
+        mention_text = " ".join(mentions)
         if any(token in mention_text for token in task_tokens):
             score += 2
         if score > best_score:
             best_name = name
             best_score = score
     return best_name if best_score >= 6 else ""
+
+
+def _best_context_overlap(task_tokens: set[str], mentions: list[str]) -> int:
+    best = 0
+    for mention in mentions:
+        mention_tokens = set(_context_tokens(mention))
+        best = max(best, len(task_tokens & mention_tokens))
+    return best
 
 
 def _owner_overrides_context(owner: str, task: str, context_hints: dict[str, dict]) -> bool:
@@ -2656,6 +2808,8 @@ def _is_context_stopword(token: str) -> bool:
 
 def _is_generic_owner(owner: str) -> bool:
     if not owner:
+        return True
+    if _is_generic_speaker_name(owner):
         return True
     if owner in ORG_OWNER_TERMS:
         return False

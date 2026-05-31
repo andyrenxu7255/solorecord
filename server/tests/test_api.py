@@ -1175,6 +1175,71 @@ def test_semantic_segmentation_rule_fallback_splits_addressed_speakers(tmp_path:
     assert "scenario:task_ownership" in refined[1]["flags"]
 
 
+def test_semantic_segmentation_does_not_promote_due_times_to_speakers(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "日期不是人名"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.processing as processing
+
+    segments = [
+        {
+            "speaker_id": "SPEAKER_01",
+            "display_name": "发言人 1",
+            "source_segment_no": 1,
+            "start_ms": 0,
+            "end_ms": 120000,
+            "text": (
+                "李波部分报价还差一版，今天下午发给销售；"
+                "赵敏负责合同，周五前确认审批意见。"
+            ),
+            "confidence": 0.82,
+            "flags": ["asr_speaker"],
+        }
+    ]
+
+    refined = processing._refine_segments(meeting_id, segments)
+
+    assert [item["display_name"] for item in refined] == ["李波", "赵敏"]
+    assert "今天下午" in refined[0]["text"]
+    assert "周五前" in refined[1]["text"]
+    assert all("今天" not in item["display_name"] for item in refined)
+    assert all("周五" not in item["display_name"] for item in refined)
+
+
+def test_semantic_segmentation_cleans_address_prefixes(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "点名前缀清理"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.processing as processing
+
+    segments = [
+        {
+            "speaker_id": "SPEAKER_01",
+            "display_name": "发言人 1",
+            "source_segment_no": 1,
+            "start_ms": 0,
+            "end_ms": 120000,
+            "text": (
+                "任旭你先说客户名单，客户名单今天定版，"
+                "围城你那个外接数据源，已经接上两个字段，周三前输出截图。"
+            ),
+            "confidence": 0.82,
+            "flags": ["asr_speaker"],
+        }
+    ]
+
+    refined = processing._refine_segments(meeting_id, segments)
+
+    assert [item["display_name"] for item in refined] == ["任旭", "围城"]
+    assert refined[0]["text"].startswith("客户名单")
+    assert refined[1]["text"].startswith("外接数据源")
+    assert "先说" not in refined[0]["text"]
+    assert "你那个" not in refined[1]["text"]
+    assert "周三前" in refined[1]["text"]
+
+
 def test_semantic_segmentation_refines_long_native_speaker_segments(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)
@@ -1343,7 +1408,7 @@ def test_semantic_segmentation_splits_inline_addressed_response_without_punctuat
     refined = processing._refine_segments(meeting_id, segments)
 
     assert [item["display_name"] for item in refined] == ["主持人", "翼天"]
-    assert refined[0]["text"] == "说一下错误样例和自动测试"
+    assert refined[0]["text"] == "错误样例和自动测试"
     assert refined[1]["text"] == "我这边准备了三个错误样例自动测试明天能补完"
     assert "inline_addressed_response" in refined[1]["flags"]
     assert "speaker_review" in refined[1]["flags"]
@@ -1843,6 +1908,30 @@ def test_action_owner_normalization_uses_department_owner_context() -> None:
     normalized = processing._normalize_action_owners(actions, segments)
 
     assert normalized[0]["owner"] == "销售"
+
+
+def test_action_owner_normalization_uses_compact_org_deadline_context() -> None:
+    import solorecord_server.processing as processing
+
+    actions = [
+        {"owner": "相关负责人", "task": "改登录页面并补自动化覆盖", "due": "下周一", "status": "open"},
+        {"owner": "待确认", "task": "确认合同条款并给审批意见", "due": "月底前", "status": "open"},
+    ]
+    segments = [
+        {
+            "display_name": "发言人 1",
+            "text": "产品这边负责整理需求，前端周三前改登录页面，测试下周一补自动化覆盖。",
+        },
+        {
+            "display_name": "发言人 2",
+            "text": "法务确认合同条款，月底前给审批意见。",
+        },
+    ]
+
+    normalized = processing._normalize_action_owners(actions, segments)
+
+    assert normalized[0]["owner"] == "前端"
+    assert normalized[1]["owner"] == "法务"
 
 
 def test_action_normalization_dedupes_tasks_and_statuses() -> None:
