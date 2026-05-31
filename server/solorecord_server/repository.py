@@ -1687,8 +1687,12 @@ def _graph_topic_mentions(transcript_segments, action_items) -> dict[str, dict]:
                 topic,
                 speaker_id,
                 {
+                    "segment_id": segment.get("id", ""),
+                    "source_id": segment.get("source_id") or "",
+                    "source_segment_no": segment.get("source_segment_no"),
                     "speaker": segment.get("display_name") or speaker_id,
                     "start_ms": int(segment.get("start_ms") or 0),
+                    "end_ms": int(segment.get("end_ms") or 0),
                     "text": _compact_snippet(str(segment.get("text") or ""), 90),
                 },
             )

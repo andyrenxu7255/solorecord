@@ -86,7 +86,7 @@ Authorization: Bearer replace-with-long-random-token
 
 响应包含当前转写版本、结构化段落、纯文本 `plain_text`、说话人映射、音频分段证据、待办、`searchText`、`qualityReport`、`knowledgeReadiness`、`knowledgeGraph`，以及可选历史归档 `history`。知识平台可以用当前段落生成知识条目，用历史归档做审计和冲突追溯。
 
-`knowledgeGraph` 是给人和外部 Agent 的辅助关系图，包含 meeting、speaker、topic、action、time 节点。topic 节点来自转写和待办文本的轻量抽取，用来连接“谁讨论了什么”“什么主题产生了哪些待办”“待办何时截止”。它只能辅助上下文衔接和可视化查阅，不能替代 `transcript.segments`、`qualityReport.speakerEvidence`、`qualityReport.actionEvidence` 这些证据层字段。
+`knowledgeGraph` 是给人和外部 Agent 的辅助关系图，包含 meeting、speaker、topic、action、time 节点。topic 节点来自转写和待办文本的轻量抽取，用来连接“谁讨论了什么”“什么主题产生了哪些待办”“待办何时截止”。topic 节点的 `evidence` 会保留 `segment_id`、`source_id`、`source_segment_no`、`start_ms`、`end_ms` 和原文片段。它只能辅助上下文衔接和可视化查阅，不能替代 `transcript.segments`、`qualityReport.speakerEvidence`、`qualityReport.actionEvidence` 这些证据层字段。
 
 `knowledgeReadiness` 是给外部 Agent 的入库建议：
 
@@ -259,8 +259,10 @@ extraction and history for audit/conflict tracing.
 `knowledgeGraph` is an auxiliary relationship graph for people and agents. It
 contains meeting, speaker, topic, action, and time nodes. Topic nodes are
 lightly extracted from transcript/action text and connect who discussed what,
-which topic produced which action, and when an action is due. It helps context
-bridging and visualization, but it does not replace evidence-layer fields such
+which topic produced which action, and when an action is due. Topic-node
+`evidence` keeps `segment_id`, `source_id`, `source_segment_no`, `start_ms`,
+`end_ms`, and the transcript snippet. It helps context bridging and
+visualization, but it does not replace evidence-layer fields such
 as `transcript.segments`, `qualityReport.speakerEvidence`, or
 `qualityReport.actionEvidence`.
 

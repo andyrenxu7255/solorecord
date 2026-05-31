@@ -229,7 +229,7 @@ Agent 验收时必须检查：
 - `qualityReport.metrics.speaker_evidence_weak_count` 应反映 LLM 发言人名称是否缺少原始 ASR 证据；该值大于 0 时应优先播放对应片段。
 - `qualityReport.speakerEvidence` 应包含需校对段落的 `segment_id`、`scenario_label`、`reason` 和相邻上下文；如果 Web 时间线没有显示这些信息，先修前端再做真实会议验收。
 - `qualityReport.metrics.speaker_alias_conflict_count` 应反映同一 `display_name` 是否对应多个 `speaker_id`。外部知识 Agent 应按 `knowledgeGraph.nodes[].speaker_ids` 保留追溯，不要把同名多标签当成多个人。
-- `knowledgeGraph.nodes` 应包含 `topic` 节点，`edges` 应包含“讨论主题”“讨论”“产生待办”“截止”等关系。外部知识 Agent 可以用 topic 连接上下文，但必须保留转写引用作为证据层。
+- `knowledgeGraph.nodes` 应包含 `topic` 节点，`edges` 应包含“讨论主题”“讨论”“产生待办”“截止”等关系。topic 节点的 `evidence` 必须携带 `segment_id`、`source_id`、`source_segment_no`、`start_ms`、`end_ms` 和原文片段，外部知识 Agent 可以用 topic 连接上下文，但必须保留转写引用作为证据层。
 - `qualityReport.metrics.action_evidence_coverage` 应反映待办是否有转写证据；`unsupported_action_count` 大于 0 时，前端应提示“待办缺少转写证据”，便于人工复核模型是否补写。
 - `qualityReport.metrics.source_segment_coverage` 和 `qualityReport.sourceCoverage.weakSegments` 应按 `(source_id, source_segment_no)` 反映每个上传音频分段是否被最终转写覆盖。`source_segment_coverage_weak` 是知识入库阻塞项，外部知识 Agent 不得把该会议视为完整证据。`multi_source_conflict_count` 大于 0 时也应保留人工复核状态。
 - 多源合并前应检查关键事实。若不同录音源在日期、数量或负责人上冲突，应保留多条 `multi_source_conflict` 证据，不得为了去重合并成单条结论。
@@ -672,7 +672,7 @@ Agent acceptance checks:
 - The Web timeline should surface review markers derived from `speaker_review`, `llm_refined`/`semantic_llm`, and `semantic_rule`.
 - `qualityReport.metrics.speaker_evidence_weak_count` should show whether LLM speaker names lack original ASR evidence. If it is above zero, play the affected segments first.
 - `qualityReport.metrics.speaker_alias_conflict_count` should show whether one `display_name` maps to multiple `speaker_id` values. External knowledge agents should use `knowledgeGraph.nodes[].speaker_ids` for traceability instead of treating same-name labels as separate people.
-- `knowledgeGraph.nodes` should include `topic` nodes, and `edges` should include “discussion topic”, “discussed”, “produced action”, and “due” relationships. External knowledge agents may use topics to bridge context, but transcript references remain the evidence layer.
+- `knowledgeGraph.nodes` should include `topic` nodes, and `edges` should include “discussion topic”, “discussed”, “produced action”, and “due” relationships. Topic-node `evidence` must include `segment_id`, `source_id`, `source_segment_no`, `start_ms`, `end_ms`, and the transcript snippet. External knowledge agents may use topics to bridge context, but transcript references remain the evidence layer.
 - `qualityReport.metrics.action_evidence_coverage` should show whether action items are grounded in transcript evidence. If `unsupported_action_count` is above zero, the Web UI should warn reviewers before the action list is shared.
 - `qualityReport.metrics.source_segment_coverage` and `qualityReport.sourceCoverage.weakSegments` should show whether each uploaded audio segment is covered by the final transcript, keyed by `(source_id, source_segment_no)`. `source_segment_coverage_weak` blocks knowledge ingestion. If `multi_source_conflict_count` is above zero, downstream agents should keep the meeting in human-review status.
 - Before merging multi-source evidence, check critical facts. If sources disagree on dates, amounts, or owners, keep separate `multi_source_conflict` evidence rows instead of deduplicating them into one conclusion.

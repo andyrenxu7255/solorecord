@@ -2813,6 +2813,38 @@ def test_knowledge_graph_links_speakers_topics_actions_and_times(tmp_path: Path)
     assert ("补充错误样例和自动测试覆盖", "明天", "截止") in graph_edges
 
 
+def test_knowledge_graph_topic_evidence_preserves_source_refs(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "图谱证据源"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_graph_source_1', ?, 1, 'front', 2, 'MANUAL_renxu', '任旭', 120000, 180000,
+             '客户名单今天定版，销售工作区后续同步。',
+             0.82, '["semantic_llm"]', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    graph = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()["knowledgeGraph"]
+    topic = next(node for node in graph["nodes"] if node["type"] == "topic" and node["label"] == "客户名单")
+    evidence = topic["evidence"][0]
+
+    assert evidence["segment_id"] == "seg_graph_source_1"
+    assert evidence["source_id"] == "front"
+    assert evidence["source_segment_no"] == 2
+    assert evidence["start_ms"] == 120000
+    assert evidence["end_ms"] == 180000
+
+
 def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     app_js = (Path(__file__).parents[1] / "static" / "app.js").read_text(
         encoding="utf-8"
