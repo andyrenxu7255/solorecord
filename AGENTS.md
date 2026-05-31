@@ -102,6 +102,7 @@ Android 上传可靠性：
 - 设备错峰起录但来源分段相邻、时间差和文本相似度满足保守阈值时，合并片段还会标记 `multi_source_time_aligned`。
 - 日期、数量或负责人等关键事实冲突时必须保留多条 `multi_source_conflict` 证据，不得为了去重覆盖冲突。
 - `summary_evidence_contradiction` 是知识入库阻塞项，表示纪要/分角色整理与同主题转写原文在完成、发送、确认等状态上相反。外部 Agent 必须以转写原文为准重建摘要，不能把该纪要沉淀为确定知识。
+- `action_evidence_contradiction` 是知识入库和自动督办阻塞项，表示待办把同主题转写原文中的“先不要、暂缓、不能、取消”等表达反写成执行动作。外部 Agent 必须以转写原文为准改写或删除该待办，不能自动发送提醒。
 
 ## 数据与权限
 
@@ -349,6 +350,7 @@ Multi-source recording reliability:
 - If devices start at different times but neighboring source-local segment numbers, start-time delta, and text similarity pass conservative checks, merged rows also carry `multi_source_time_aligned`.
 - If sources conflict on dates, amounts, or owners, keep separate `multi_source_conflict` evidence rows instead of deduplicating away the disagreement.
 - `summary_evidence_contradiction` is a knowledge-ingestion blocker. It means a summary or role-note claim reverses same-topic transcript evidence around completion, sending, confirmation, or similar status. External agents must rebuild the summary from transcript evidence instead of storing that summary as confirmed knowledge.
+- `action_evidence_contradiction` is both a knowledge-ingestion and automatic-reminder blocker. It means an action item turned same-topic transcript blockers such as "do not send yet", "pause", "cannot", or "cancel" into an executable action. External agents must rewrite or remove the action from transcript evidence before sending reminders.
 
 ## Data Model
 

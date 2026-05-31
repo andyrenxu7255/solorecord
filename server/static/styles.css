@@ -1317,7 +1317,8 @@ textarea.input {
 
 .action-risk-line.unsupported,
 .action-risk-line.weak_owner,
-.action-risk-line.conflict {
+.action-risk-line.conflict,
+.action-risk-line.contradiction {
   color: #8a5a00;
 }
 
@@ -1331,7 +1332,8 @@ textarea.input {
 
 .action-risk-line.unsupported span,
 .action-risk-line.weak_owner span,
-.action-risk-line.conflict span {
+.action-risk-line.conflict span,
+.action-risk-line.contradiction span {
   background: #f6df9f;
   color: #734800;
 }

@@ -241,6 +241,9 @@ def build_quality_report(
         unsupported_actions,
         weak_action_owners,
     )
+    contradictory_actions = [
+        item for item in action_evidence if item.get("status") == "contradiction"
+    ]
     summary_evidence = _summary_evidence_report(summary, role_notes, segments)
     source_coverage = _source_coverage_report(segments, audio_segments)
     recording_source_ids = sorted(
@@ -414,6 +417,18 @@ def build_quality_report(
                 f"{len(unsupported_actions)} 个待办与转写文本关联较弱，建议复核：{sample}",
             )
         )
+    if contradictory_actions:
+        sample = "；".join(
+            f"{item['owner']}：{item['task']}" for item in contradictory_actions[:3]
+        )
+        issues.append(
+            _quality_issue(
+                "high",
+                "action_evidence_contradiction",
+                "待办与转写证据相反",
+                f"{len(contradictory_actions)} 个待办与匹配转写片段的执行状态相反，建议按原文改写或删除：{sample}",
+            )
+        )
     if weak_action_owners:
         sample = "；".join(
             f"{item['owner']}：{item['task']}" for item in weak_action_owners[:3]
@@ -493,6 +508,7 @@ def build_quality_report(
             "duplicate_action_count": len(duplicate_actions),
             "unsupported_action_count": len(unsupported_actions),
             "weak_action_owner_count": len(weak_action_owners),
+            "action_contradiction_count": len(contradictory_actions),
             "action_evidence_coverage": round(evidence_coverage, 4),
             "summary_evidence_coverage": summary_evidence["coverage"],
             "summary_unsupported_count": summary_evidence["unsupported_count"],
@@ -525,6 +541,7 @@ def build_quality_report(
         "speakerEvidence": speaker_evidence[:12],
         "speakerAliasConflicts": speaker_alias_conflicts[:12],
         "actionEvidence": action_evidence,
+        "contradictoryActions": contradictory_actions[:8],
         "duplicateActions": duplicate_actions[:8],
         "unsupportedActions": unsupported_actions[:8],
         "weakActionOwners": weak_action_owners[:8],
@@ -584,6 +601,7 @@ def _quality_recommendations(issues: list[dict]) -> list[str]:
         "generic_owner": "复制待办前先把“待确认/负责人”改成真实人名或具体团队。",
         "duplicate_action": "复制待办前先合并重复项，避免同一件事多次发给负责人。",
         "unsupported_action_evidence": "对缺少证据的待办回看转写或录音，确认不是模型补写。",
+        "action_evidence_contradiction": "待办与原文表达相反，先按转写原文改写或删除后再督办。",
         "weak_action_owner_evidence": "优先核对负责人和任务是否在同一议题上下文中被明确关联。",
         "summary_evidence_weak": "逐条核对纪要要点，删除或改写转写原文无法支撑的内容。",
         "summary_evidence_contradiction": "纪要要点与原文表达相反，先按转写原文改写后再入库。",
@@ -839,6 +857,7 @@ def build_knowledge_readiness(quality_report: dict) -> dict:
         "empty_transcript",
         "generic_owner",
         "unsupported_action_evidence",
+        "action_evidence_contradiction",
         "summary_evidence_weak",
         "summary_evidence_contradiction",
         "source_segment_coverage_weak",
@@ -871,6 +890,7 @@ def build_knowledge_readiness(quality_report: dict) -> dict:
             "speakerAliasConflictCount": int(metrics.get("speaker_alias_conflict_count") or 0),
             "unsupportedActionCount": int(metrics.get("unsupported_action_count") or 0),
             "weakActionOwnerCount": int(metrics.get("weak_action_owner_count") or 0),
+            "actionContradictionCount": int(metrics.get("action_contradiction_count") or 0),
             "summaryUnsupportedCount": int(metrics.get("summary_unsupported_count") or 0),
             "summaryContradictionCount": int(
                 metrics.get("summary_contradiction_count") or 0
@@ -904,6 +924,8 @@ def _knowledge_readiness_notes(blockers: list[str], review_warnings: list[str]) 
         notes.append("存在阻塞风险，建议暂缓自动入库，先由人工复核。")
     if "unsupported_action_evidence" in blockers:
         notes.append("待办缺少转写证据，知识平台不要直接生成督办记录。")
+    if "action_evidence_contradiction" in blockers:
+        notes.append("待办与转写原文存在反向证据，知识平台不得自动督办，应按原文改写或删除该待办。")
     if "summary_evidence_weak" in blockers:
         notes.append("纪要存在缺证据要点，知识平台应以转写为准重建摘要。")
     if "summary_evidence_contradiction" in blockers:
@@ -938,7 +960,13 @@ def _knowledge_review_evidence(quality_report: dict) -> dict:
     action_evidence = [
         item
         for item in quality_report.get("actionEvidence") or []
-        if item.get("status") in {"majority", "conflict", "weak_owner", "unsupported"}
+        if item.get("status") in {
+            "majority",
+            "conflict",
+            "contradiction",
+            "weak_owner",
+            "unsupported",
+        }
     ]
     return {
         "multiSourceConflicts": (quality_report.get("multiSourceConflicts") or [])[:6],
@@ -1247,6 +1275,7 @@ def _action_items_with_evidence(action_items, quality_report: dict) -> list[dict
             "unsupported",
             "weak_owner",
             "conflict",
+            "contradiction",
             "majority",
             "unknown",
         }
@@ -1271,9 +1300,13 @@ def _action_evidence_items(
         key = _action_quality_key(action)
         evidence = _action_reference_evidence(task, owner, segments)
         suggestion = _suggest_action_owner(task, owner, segments)
+        contradiction = _action_claim_contradiction(task, evidence)
         status = "supported"
         reason = "该待办可在转写中找到相关任务或负责人线索。"
-        if key in unsupported_keys:
+        if contradiction:
+            status = "contradiction"
+            reason = contradiction
+        elif key in unsupported_keys:
             status = "unsupported"
             reason = "待办事项和转写原文关联较弱，请回看转写或录音。"
         elif _is_generic_owner(owner):
@@ -1443,6 +1476,9 @@ def _summary_evidence_report(summary: str, role_notes: str, segments: list[dict]
 _SUMMARY_CONTRADICTION_EVENTS = (
     {
         "name": "定版/敲定",
+        "action": (
+            r"(?:定版|定稿|敲定|确认最终版)",
+        ),
         "positive": (
             r"(?:已|已经|确认|明确|完成|正式|最终).{0,6}(?:定版|定稿|敲定)",
             r"(?:定版|定稿|敲定)(?:完成|了|好了|确认|明确)",
@@ -1455,6 +1491,9 @@ _SUMMARY_CONTRADICTION_EVENTS = (
     },
     {
         "name": "发送/通知",
+        "action": (
+            r"(?:发送|发出|发|推送|通知)",
+        ),
         "positive": (
             r"(?:已|已经).{0,4}(?:发送|发出|发了|推送|通知)",
             r"(?:今天|明天|后天|上午|下午|晚上|本周|下周|周[一二三四五六日天]).{0,8}(?:发送|发出|发|推送|通知)",
@@ -1468,6 +1507,9 @@ _SUMMARY_CONTRADICTION_EVENTS = (
     },
     {
         "name": "完成/准备",
+        "action": (
+            r"(?:完成|做完|补完|准备好|解决|闭环)",
+        ),
         "positive": (
             r"(?:已|已经).{0,4}(?:完成|做完|补完|准备好|解决|闭环)",
             r"(?:完成|做完|补完|准备好)(?:了|啦)?",
@@ -1479,6 +1521,9 @@ _SUMMARY_CONTRADICTION_EVENTS = (
     },
     {
         "name": "确认/确定",
+        "action": (
+            r"(?:确认|明确|确定|定下来)",
+        ),
         "positive": (
             r"(?:已|已经).{0,4}(?:确认|明确|确定|定下来)",
             r"(?:确认|明确|确定|定下来)(?:完成|了)",
@@ -1491,6 +1536,9 @@ _SUMMARY_CONTRADICTION_EVENTS = (
     },
     {
         "name": "审批/通过",
+        "action": (
+            r"(?:通过|批准|审批)",
+        ),
         "positive": (
             r"(?:已|已经)?(?:通过|批准|审批通过)",
             r"(?:审批|评审).{0,4}(?:已|已经)?(?:通过|批准)",
@@ -1502,6 +1550,9 @@ _SUMMARY_CONTRADICTION_EVENTS = (
     },
     {
         "name": "上线/发布",
+        "action": (
+            r"(?:上线|发布|投产)",
+        ),
         "positive": (
             r"(?:已|已经)?(?:上线|发布|投产)",
             r"(?:上线|发布|投产).{0,4}(?:完成|了)",
@@ -1513,6 +1564,9 @@ _SUMMARY_CONTRADICTION_EVENTS = (
     },
     {
         "name": "启动/开始",
+        "action": (
+            r"(?:启动|开始|开展)",
+        ),
         "positive": (
             r"(?:已|已经|决定|确认)?(?:启动|开始|开展)",
         ),
@@ -1523,6 +1577,9 @@ _SUMMARY_CONTRADICTION_EVENTS = (
     },
     {
         "name": "同意/认可",
+        "action": (
+            r"(?:同意|认可)",
+        ),
         "positive": (
             r"(?:已|已经)?(?:同意|认可)",
         ),
@@ -1538,6 +1595,37 @@ def _summary_claim_contradiction(claim: str, evidence: list[dict]) -> str:
     claim_text = str(claim or "")
     if not claim_text:
         return ""
+    return _claim_evidence_contradiction(
+        claim_text,
+        evidence,
+        positive_reason="纪要写成已完成或已确认，但匹配转写片段包含未完成、暂缓或否定表达。",
+        negative_reason="纪要写成未完成或未确认，但匹配转写片段表达为已完成或已确认。",
+        require_claim_polarity=True,
+    )
+
+
+def _action_claim_contradiction(task: str, evidence: list[dict]) -> str:
+    task_text = str(task or "")
+    if not task_text or not evidence:
+        return ""
+    return _claim_evidence_contradiction(
+        task_text,
+        evidence,
+        positive_reason="待办写成需要执行或推进，但匹配转写片段包含先不要、暂缓、不能执行或否定表达。",
+        negative_reason="待办写成暂缓或不执行，但匹配转写片段表达为已确认、要执行或已完成。",
+        require_claim_polarity=False,
+    )
+
+
+def _claim_evidence_contradiction(
+    claim_text: str,
+    evidence: list[dict],
+    positive_reason: str,
+    negative_reason: str,
+    require_claim_polarity: bool,
+) -> str:
+    if not require_claim_polarity and _is_action_uncertain_or_question(claim_text):
+        return ""
     for item in evidence:
         evidence_text = str(item.get("text") or "")
         if not evidence_text or not _summary_contradiction_same_topic(
@@ -1547,16 +1635,56 @@ def _summary_claim_contradiction(claim: str, evidence: list[dict]) -> str:
         ):
             continue
         for event in _SUMMARY_CONTRADICTION_EVENTS:
-            claim_polarity = _summary_event_polarity(claim_text, event)
-            evidence_polarity = _summary_event_polarity(evidence_text, event)
+            if require_claim_polarity:
+                claim_polarity = _summary_event_polarity(claim_text, event)
+                evidence_polarity = _summary_event_polarity(evidence_text, event)
+            else:
+                claim_polarity = _action_implied_event_polarity(claim_text, event)
+                evidence_polarity = _action_evidence_event_polarity(evidence_text, event)
             if not claim_polarity or not evidence_polarity:
                 continue
             if claim_polarity == evidence_polarity:
                 continue
             if claim_polarity == "positive":
-                return "纪要写成已完成或已确认，但匹配转写片段包含未完成、暂缓或否定表达。"
-            return "纪要写成未完成或未确认，但匹配转写片段表达为已完成或已确认。"
+                return positive_reason
+            return negative_reason
     return ""
+
+
+def _action_implied_event_polarity(text: str, event: dict) -> str:
+    value = str(text or "")
+    if _is_action_uncertain_or_question(value):
+        return ""
+    if _evidence_blocks_action_event(value, event):
+        return "negative"
+    action_patterns = event.get("action") or event.get("positive") or ()
+    if any(re.search(pattern, value) for pattern in action_patterns):
+        return "positive"
+    return ""
+
+
+def _action_evidence_event_polarity(text: str, event: dict) -> str:
+    value = str(text or "")
+    if _evidence_blocks_action_event(value, event):
+        return "negative"
+    polarity = _summary_event_polarity(value, event)
+    if polarity == "positive":
+        return "positive"
+    return ""
+
+
+def _evidence_blocks_action_event(text: str, event: dict) -> bool:
+    value = str(text or "")
+    action_patterns = event.get("action") or ()
+    if not action_patterns:
+        return False
+    blockers = r"(?:不|别|不要|先不|暂不|暂缓|延期|取消|不能|无法|驳回)"
+    for pattern in action_patterns:
+        if re.search(rf"{blockers}[^。！？!?；;\n\r]{{0,12}}{pattern}", value):
+            return True
+        if re.search(rf"{pattern}[^。！？!?；;\n\r]{{0,12}}{blockers}", value):
+            return True
+    return False
 
 
 def _summary_event_polarity(text: str, event: dict) -> str:
@@ -1566,6 +1694,15 @@ def _summary_event_polarity(text: str, event: dict) -> str:
     if any(re.search(pattern, value) for pattern in event.get("positive") or ()):
         return "positive"
     return ""
+
+
+def _is_action_uncertain_or_question(text: str) -> bool:
+    return bool(
+        re.search(
+            r"(是否|能否|要不要|需不需要|讨论|评估|确认是否|看看是否|判断是否|方案|策略)",
+            str(text or ""),
+        )
+    )
 
 
 def _summary_contradiction_same_topic(claim: str, evidence_text: str, item: dict) -> bool:

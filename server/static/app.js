@@ -566,6 +566,7 @@ function buildActionRiskMap(report) {
       majority: ["多数源确认"],
       weak_owner: ["负责人证据弱"],
       conflict: ["多源冲突待核对"],
+      contradiction: ["待办与原文相反"],
       unsupported: ["缺转写证据"],
     }[item.status] || ["待核对"];
     map.set(key, {
@@ -777,6 +778,7 @@ function renderQualityReport(report, knowledgeReadiness = null) {
   const unsupportedCount = Number(metrics.unsupported_action_count || 0);
   const weakSpeakerEvidenceCount = Number(metrics.speaker_evidence_weak_count || 0);
   const weakActionOwnerCount = Number(metrics.weak_action_owner_count || 0);
+  const actionContradictionCount = Number(metrics.action_contradiction_count || 0);
   const summaryUnsupportedCount = Number(metrics.summary_unsupported_count || 0);
   const summaryContradictionCount = Number(metrics.summary_contradiction_count || 0);
   const summaryConflictCount = Number(metrics.summary_conflict_count || 0);
@@ -793,6 +795,7 @@ function renderQualityReport(report, knowledgeReadiness = null) {
     Number(metrics.generic_owner_count || 0) +
     unsupportedCount +
     weakActionOwnerCount +
+    actionContradictionCount +
     Number(metrics.duplicate_action_count || 0) +
     Number(metrics.top_owner_ratio >= 0.7 ? 1 : 0);
   return `
@@ -967,7 +970,7 @@ function knowledgeReviewEvidenceText(type, item) {
     return {
       title: `待办复核：${item.task || "待办事项"}`,
       detail: `${actionEvidenceStatusLabel(item.status)}${item.owner ? ` · 负责人：${item.owner}` : ""}${item.reason ? ` · ${item.reason}` : ""}`,
-      className: item.status === "conflict" ? "conflict" : "warning",
+      className: item.status === "conflict" || item.status === "contradiction" ? "conflict" : "warning",
     };
   }
   return {
@@ -990,6 +993,7 @@ function knowledgeIssueLabel(type) {
     empty_transcript: "转写为空",
     generic_owner: "泛化负责人",
     unsupported_action_evidence: "待办缺证据",
+    action_evidence_contradiction: "待办与原文相反",
     summary_evidence_weak: "纪要证据弱",
     summary_evidence_contradiction: "纪要与原文相反",
     source_segment_coverage_weak: "音频覆盖不足",
@@ -1123,6 +1127,7 @@ function actionEvidenceStatusLabel(status) {
     supported: "有转写依据",
     majority: "多数源确认",
     conflict: "多源冲突待核对",
+    contradiction: "待办与原文相反",
     weak_owner: "负责人证据弱",
     unsupported: "缺转写证据",
   }[status] || "待核对";

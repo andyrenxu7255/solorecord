@@ -236,6 +236,7 @@ Agent 验收时必须检查：
 - `qualityReport.metrics.source_segment_coverage` 和 `qualityReport.sourceCoverage.weakSegments` 应按 `(source_id, source_segment_no)` 反映每个上传音频分段是否被最终转写覆盖。`source_segment_coverage_weak` 是知识入库阻塞项，外部知识 Agent 不得把该会议视为完整证据。`multi_source_conflict_count` 大于 0 时也应保留人工复核状态。
 - `qualityReport.multiSourceConflicts` 是多源冲突的结构化回听清单，条目包含 `segment_id`、`source_id`、`source_segment_no`、发言人、时间、文本、flags 和附近其它冲突来源。外部知识 Agent 应直接消费该字段做证据复核，不要只根据 `multi_source_conflict_count` 写入确定知识。
 - `qualityReport.metrics.summary_contradiction_count` 大于 0 或出现 `summary_evidence_contradiction` 时，说明纪要/分角色整理把同主题转写证据写反了，例如原文是“还没定版/先不要发”，纪要却写成“已定版/已发送”。这是知识入库阻塞项，Agent 必须以转写原文为准，不能把该纪要沉淀为确定知识。
+- `qualityReport.metrics.action_contradiction_count` 大于 0 或出现 `action_evidence_contradiction` 时，说明待办把同主题转写中的“先不要、暂缓、不能、取消”等语义反写成执行动作，例如原文“下午先不要发客户通知”却生成“发送客户通知”。这是知识入库和自动督办阻塞项；Agent 必须以转写原文为准改写或删除待办。“确认是否发送”这类核对型待办不是执行发送，不应判为反向待办。
 - 多源合并前应检查关键事实。若不同录音源在日期、数量或负责人上冲突，应保留多条 `multi_source_conflict` 证据，不得为了去重合并成单条结论。
 - 多源错峰对齐只能作为去重和覆盖辅助：当 `multi_source_time_aligned` 出现时，Agent 应保留原始 `multi_source_refs:*` 追溯；若同一来源附近存在关键事实冲突，仍以 `multi_source_conflict` 和人工复核为准。
 - 多源互补只能复制原始转写中存在、且与当前合并段不冲突的短语；`multi_source_complemented` 表示证据融合，不表示 LLM 生成了新事实。若至少两个来源一致且多于附近冲突来源，可把一致合并段标记为 `multi_source_majority`，同时保留少数冲突源供人工回听；没有多数时必须优先标记 `multi_source_conflict`。
@@ -250,7 +251,7 @@ Agent 验收时必须检查：
 - 被点名句里的议题词可作为待办主责线索。例如“翼天你先说自动测试”后面出现匿名片段“覆盖脚本明天补完”时，可以把主责建议为翼天；但主持人本人不应仅因说出点名句而获得该任务。
 - 销售、法务、前端、测试等组织角色可以作为待办 owner，但必须有同一短语窗口内的责任或动作证据，例如“销售这边周五前跟进客户名单”“前端周三前改页面”。不要把“自动测试、测试覆盖、数据源”等任务词本身当成组织负责人。
 - 如果 `processing._normalize_action_owners()` 给 task 追加 `协同：姓名`，外部督办 Agent 应保留该字段含义：owner 是主责人，协同人是配合人，不要把协同人改成新的主责人。
-- `qualityReport.actionEvidence` 应逐条覆盖全部待办，并提供 `supported`、`majority`、`conflict`、`weak_owner` 或 `unsupported` 状态和证据片段。证据片段应包含 `segment_id`、`source_id`、`source_segment_no`、`start_ms`、`speaker` 和 `text`。`majority` 表示待办由 `multi_source_majority` 主结果支撑，且负责人不是泛化/待确认，`actionItems[].knowledgeSafe=true` 且 `requiresReview=true`，外部督办 Agent 可作为主证据使用但要保留抽查回听提示；`conflict` 表示待办只由 `multi_source_conflict` 片段支撑，外部督办 Agent 必须将 `knowledgeSafe=false`、`requiresReview=true` 作为硬门禁，不能自动发送提醒。如果 owner 是 `待确认`、代词、时间短语或泛化角色，`weak_owner` 优先级高于 `majority`，即使任务文本由多数源支撑也不得自动督办。外部督办 Agent 可先读 `actionItems[].evidenceStatus`、`knowledgeSafe` 和 `requiresReview` 判断是否可以自动发送提醒；需要完整审计时再消费 `qualityReport.actionEvidence` 并保留证据追溯链接。
+- `qualityReport.actionEvidence` 应逐条覆盖全部待办，并提供 `supported`、`majority`、`conflict`、`contradiction`、`weak_owner` 或 `unsupported` 状态和证据片段。证据片段应包含 `segment_id`、`source_id`、`source_segment_no`、`start_ms`、`speaker` 和 `text`。`majority` 表示待办由 `multi_source_majority` 主结果支撑，且负责人不是泛化/待确认，`actionItems[].knowledgeSafe=true` 且 `requiresReview=true`，外部督办 Agent 可作为主证据使用但要保留抽查回听提示；`conflict` 表示待办只由 `multi_source_conflict` 片段支撑，外部督办 Agent 必须将 `knowledgeSafe=false`、`requiresReview=true` 作为硬门禁，不能自动发送提醒；`contradiction` 表示同主题转写证据阻止执行该动作，外部督办 Agent 必须同样阻断自动提醒和确定知识入库。如果 owner 是 `待确认`、代词、时间短语或泛化角色，`weak_owner` 优先级高于 `majority`，即使任务文本由多数源支撑也不得自动督办。外部督办 Agent 可先读 `actionItems[].evidenceStatus`、`knowledgeSafe` 和 `requiresReview` 判断是否可以自动发送提醒；需要完整审计时再消费 `qualityReport.actionEvidence` 并保留证据追溯链接。
 
 LLM：
 
@@ -847,8 +848,11 @@ The repository can be public only if no real secrets, runtime data, databases, c
   `evidenceStatus=conflict` means the action is only backed by
   `multi_source_conflict` transcript rows; reminder agents must treat
   `knowledgeSafe=false` and `requiresReview=true` as a hard gate and must not
-  auto-send it. Use `qualityReport.actionEvidence` for complete evidence
-  audits.
+  auto-send it. `evidenceStatus=contradiction` means the action reversed
+  same-topic transcript blockers such as "do not send yet", "pause", "cannot",
+  or "cancel" into an executable task; reminder agents must also block it and
+  wait for a rewritten or removed action. Use `qualityReport.actionEvidence`
+  for complete evidence audits.
 - External `knowledgeReadiness` is the ingestion gate summary. `status=hold`
   means do not automatically store summaries or actions; `status=review_first`
   means ingestion is possible only with risk markers preserved; `status=ready`
@@ -856,6 +860,9 @@ The repository can be public only if no real secrets, runtime data, databases, c
   `summary_evidence_contradiction` is a `hold` blocker: the summary reversed
   same-topic transcript evidence, so agents must rebuild the summary from the
   transcript instead of storing it as confirmed knowledge.
+  `action_evidence_contradiction` is also a `hold` blocker: the action item
+  contradicts same-topic transcript blockers and must not be auto-sent or
+  indexed as confirmed work.
   `knowledgeReadiness.reviewEvidence` summarizes multi-source conflicts, weak
   coverage segments, speaker risks, summary risks, and action risks as the
   human-review entry point; agents should not treat it as a new fact source.

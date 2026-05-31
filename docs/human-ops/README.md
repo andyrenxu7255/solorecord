@@ -288,7 +288,7 @@ SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
 - 如果待办负责人显示为“我、我们、他、这边、大家”等代词，系统会尝试用第一人称转写和任务关键词换成真实发言人；换不出来会降级为 `待确认`，仍应人工确认后再复制到 IM。
 - 如果大模型把待办负责人写成“负责人、相关负责人、主持人、前端开发、某某负责人”等泛化角色，系统会先降级为 `待确认`，再用转写上下文尝试补回具体人或明确团队。验收时看到 `待确认` 不一定是漏识别，也可能是系统避免误督办的保护。
 - 如果待办文本末尾出现 `协同：某人`，表示系统从转写中识别到配合/协助关系。它不会改变主责人，但复制给 IM 或同步给外部督办系统时应保留，避免遗漏配合人。
-- `qualityReport.actionEvidence` 会逐条列出待办证据状态：`supported` 表示可找到转写依据，`majority` 表示多数录音源已确认但仍建议抽查，`weak_owner` 表示任务有依据但负责人证据弱，`unsupported` 表示缺转写依据，`conflict` 表示只由冲突片段支撑。外部 API 的 `actionItems` 也会直接带 `evidenceStatus`、`evidence`、`suggestedOwner`、`knowledgeSafe` 和 `requiresReview`，方便督办 Agent 不解析完整质量报告也能判断是否可自动提醒。多数源只增强任务文本证据；如果负责人仍是 `待确认`、代词、时间短语或泛化角色，状态必须优先保持 `weak_owner`、`knowledgeSafe=false`，不能自动督办。若系统能找到更有证据的负责人，会同时给出 `suggested_owner` 和引用片段，Web 待办区会显示“建议负责人/应用建议”。证据引用带 `segment_id`、`source_id` 和 `source_segment_no`，Web 可用“定位转写”跳到对应原文。复制待办给 IM 时仍只复制待办正文。
+- `qualityReport.actionEvidence` 会逐条列出待办证据状态：`supported` 表示可找到转写依据，`majority` 表示多数录音源已确认但仍建议抽查，`weak_owner` 表示任务有依据但负责人证据弱，`unsupported` 表示缺转写依据，`conflict` 表示只由冲突片段支撑，`contradiction` 表示待办把转写里的“先不要、暂缓、不能、取消”等反向证据写成了执行动作。外部 API 的 `actionItems` 也会直接带 `evidenceStatus`、`evidence`、`suggestedOwner`、`knowledgeSafe` 和 `requiresReview`，方便督办 Agent 不解析完整质量报告也能判断是否可自动提醒。多数源只增强任务文本证据；如果负责人仍是 `待确认`、代词、时间短语或泛化角色，状态必须优先保持 `weak_owner`、`knowledgeSafe=false`，不能自动督办。若系统能找到更有证据的负责人，会同时给出 `suggested_owner` 和引用片段，Web 待办区会显示“建议负责人/应用建议”。证据引用带 `segment_id`、`source_id` 和 `source_segment_no`，Web 可用“定位转写”跳到对应原文。复制待办给 IM 时仍只复制待办正文。
 - `qualityReport.multiSourceConflicts` 会把多源冲突从数量展开成可回听清单：每条包含来源、来源分段号、时间、发言人、冲突文本和附近其它冲突来源。Web“整理质量”区会直接显示这些条目并提供“定位转写”；知识平台或运维 Agent 做验收时应先看这个字段，确认后再决定是否入库。
 - `knowledgeReadiness.reviewEvidence` 会把需要人工复核的证据集中到一个字段里，包括多源冲突、覆盖不足分段、发言人风险、纪要风险和待办风险。Web“整理质量”区也会显示“知识入库复核”，列出 `ready/review_first/hold`、阻塞项、复核标签、说明和可定位证据。运维验收或知识平台联调时可以先看它快速定位问题，再回到转写原文核对；如果覆盖不足分段没有可定位转写，应先回听或重转写。
 - 如果 `speaker_evidence_weak_count` 大于 0，说明某些发言人名称没有在原始 ASR 文本或原始说话人标签中找到依据。上线验收时应优先播放这些片段，确认模型没有把议题、时间短语或误听词当成人名。
@@ -323,6 +323,7 @@ SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
 - 如果待办显示 `evidenceStatus=majority` 或“多数源确认”，说明多数录音源支撑同一主结果，且负责人不是泛化/待确认。此时 `knowledgeSafe=true`、`requiresReview=true`，外部督办或知识平台可以作为主证据使用，但应保留抽查回听提示。
 - 如果待办显示 `evidenceStatus=weak_owner` 或“负责人证据弱”，即使它有多数源任务证据，也说明当前负责人不可直接督办。先在 Web 待办区应用建议负责人或人工确认后再同步到 IM/外部系统。
 - 如果待办显示 `evidenceStatus=conflict` 或“多源冲突待核对”，说明待办有转写证据但多录音源在日期、数量或负责人等关键事实上不一致。此时 `knowledgeSafe=false`、`requiresReview=true`，外部督办或知识平台不得自动发送提醒或写入确定知识。
+- 如果待办显示 `evidenceStatus=contradiction` 或“待办与原文相反”，说明原文匹配到了同一主题，但表达为“先不要/暂缓/不能/取消”等阻止执行的意思。此时 `knowledgeSafe=false`、`requiresReview=true`，`knowledgeReadiness.status=hold`；外部督办或知识平台必须先按原文改写或删除该待办。
 
 ## LLM 配置
 

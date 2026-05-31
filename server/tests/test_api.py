@@ -3231,6 +3231,146 @@ def test_quality_report_marks_conflicting_multisource_actions_for_review(tmp_pat
     assert len(external["knowledgeReadiness"]["reviewEvidence"]["multiSourceConflicts"]) == 2
 
 
+def test_quality_report_blocks_action_that_contradicts_transcript(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "反向待办证据"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_action_contradiction_1', ?, 1, 'front', 1, 'MANUAL_lina', '李娜',
+             0, 60000,
+             '客户名单还没定版，下午先不要发客户通知，等法务确认后再说。',
+             0.86, '["semantic_final"]', 'now')
+            """,
+            (meeting_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO action_items (id, meeting_id, owner, task, due, status, created_at, updated_at)
+            VALUES
+            ('act_action_contradiction', ?, '李娜', '发送客户通知', '下午', 'open', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
+    report = detail["qualityReport"]
+    evidence_by_id = {item["id"]: item for item in report["actionEvidence"]}
+    item = evidence_by_id["act_action_contradiction"]
+
+    assert item["status"] == "contradiction"
+    assert "先不要" in item["reason"] or "相反" in item["reason"]
+    assert item["evidence"][0]["segment_id"] == "seg_action_contradiction_1"
+    assert item["evidence"][0]["source_id"] == "front"
+    assert item["evidence"][0]["source_segment_no"] == 1
+    assert report["metrics"]["action_contradiction_count"] == 1
+    assert report["contradictoryActions"][0]["id"] == "act_action_contradiction"
+    issue_types = {issue["type"] for issue in report["issues"]}
+    assert "action_evidence_contradiction" in issue_types
+    assert detail["actionItems"][0]["evidenceStatus"] == "contradiction"
+    assert detail["actionItems"][0]["knowledgeSafe"] is False
+    assert detail["actionItems"][0]["requiresReview"] is True
+    assert detail["knowledgeReadiness"]["status"] == "hold"
+    assert "action_evidence_contradiction" in detail["knowledgeReadiness"]["blockers"]
+    readiness_evidence = detail["knowledgeReadiness"]["reviewEvidence"]["actionEvidence"]
+    assert readiness_evidence[0]["id"] == "act_action_contradiction"
+    assert readiness_evidence[0]["status"] == "contradiction"
+
+    external = client.get(
+        f"/api/external/meetings/{meeting_id}",
+        headers={"Authorization": "Bearer test-token"},
+    ).json()
+    external_action = external["actionItems"][0]
+    assert external_action["evidenceStatus"] == "contradiction"
+    assert external_action["knowledgeSafe"] is False
+    assert external_action["requiresReview"] is True
+    assert "action_evidence_contradiction" in external["knowledgeReadiness"]["blockers"]
+
+
+def test_quality_report_does_not_mark_action_question_as_contradiction(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "待办问题句"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_action_question_1', ?, 1, 'front', 1, 'MANUAL_lina', '李娜',
+             0, 60000,
+             '客户名单还没定版，下午先不要发客户通知，等法务确认后再说。',
+             0.86, '["semantic_final"]', 'now')
+            """,
+            (meeting_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO action_items (id, meeting_id, owner, task, due, status, created_at, updated_at)
+            VALUES
+            ('act_action_question', ?, '李娜', '确认是否发送客户通知', '下午', 'open', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
+    item = detail["qualityReport"]["actionEvidence"][0]
+
+    assert item["status"] != "contradiction"
+    assert detail["qualityReport"]["metrics"]["action_contradiction_count"] == 0
+    assert "action_evidence_contradiction" not in detail["knowledgeReadiness"]["blockers"]
+
+
+def test_quality_report_accepts_action_to_pause_when_transcript_blocks_execution(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "暂缓待办"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_action_pause_1', ?, 1, 'front', 1, 'MANUAL_lina', '李娜',
+             0, 60000,
+             '客户名单还没定版，下午先不要发客户通知，等法务确认后再说。',
+             0.86, '["semantic_final"]', 'now')
+            """,
+            (meeting_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO action_items (id, meeting_id, owner, task, due, status, created_at, updated_at)
+            VALUES
+            ('act_action_pause', ?, '李娜', '暂缓发送客户通知', '下午', 'open', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
+    item = detail["qualityReport"]["actionEvidence"][0]
+
+    assert item["status"] != "contradiction"
+    assert detail["qualityReport"]["metrics"]["action_contradiction_count"] == 0
+    assert "action_evidence_contradiction" not in detail["knowledgeReadiness"]["blockers"]
+
+
 def test_quality_report_marks_conflicting_multisource_summary_for_review(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)
