@@ -1160,6 +1160,88 @@ def test_multi_source_final_processing_preserves_third_source_fact_conflicts(tmp
     assert all("multi_source_merged" not in item["flags"] for item in transcript["segments"])
 
 
+def test_multi_source_final_processing_marks_majority_when_two_sources_agree(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post(
+        "/api/web/meetings",
+        json={"title": "多源多数一致", "recording_mode": "multi_source", "max_sources": 3},
+        headers=headers,
+    )
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+    import solorecord_server.processing as processing
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO audio_segments
+            (id, meeting_id, source_id, source_segment_no, segment_no, file_name,
+             storage_path, mime_type, size_bytes, sha256, duration_ms, start_ms,
+             end_ms, upload_status, created_at)
+            VALUES
+            ('aud_majority_front', ?, 'front', 1, 1, 'front.wav', 'front.wav',
+             'audio/wav', 1, 'sha-front-majority', 60000, 0, 60000, 'uploaded', 'now'),
+            ('aud_majority_middle', ?, 'middle', 1, 2, 'middle.wav', 'middle.wav',
+             'audio/wav', 1, 'sha-middle-majority', 60000, 0, 60000, 'uploaded', 'now'),
+            ('aud_majority_back', ?, 'back', 1, 3, 'back.wav', 'back.wav',
+             'audio/wav', 1, 'sha-back-majority', 60000, 0, 60000, 'uploaded', 'now')
+            """,
+            (meeting_id, meeting_id, meeting_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id,
+             display_name, start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_majority_front', ?, 1, 'front', 1, 'SPEAKER_01', '翼天',
+             0, 60000, '错误样例周三前补三类，自动测试同步补完。',
+             0.88, '["semantic_partial"]', 'now'),
+            ('seg_majority_middle', ?, 1, 'middle', 1, 'SPEAKER_01', '翼天',
+             100, 60100, '错误样例周三前补三类，自动测试同步补完。',
+             0.87, '["semantic_partial"]', 'now'),
+            ('seg_majority_back', ?, 1, 'back', 1, 'SPEAKER_01', '翼天',
+             200, 60200, '错误样例周五前补五类，自动测试同步补完。',
+             0.86, '["semantic_partial"]', 'now')
+            """,
+            (meeting_id, meeting_id, meeting_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO processing_jobs
+            (id, meeting_id, type, status, current_stage, progress, asr_provider, created_at, updated_at)
+            VALUES ('job_multisource_majority', ?, 'transcribe', 'queued', 'queued', 0, 'mock', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    processing.process_transcription_job("job_multisource_majority")
+
+    transcript = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers).json()
+    majority = [
+        item for item in transcript["segments"]
+        if "multi_source_majority" in item["flags"]
+    ]
+    conflict = [
+        item for item in transcript["segments"]
+        if "multi_source_conflict" in item["flags"]
+    ]
+    assert len(transcript["segments"]) == 2
+    assert len(majority) == 1
+    assert "multi_source_merged" in majority[0]["flags"]
+    assert "multi_source_conflict" not in majority[0]["flags"]
+    assert "front:1" in majority[0]["flags"]
+    assert "middle:1" in majority[0]["flags"]
+    assert len(conflict) == 1
+    assert conflict[0]["source_id"] == "back"
+
+    report = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()["qualityReport"]
+    assert report["metrics"]["multi_source_merged_count"] == 1
+    assert report["metrics"]["multi_source_majority_count"] == 1
+    assert report["metrics"]["multi_source_conflict_count"] == 1
+
+
 def test_multi_source_final_processing_aligns_sources_started_late(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)
@@ -3524,6 +3606,9 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "source_segment_coverage" in app_js
     assert "sourceCoverage" in app_js
     assert "multi_source_complemented_count" in app_js
+    assert "multi_source_majority_count" in app_js
+    assert "多数源确认" in app_js
+    assert "flag:multi_source_majority" in app_js
     assert "多源互补" in app_js
     assert "flag:multi_source_complemented" in app_js
     assert "sourceKey" in app_js
@@ -3773,6 +3858,7 @@ def test_llm_refinement_preserves_multisource_evidence_flags() -> None:
                     "semantic_partial",
                     "multi_source_merged",
                     "multi_source_complemented",
+                    "multi_source_majority",
                     "multi_source_count:2",
                     "multi_source_refs:back:1,front:1",
                 ],
@@ -3784,6 +3870,7 @@ def test_llm_refinement_preserves_multisource_evidence_flags() -> None:
     for segment in refined:
         assert "multi_source_merged" in segment["flags"]
         assert "multi_source_complemented" in segment["flags"]
+        assert "multi_source_majority" in segment["flags"]
         assert "multi_source_count:2" in segment["flags"]
         assert "multi_source_refs:back:1,front:1" in segment["flags"]
         assert "semantic_partial" not in segment["flags"]
@@ -3853,12 +3940,24 @@ def test_summary_prompt_exposes_multisource_context_to_llm() -> None:
                 "text": "错误样例周五前补五类。",
                 "flags": ["multi_source_conflict", "speaker_review"],
             },
+            {
+                "source_id": "front+middle",
+                "source_segment_no": 1,
+                "speaker_id": "SPEAKER_01",
+                "display_name": "翼天",
+                "start_ms": 0,
+                "end_ms": 60000,
+                "text": "错误样例周三前补三类。",
+                "flags": ["multi_source_majority", "multi_source_merged"],
+            },
         ]
     )
 
     assert "source=front#1" in prompt
     assert "source=back#1" in prompt
     assert "multi_source_conflict" in prompt
+    assert "multi_source_majority" in prompt
+    assert "multi_source_majority 表示至少两个录音源一致" in prompt
     assert "不要把互相冲突的多源事实合并为单一结论" in prompt
 
 

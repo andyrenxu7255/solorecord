@@ -280,6 +280,7 @@ def build_quality_report(
     rule_segments = sum(1 for flags in flags_by_segment if "semantic_rule" in flags)
     timeline_repaired = sum(1 for flags in flags_by_segment if "timeline_repaired" in flags)
     multi_source_merged = sum(1 for flags in flags_by_segment if "multi_source_merged" in flags)
+    multi_source_majority = sum(1 for flags in flags_by_segment if "multi_source_majority" in flags)
     multi_source_complemented = sum(
         1 for flags in flags_by_segment if "multi_source_complemented" in flags
     )
@@ -485,6 +486,7 @@ def build_quality_report(
             "rule_segment_count": rule_segments,
             "timeline_repaired_count": timeline_repaired,
             "multi_source_merged_count": multi_source_merged,
+            "multi_source_majority_count": multi_source_majority,
             "multi_source_complemented_count": multi_source_complemented,
             "multi_source_conflict_count": multi_source_conflicts,
             "scenario_counts": scenario_counts,
@@ -758,6 +760,7 @@ def build_knowledge_readiness(quality_report: dict) -> dict:
             "summaryUnsupportedCount": int(metrics.get("summary_unsupported_count") or 0),
             "sourceSegmentWeakCount": int(metrics.get("source_segment_weak_count") or 0),
             "multiSourceMergedCount": int(metrics.get("multi_source_merged_count") or 0),
+            "multiSourceMajorityCount": int(metrics.get("multi_source_majority_count") or 0),
             "multiSourceComplementedCount": int(metrics.get("multi_source_complemented_count") or 0),
             "multiSourceConflictCount": int(metrics.get("multi_source_conflict_count") or 0),
             "actionEvidenceCoverage": float(metrics.get("action_evidence_coverage") or 0),

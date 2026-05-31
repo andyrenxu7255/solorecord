@@ -782,6 +782,7 @@ function renderQualityReport(report) {
   const llmSegmentCount = Number(metrics.llm_segment_count || 0);
   const sourceWeakCount = Number(metrics.source_segment_weak_count || 0);
   const multiSourceMerged = Number(metrics.multi_source_merged_count || 0);
+  const multiSourceMajority = Number(metrics.multi_source_majority_count || 0);
   const multiSourceComplemented = Number(metrics.multi_source_complemented_count || 0);
   const multiSourceConflict = Number(metrics.multi_source_conflict_count || 0);
   const ownerRisk =
@@ -801,6 +802,7 @@ function renderQualityReport(report) {
       <div><span>待办证据率</span><b>${formatPercent(metrics.action_evidence_coverage)}</b></div>
       <div><span>分段覆盖率</span><b>${formatPercent(metrics.source_segment_coverage)}</b></div>
       <div><span>多源合并</span><b>${multiSourceMerged}</b></div>
+      <div><span>多数源确认</span><b>${multiSourceMajority}</b></div>
       <div><span>多源互补</span><b>${multiSourceComplemented}</b></div>
       <div><span>多源冲突</span><b>${multiSourceConflict}</b></div>
       <div><span>待办归属风险</span><b>${ownerRisk}</b></div>
@@ -2295,6 +2297,7 @@ function buildTranscriptFilters(segments) {
     { value: "flag:speaker_evidence_weak", label: "发言人证据弱" },
     { value: "risk:long_segment", label: "长段落" },
     { value: "risk:multi_source_conflict", label: "多源冲突" },
+    { value: "flag:multi_source_majority", label: "多数源确认" },
     { value: "flag:multi_source_complemented", label: "多源互补" },
     { value: "flag:semantic_llm", label: "大模型分段" },
     { value: "flag:semantic_rule", label: "规则分段" },

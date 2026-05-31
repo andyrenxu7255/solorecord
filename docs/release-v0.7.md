@@ -11,7 +11,7 @@ SoloRecord V0.7 是公司内部会议记录系统的首个可部署交付版，�
 - 连续滚动分段录音：点击开始后以 WAV 分段本地即时保存，默认约 5 分钟一段，可由服务器配置；相邻分段约 2 秒重叠，结束或关闭 App 时停止并尽量保存最后一段。
 - 在线分段转写：每个分段上传成功后立即触发该段 ASR，阶段转写持续写回同一个会议记录；结束时优先复用这些分段转写生成完整纪要和待办，避免重复跑整场 ASR。
 - 弱网分段续传：音频分段本地落盘，multipart 文件流上传，已确认分段重试时跳过，重复 finish 会复用已有处理任务。
-- 多源同录校对：1-8 个录音源可用同一会议编号加入；服务端按 `(source_id, source_segment_no)` 保留证据，合并关键事实一致的重复片段，设备错峰起录时可保守对齐并标记 `multi_source_time_aligned`，日期、数量、负责人等冲突会保留为 `multi_source_conflict`。
+- 多源同录校对：1-8 个录音源可用同一会议编号加入；服务端按 `(source_id, source_segment_no)` 保留证据，合并关键事实一致的重复片段，设备错峰起录时可保守对齐并标记 `multi_source_time_aligned`；当至少两个来源一致且多于附近冲突来源时，主结果标记 `multi_source_majority`，少数冲突源仍保留为 `multi_source_conflict`。
 - 服务器权威存储：保存登录用户名、会议、音频分段、转写、纪要、待办、角色名和审计日志。
 - 重装 APK 后恢复：登录后可从 `/api/mobile/sync` 恢复服务器记录，并按权限下载服务器音频播放。
 - Web 管理端：会议查看/编辑、Web 实时录音、转写编辑、角色改名、可编辑待办、按说话人/分段筛选转写、授权播放服务器音频、导出、模型配置、任务查看、多平台终端发布。
@@ -55,7 +55,7 @@ SoloRecord V0.7 is the first deployable internal release of the company meeting 
 - Continuous rolling segmented recording: local WAV audio is saved immediately after start. Segments default to about five minutes, are configurable from the server, and adjacent segments keep about two seconds of overlap. Ending or closing the app stops recording and preserves the last segment as far as possible.
 - Online segment transcription: each accepted segment triggers ASR immediately, and partial transcript rows are written into the same meeting record. Final stop reuses those rows when all segments are covered, then produces the full summary and action items.
 - Weak-network segment resume: audio segments are stored locally, uploaded as multipart files, skipped after acknowledgement, and repeated finish calls reuse the existing processing job.
-- Multi-source cross-check: 1-8 sources can join with the same meeting code. The server keeps evidence by `(source_id, source_segment_no)`, merges duplicate rows only when key facts agree, can conservatively align late-starting devices with `multi_source_time_aligned`, and preserves date, amount, or owner disagreements as `multi_source_conflict`.
+- Multi-source cross-check: 1-8 sources can join with the same meeting code. The server keeps evidence by `(source_id, source_segment_no)`, merges duplicate rows only when key facts agree, can conservatively align late-starting devices with `multi_source_time_aligned`, marks a primary row as `multi_source_majority` when at least two sources agree and outnumber nearby conflicting sources, and preserves minority disagreements as `multi_source_conflict`.
 - Server-authoritative storage: user identity, meetings, audio segments, transcripts, summaries, action items, speaker names, and audit logs are stored server-side.
 - APK reinstall recovery: after login, the app can restore records through `/api/mobile/sync` and download protected server audio segments for playback.
 - Web admin: meeting review/editing, Web live recording, transcript editing, speaker rename, editable action items, transcript filters by speaker/source segment, authorized server-audio playback, exports, model configuration, job view, and multi-platform client publishing.

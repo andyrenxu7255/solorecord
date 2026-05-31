@@ -523,8 +523,12 @@ def _merge_multisource_segments(segments: list[dict]) -> list[dict]:
             merged.append(item)
             continue
         item = _merge_duplicate_source_group(group)
-        if _has_nearby_multisource_conflict(item, ordered):
-            _add_segment_flags(item, ("multi_source_conflict", "speaker_review"))
+        group_source_ids = _group_source_ids(group)
+        if _has_nearby_multisource_conflict(item, ordered, skip_source_ids=group_source_ids):
+            if _group_has_majority_over_conflicts(item, group, ordered):
+                _add_segment_flags(item, ("multi_source_majority",))
+            else:
+                _add_segment_flags(item, ("multi_source_conflict", "speaker_review"))
         merged.append(item)
     return sorted(
         merged,
@@ -750,13 +754,30 @@ def _join_complemented_text(text: str, additions: list[str]) -> str:
     return f"{base}，{suffix}。"
 
 
-def _has_nearby_multisource_conflict(segment: dict, segments: list[dict]) -> bool:
+def _has_nearby_multisource_conflict(
+    segment: dict,
+    segments: list[dict],
+    skip_source_ids: set[str] | None = None,
+) -> bool:
+    return bool(_nearby_multisource_conflict_sources(segment, segments, skip_source_ids))
+
+
+def _nearby_multisource_conflict_sources(
+    segment: dict,
+    segments: list[dict],
+    skip_source_ids: set[str] | None = None,
+) -> set[str]:
+    skip_source_ids = set(skip_source_ids or set())
     source_id = str(segment.get("source_id") or "primary")
     nearby_candidates: list[dict] = []
+    conflict_sources: set[str] = set()
     for other in segments:
         if other is segment:
             continue
-        if str(other.get("source_id") or "primary") == source_id:
+        other_source_id = str(other.get("source_id") or "primary")
+        if other_source_id in skip_source_ids:
+            continue
+        if not skip_source_ids and other_source_id == source_id:
             continue
         if not _segments_overlap_enough(segment, other):
             similarity = _text_similarity(
@@ -771,16 +792,42 @@ def _has_nearby_multisource_conflict(segment: dict, segments: list[dict]) -> boo
                 continue
         nearby_candidates.append(other)
         if _segments_have_critical_fact_conflict(segment, other):
-            return True
+            conflict_sources.add(other_source_id)
         if _text_similarity(str(segment.get("text") or ""), str(other.get("text") or "")) < 0.28:
-            return True
+            conflict_sources.add(other_source_id)
     for index, left in enumerate(nearby_candidates):
         for right in nearby_candidates[index + 1 :]:
-            if str(left.get("source_id") or "primary") == str(right.get("source_id") or "primary"):
+            left_source_id = str(left.get("source_id") or "primary")
+            right_source_id = str(right.get("source_id") or "primary")
+            if left_source_id == right_source_id:
                 continue
             if _segments_have_critical_fact_conflict(left, right):
-                return True
-    return False
+                conflict_sources.update((left_source_id, right_source_id))
+    return conflict_sources
+
+
+def _group_has_majority_over_conflicts(
+    merged: dict,
+    group: list[dict],
+    segments: list[dict],
+) -> bool:
+    group_sources = _group_source_ids(group)
+    if len(group_sources) < 2:
+        return False
+    conflict_sources = _nearby_multisource_conflict_sources(
+        merged,
+        segments,
+        skip_source_ids=group_sources,
+    )
+    return bool(conflict_sources) and len(group_sources) > len(conflict_sources)
+
+
+def _group_source_ids(group: list[dict]) -> set[str]:
+    return {
+        str(item.get("source_id") or "primary")
+        for item in group
+        if str(item.get("source_id") or "primary")
+    }
 
 
 def _add_segment_flags(segment: dict, flags_to_add: tuple[str, ...]) -> None:
