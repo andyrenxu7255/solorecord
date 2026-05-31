@@ -6,7 +6,7 @@ from reportlab.pdfgen import canvas
 
 from .config import get_settings
 from .db import get_db
-from .repository import build_quality_report
+from .repository import action_items_with_evidence, build_quality_report
 from .utils import new_id, now_iso
 
 
@@ -27,8 +27,9 @@ def create_export(meeting_id: str, export_format: str) -> dict:
         meeting.get("summary", ""),
         meeting.get("role_notes", ""),
     )
+    enriched_actions = action_items_with_evidence(actions, quality_report)
     if export_format == "markdown":
-        path.write_text(_markdown(meeting, segments, actions), encoding="utf-8")
+        path.write_text(_markdown(meeting, segments, enriched_actions), encoding="utf-8")
     elif export_format == "json":
         import json
 
@@ -37,7 +38,7 @@ def create_export(meeting_id: str, export_format: str) -> dict:
                 {
                     "meeting": meeting,
                     "segments": segments,
-                    "actions": actions,
+                    "actions": enriched_actions,
                     "qualityReport": quality_report,
                 },
                 ensure_ascii=False,
@@ -48,9 +49,9 @@ def create_export(meeting_id: str, export_format: str) -> dict:
     elif export_format == "srt":
         path.write_text(_srt(segments), encoding="utf-8")
     elif export_format == "docx":
-        _docx(path, meeting, segments, actions)
+        _docx(path, meeting, segments, enriched_actions)
     elif export_format == "pdf":
-        _pdf(path, meeting, segments, actions)
+        _pdf(path, meeting, segments, enriched_actions)
     export_id = new_id("exp")
     with get_db() as db:
         db.execute(
@@ -93,6 +94,7 @@ def _extension(export_format: str) -> str:
 
 
 def _markdown(meeting: dict, segments: list[dict], actions: list[dict]) -> str:
+    meeting_actions, review_actions = _split_review_actions(actions)
     lines = [
         f"# {meeting['title']}",
         "",
@@ -110,8 +112,15 @@ def _markdown(meeting: dict, segments: list[dict], actions: list[dict]) -> str:
     for segment in segments:
         lines.append(f"- [{_time(segment['start_ms'])}] **{segment['display_name']}**：{segment['text']}")
     lines.extend(["", "## 待办", ""])
-    for item in actions:
+    for item in meeting_actions:
         lines.append(f"- [{item['status']}] {item['owner']}：{item['task']} {item['due']}")
+    if not meeting_actions:
+        lines.append("- 暂无可督办待办")
+    if review_actions:
+        lines.extend(["", "## 系统复核提醒", ""])
+        for item in review_actions:
+            reason = item.get("evidenceReason") or "不是可自动督办的会议待办"
+            lines.append(f"- {item['owner']}：{item['task']}（{reason}）")
     return "\n".join(lines) + "\n"
 
 
@@ -126,6 +135,7 @@ def _srt(segments: list[dict]) -> str:
 
 
 def _docx(path: Path, meeting: dict, segments: list[dict], actions: list[dict]) -> None:
+    meeting_actions, review_actions = _split_review_actions(actions)
     doc = Document()
     doc.add_heading(meeting["title"], level=1)
     doc.add_heading("会议纪要", level=2)
@@ -136,12 +146,20 @@ def _docx(path: Path, meeting: dict, segments: list[dict], actions: list[dict]) 
     for segment in segments:
         doc.add_paragraph(f"[{_time(segment['start_ms'])}] {segment['display_name']}：{segment['text']}")
     doc.add_heading("待办", level=2)
-    for item in actions:
+    if not meeting_actions:
+        doc.add_paragraph("暂无可督办待办")
+    for item in meeting_actions:
         doc.add_paragraph(f"{item['owner']}：{item['task']} {item['due']} [{item['status']}]")
+    if review_actions:
+        doc.add_heading("系统复核提醒", level=2)
+        for item in review_actions:
+            reason = item.get("evidenceReason") or "不是可自动督办的会议待办"
+            doc.add_paragraph(f"{item['owner']}：{item['task']}（{reason}）")
     doc.save(path)
 
 
 def _pdf(path: Path, meeting: dict, segments: list[dict], actions: list[dict]) -> None:
+    meeting_actions, review_actions = _split_review_actions(actions)
     pdf = canvas.Canvas(str(path), pagesize=A4)
     width, height = A4
     y = height - 40
@@ -164,10 +182,47 @@ def _pdf(path: Path, meeting: dict, segments: list[dict], actions: list[dict]) -
             y = height - 40
     pdf.drawString(40, y, "待办")
     y -= 22
-    for item in actions:
+    if not meeting_actions:
+        pdf.drawString(40, y, "暂无可督办待办")
+        y -= 18
+    for item in meeting_actions:
         pdf.drawString(40, y, f"{item['owner']}: {item['task']} {item['due']} [{item['status']}]"[:110])
         y -= 18
+        if y < 60:
+            pdf.showPage()
+            y = height - 40
+    if review_actions:
+        pdf.drawString(40, y, "系统复核提醒")
+        y -= 22
+        for item in review_actions:
+            reason = item.get("evidenceReason") or "不是可自动督办的会议待办"
+            pdf.drawString(40, y, f"{item['owner']}: {item['task']} ({reason})"[:110])
+            y -= 18
+            if y < 60:
+                pdf.showPage()
+                y = height - 40
     pdf.save()
+
+
+def _split_review_actions(actions: list[dict]) -> tuple[list[dict], list[dict]]:
+    meeting_actions = []
+    review_actions = []
+    for item in actions:
+        if _is_review_action(item):
+            review_actions.append(item)
+        else:
+            meeting_actions.append(item)
+    return meeting_actions, review_actions
+
+
+def _is_review_action(item: dict) -> bool:
+    return bool(
+        item.get("reviewOnly")
+        or item.get("review_only")
+        or item.get("actionKind") == "system_review"
+        or item.get("action_kind") == "system_review"
+        or item.get("evidenceStatus") == "system_review"
+    )
 
 
 def _time(ms: int) -> str:

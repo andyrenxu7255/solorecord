@@ -26,6 +26,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.solorecord.config.PreconfiguredConfig;
+import com.solorecord.model.ActionItem;
 import com.solorecord.model.AudioSegment;
 import com.solorecord.model.MeetingRecord;
 import com.solorecord.model.TranscriptSegment;
@@ -355,9 +356,7 @@ public final class MainActivity extends Activity {
         if (!record.getActionItems().isEmpty()) {
             addSectionTitle("待办");
             record.getActionItems().forEach(item ->
-                    content.addView(cardText(item.getOwner() + "：" + item.getTask()
-                            + (item.getDue().isEmpty() ? "" : " · " + item.getDue())
-                            + " · " + actionStatusLabel(item.getStatus())), spacedParams()));
+                    content.addView(actionCardText(item), spacedParams()));
         }
 
         addSpeakerStats(record);
@@ -1082,6 +1081,59 @@ public final class MainActivity extends Activity {
         view.setPadding(dp(14), dp(16), dp(14), dp(16));
         view.setBackground(makeBg(COLOR_SURFACE, dp(8), COLOR_LINE));
         return view;
+    }
+
+    private TextView actionCardText(ActionItem item) {
+        StringBuilder builder = new StringBuilder();
+        if (item.isReviewOnly()) {
+            builder.append("系统复核提醒，不会作为督办待办\n");
+        }
+        builder.append(item.getOwner())
+                .append("：")
+                .append(item.getTask());
+        if (!item.getDue().isEmpty()) {
+            builder.append(" · ").append(item.getDue());
+        }
+        builder.append(" · ").append(actionStatusLabel(item.getStatus()));
+        String evidenceLabel = actionEvidenceLabel(item);
+        if (!evidenceLabel.isEmpty()) {
+            builder.append("\n").append(evidenceLabel);
+        }
+        if (!item.getEvidenceReason().isEmpty()) {
+            builder.append("\n").append(item.getEvidenceReason());
+        }
+        TextView view = cardText(builder.toString());
+        view.setTextSize(item.isReviewOnly() ? 15 : 16);
+        return view;
+    }
+
+    private String actionEvidenceLabel(ActionItem item) {
+        String evidenceStatus = item.getEvidenceStatus();
+        if ("system_review".equals(evidenceStatus) || item.isReviewOnly()) {
+            return "证据状态：系统复核提醒";
+        }
+        if ("supported".equals(evidenceStatus)) {
+            return "证据状态：有转写依据";
+        }
+        if ("majority".equals(evidenceStatus)) {
+            return "证据状态：多数录音源支持，建议抽查";
+        }
+        if ("weak_owner".equals(evidenceStatus)) {
+            return "证据状态：负责人证据弱";
+        }
+        if ("unsupported".equals(evidenceStatus)) {
+            return "证据状态：缺少转写证据";
+        }
+        if ("conflict".equals(evidenceStatus)) {
+            return "证据状态：多源录音存在冲突";
+        }
+        if ("contradiction".equals(evidenceStatus)) {
+            return "证据状态：与转写语义冲突";
+        }
+        if (item.requiresReview()) {
+            return "证据状态：待人工核对";
+        }
+        return "";
     }
 
     private TextView text(String label, int size, boolean bold) {

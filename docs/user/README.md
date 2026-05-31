@@ -183,6 +183,8 @@ Web 详情页的“整理质量”会提示候选人名、需要校对的段落�
 - JSON：适合系统对接。
 - SRT：适合字幕和时间轴。
 
+如果导出文件里出现“系统复核提醒”，它只是提醒你补齐或复核记录，不是会议产生的待办。Markdown、Word、PDF 和 JSON 会把这类条目单独标出；复制给 IM 或同步督办前应跳过，除非你已经根据转写或录音把它改写成真实负责人和任务。
+
 ## 常见状态
 
 | 状态 | 含义 |
@@ -379,6 +381,10 @@ Action items usually include:
 - Status
 
 If the result is inaccurate, edit it on the Web. The Web meeting detail page can add, remove, and update action items. Saved action items appear in mobile sync, exports, and enterprise knowledge APIs.
+
+When an export shows a "system review reminder", treat it as a review prompt,
+not a meeting action item. Markdown, Word, PDF, and JSON exports keep that label
+so you do not copy it into IM reminders by accident.
 
 ### Post-Meeting Review Order
 

@@ -4404,6 +4404,79 @@ def test_external_action_items_embed_evidence_for_agents(tmp_path: Path) -> None
     assert "客户名单" in last_action["evidence"][0]["text"]
 
 
+def test_exports_separate_system_review_actions_from_meeting_actions(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "导出复核提醒"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_export_review_1', ?, 1, 1, 'SYSTEM', '系统',
+             0, 60000, '音频为空或暂未完成转写，请人工复核。',
+             0.1, '["empty_asr"]', 'now')
+            """,
+            (meeting_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO action_items (id, meeting_id, owner, task, due, status, created_at, updated_at)
+            VALUES
+            ('act_export_review_1', ?, '待确认',
+             '检查转写结果并补充真实会议纪要', '', 'open', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    export = client.post(
+        f"/api/web/meetings/{meeting_id}/exports?export_format=markdown",
+        headers=headers,
+    )
+    assert export.status_code == 200
+    markdown_text = Path(export.json()["path"]).read_text(encoding="utf-8")
+    assert "## 待办\n\n- 暂无可督办待办" in markdown_text
+    assert "## 系统复核提醒" in markdown_text
+    assert "检查转写结果并补充真实会议纪要" in markdown_text
+
+    json_export = client.post(
+        f"/api/web/meetings/{meeting_id}/exports?export_format=json",
+        headers=headers,
+    )
+    assert json_export.status_code == 200
+    exported_json = json.loads(Path(json_export.json()["path"]).read_text(encoding="utf-8"))
+    action = exported_json["actions"][0]
+    assert action["evidenceStatus"] == "system_review"
+    assert action["actionKind"] == "system_review"
+    assert action["reviewOnly"] is True
+    assert action["autoActionable"] is False
+    assert action["reminderSafe"] is False
+
+    docx_export = client.post(
+        f"/api/web/meetings/{meeting_id}/exports?export_format=docx",
+        headers=headers,
+    )
+    assert docx_export.status_code == 200
+    from docx import Document
+
+    doc = Document(Path(docx_export.json()["path"]))
+    doc_text = "\n".join(paragraph.text for paragraph in doc.paragraphs)
+    assert "暂无可督办待办" in doc_text
+    assert "系统复核提醒" in doc_text
+
+    pdf_export = client.post(
+        f"/api/web/meetings/{meeting_id}/exports?export_format=pdf",
+        headers=headers,
+    )
+    assert pdf_export.status_code == 200
+    assert Path(pdf_export.json()["path"]).stat().st_size > 0
+
+
 def test_quality_report_flags_summary_without_transcript_evidence(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)

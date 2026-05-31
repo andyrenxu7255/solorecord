@@ -232,7 +232,7 @@ Agent 验收时必须检查：
 - `qualityReport.speakerEvidence` 应包含需校对段落的 `segment_id`、`scenario_label`、`reason` 和相邻上下文；如果 Web 时间线没有显示这些信息，先修前端再做真实会议验收。
 - `qualityReport.metrics.speaker_alias_conflict_count` 应反映同一 `display_name` 是否对应多个 `speaker_id`。外部知识 Agent 应按 `knowledgeGraph.nodes[].speaker_ids` 保留追溯，不要把同名多标签当成多个人。
 - `knowledgeGraph.nodes` 应包含 `topic` 节点，`edges` 应包含“讨论主题”“讨论”“产生待办”“截止”等关系。topic 节点的 `evidence` 必须携带 `segment_id`、`source_id`、`source_segment_no`、`start_ms`、`end_ms` 和原文片段，外部知识 Agent 可以用 topic 连接上下文，但必须保留转写引用作为证据层。
-- `qualityReport.metrics.action_evidence_coverage` 应反映待办是否有转写证据；`unsupported_action_count` 大于 0 时，前端应提示“待办缺少转写证据”，便于人工复核模型是否补写。LLM 新生成的待办如果是 `unsupported`，保存前应被移除；如果全部生成待办都缺证据，应保留一条带原文片段的“按转写原文复核待办”。LLM 未配置但 ASR 已生成真实转写时，不应凭空创建“检查转写结果”系统待办；只有 `mock_asr`、`empty_asr`、`missing_audio` 这类占位转写才保留复核提醒。外部督办 Agent 不得把这类复核待办当作可自动提醒事项；它们必须显示为 `evidenceStatus=system_review`、`actionKind=system_review`、`autoActionable=false`、`reminderSafe=false`，且不计入泛化负责人或缺证据待办风险。已判定 `unsupported` 的待办不应再列入 `weakActionOwners`，否则下游会把一个缺证据问题误读成缺证据加负责人弱证据两个独立风险。
+- `qualityReport.metrics.action_evidence_coverage` 应反映待办是否有转写证据；`unsupported_action_count` 大于 0 时，前端应提示“待办缺少转写证据”，便于人工复核模型是否补写。LLM 新生成的待办如果是 `unsupported`，保存前应被移除；如果全部生成待办都缺证据，应保留一条带原文片段的“按转写原文复核待办”。LLM 未配置但 ASR 已生成真实转写时，不应凭空创建“检查转写结果”系统待办；只有 `mock_asr`、`empty_asr`、`missing_audio` 这类占位转写才保留复核提醒。外部督办 Agent 不得把这类复核待办当作可自动提醒事项；它们必须显示为 `evidenceStatus=system_review`、`actionKind=system_review`、`autoActionable=false`、`reminderSafe=false`，且不计入泛化负责人或缺证据待办风险。Android 离线记录页和 Markdown/Word/PDF/JSON 导出也必须保留系统复核提醒标签，不能把它混进普通待办。已判定 `unsupported` 的待办不应再列入 `weakActionOwners`，否则下游会把一个缺证据问题误读成缺证据加负责人弱证据两个独立风险。
 - `qualityReport.metrics.source_segment_coverage` 和 `qualityReport.sourceCoverage.weakSegments` 应按 `(source_id, source_segment_no)` 反映每个上传音频分段是否被最终转写覆盖。`source_segment_coverage_weak` 是知识入库阻塞项，外部知识 Agent 不得把该会议视为完整证据。`multi_source_conflict_count` 大于 0 时也应保留人工复核状态。
 - `qualityReport.multiSourceConflicts` 是多源冲突的结构化回听清单，条目包含 `segment_id`、`source_id`、`source_segment_no`、发言人、时间、文本、flags 和附近其它冲突来源。外部知识 Agent 应直接消费该字段做证据复核，不要只根据 `multi_source_conflict_count` 写入确定知识。
 - `qualityReport.metrics.summary_contradiction_count` 大于 0 或出现 `summary_evidence_contradiction` 时，说明纪要/分角色整理把同主题转写证据写反了，例如原文是“还没定版/先不要发”，纪要却写成“已定版/已发送”。这是知识入库阻塞项，Agent 必须以转写原文为准，不能把该纪要沉淀为确定知识。LLM 新生成纪要只要存在缺证据要点，也应在保存前降级为“基于转写原文的保守整理”。
@@ -851,7 +851,9 @@ The repository can be public only if no real secrets, runtime data, databases, c
   takes precedence over `majority` and `knowledgeSafe` stays false.
   `evidenceStatus=system_review` means the row is a system review entry, not a
   meeting action; reminder agents must skip it because `autoActionable=false`
-  and `reminderSafe=false`.
+  and `reminderSafe=false`. Android local records and Markdown/Word/PDF/JSON
+  exports must keep the system-review label instead of mixing it with normal
+  action items.
   `evidenceStatus=conflict` means the action is only backed by
   `multi_source_conflict` transcript rows; reminder agents must treat
   `knowledgeSafe=false` and `requiresReview=true` as a hard gate and must not

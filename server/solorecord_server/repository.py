@@ -1423,6 +1423,11 @@ def _action_items_with_evidence(action_items, quality_report: dict) -> list[dict
     return items
 
 
+def action_items_with_evidence(action_items, quality_report: dict) -> list[dict]:
+    """Return action items enriched with quality metadata for exports or APIs."""
+    return _action_items_with_evidence(action_items, quality_report)
+
+
 def _action_evidence_items(
     actions: list[dict],
     segments: list[dict],
