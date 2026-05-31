@@ -15,6 +15,7 @@ from .processing import (
     _merge_multisource_segments,
     _normalize_action_owners,
     _normalize_semantic_segments,
+    preserve_uncovered_audio_rows,
     _preserve_source_segments,
     _refined_segments_cover_source,
     _repair_refined_timeline,
@@ -137,6 +138,7 @@ def probe_meeting(
             _preserve_source_segments(refined, segments),
             "llm",
         )
+        refined, source_gap_count = preserve_uncovered_audio_rows(refined, audio_rows)
         summary, role_notes, actions = summarize_with_llm(refined, options)
         summary, role_notes, actions = _grounded_summary_result(
             summary,
@@ -157,6 +159,7 @@ def probe_meeting(
                     for item in refined
                     if "timeline_repaired" in (item.get("flags") or [])
                 ),
+                "source_gap_review_segment_count": source_gap_count,
                 "speaker_review_count": sum(
                     1
                     for item in refined
@@ -222,6 +225,7 @@ def _quality_snapshot(
     summary: str,
     role_notes: str,
 ) -> dict:
+    segments, source_gap_count = preserve_uncovered_audio_rows(segments, audio_rows)
     report = build_quality_report(
         [_segment_row_like(item) for item in segments],
         [_action_row_like(item) for item in actions],
@@ -239,6 +243,7 @@ def _quality_snapshot(
         "candidate_people": list(mentioned_people_candidates(segments, limit=24).keys()),
         "summary_preview": summary[:500],
         "role_notes_preview": role_notes[:500],
+        "source_gap_review_segment_count": source_gap_count,
         "quality_report": report,
         "knowledge_readiness": build_knowledge_readiness(report),
     }

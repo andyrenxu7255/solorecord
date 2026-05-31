@@ -283,7 +283,7 @@ SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
 - 语义重分段输出会保留 `source_index`/`source_segment_no`，方便从 Web 时间线、导出 JSON 或外部知识平台追溯到原始音频分段。通过上下文或任务归属推断的人名会保留 `speaker_review` 和 `reason:*`，上线验收时要把它当作“建议归属”，而不是声纹确认。
 - 如果用户已经把某个 `speaker_id` 改成具体人名，最终整理会优先保留这个人工校正；但 `发言人 1/2/3` 这类泛化旧名不会阻止模型根据上下文识别新的真实人名。
 - 会议详情里的“整理质量”会显示待办证据率。证据率低或出现“待办缺少转写证据”时，说明待办可能是模型补写或上下文关联不足，建议先回看转写/录音再对外发送。新生成的 LLM 待办若完全缺少转写证据，会在保存前被删除；如果全部生成待办都缺证据，系统只保留一条带原文片段的“按转写原文复核待办”，用于提醒人工复核，不应被外部督办系统自动发送。若 LLM 未配置但 ASR 已生成真实转写，服务端只保存保守纪要，不生成“检查转写结果”系统待办；该提醒只用于 `mock_asr`、`empty_asr`、`missing_audio` 等占位转写场景。这类条目会显示 `evidenceStatus=system_review`、`actionKind=system_review`、`autoActionable=false`、`reminderSafe=false`，Web 复制待办时会跳过；Android 离线记录页和 Markdown/Word/PDF/JSON 导出也会保留“系统复核提醒”标签。
-- 会议详情里的“整理质量”也会显示分段覆盖率。如果出现“音频分段待核对”或 `source_segment_coverage_weak`，说明某个上传音频分段在当前转写中没有足够文本，可能是 ASR 空结果、重传缺失或 LLM 后处理丢段。上线验收时应先回听或重转写该分段，不要把该会议直接交给知识平台自动入库。
+- 会议详情里的“整理质量”也会显示分段覆盖率。如果出现“音频分段待核对”或 `source_segment_coverage_weak`，说明某个上传音频分段在当前转写中没有足够有效文本，可能是 ASR 空结果、重传缺失或 LLM 后处理丢段。系统会把完全缺失的已上传音频补成“系统复核”转写行，方便定位；但 `mock_asr`、`empty_asr`、`missing_audio`、`source_coverage_gap` 都只是复核占位，不代表有效覆盖。上线验收时应先回听或重转写该分段，不要把该会议直接交给知识平台自动入库。
 - 如果 `weak_action_owner_count` 大于 0，说明待办内容本身可能来自转写，但负责人和任务之间缺少明确上下文证据。上线验收时要重点检查这些待办，避免把督办消息发给错误的人。
 - 如果待办负责人显示为“我、我们、他、这边、大家”等代词，系统会尝试用第一人称转写和任务关键词换成真实发言人；换不出来会降级为 `待确认`，仍应人工确认后再复制到 IM。
 - 如果大模型把待办负责人写成“负责人、相关负责人、主持人、前端开发、某某负责人”等泛化角色，系统会先降级为 `待确认`，再用转写上下文尝试补回具体人或明确团队。验收时看到 `待确认` 不一定是漏识别，也可能是系统避免误督办的保护。
@@ -835,7 +835,7 @@ Operations notes:
 - `SOLO_ASR_PROVIDER` can be `openai-compatible`, `remote-stt`, or `funasr`.
 - Endpoint, API key, and model belong only in server-local `server/.env` or Web admin configuration, never in the APK.
 - The server calls `/audio/transcriptions` first; if the service returns 404, it falls back to `/asr`.
-- Empty remote STT text is saved with an `empty_asr` placeholder transcript so the meeting remains visible, exportable, and reviewable.
+- Empty remote STT text is saved with an `empty_asr` placeholder transcript so the meeting remains visible, exportable, and reviewable. Placeholder rows are not counted as effective source-segment coverage; they keep the review target visible while `source_segment_coverage_weak` blocks automatic ingestion.
 
 ### Semantic Segmentation And Speaker Inference After ASR
 
@@ -892,7 +892,7 @@ Troubleshooting notes:
 - `multi_source_conflict` is not a processing failure; it means a human should listen to the different sources for that time window.
 - `qualityReport.multiSourceConflicts` is the concrete replay checklist for those conflicts. Each item includes source, source segment, time range, speaker, conflict text, and nearby conflicting snippets; downstream knowledge or operations agents should consume it before deciding whether the meeting is safe to index.
 - Check multi-source conflict granularity during acceptance. `source_id/source_segment_no` is for audio coverage, segment retry, and replay navigation. If action or summary evidence already has `segment_id`, conflict or majority status must be scoped to that exact transcript row. One five-minute source segment may contain both a conflicting topic and a safe action; the safe action should not show the multi-source conflict label.
-- `knowledgeReadiness.reviewEvidence` groups the human-review targets in one field: multi-source conflicts, weak coverage segments, speaker risks, summary risks, and action risks. The Web quality panel also shows a "knowledge ingestion review" block with `ready/review_first/hold`, blockers, review tags, notes, and jumpable evidence. Use it to locate issues quickly, then verify against the transcript evidence; if a weak coverage row has no transcript target, replay or re-transcribe that segment first.
+- `knowledgeReadiness.reviewEvidence` groups the human-review targets in one field: multi-source conflicts, weak coverage segments, speaker risks, summary risks, and action risks. The Web quality panel also shows a "knowledge ingestion review" block with `ready/review_first/hold`, blockers, review tags, notes, and jumpable evidence. Use it to locate issues quickly, then verify against the transcript evidence; a weak coverage row may jump to a "system review" placeholder, which still means operators should replay or re-transcribe that audio segment before ingestion.
 - If an action shows `evidenceStatus=conflict` or the "multi-source conflict" review label, the action has transcript evidence but the sources disagree on key facts such as date, amount, or owner. `knowledgeSafe=false` and `requiresReview=true` mean downstream reminder or knowledge platforms must not auto-send or store it as confirmed knowledge.
 - If an action shows `evidenceStatus=majority` or the "majority source confirmed" label, the primary result is supported by most recording sources and the owner is not generic or unknown. `knowledgeSafe=true` and `requiresReview=true` mean downstream systems may use it as primary evidence, but should preserve a replay-review hint.
 - If an action shows `evidenceStatus=weak_owner`, do not auto-send reminders even when the task text has majority-source evidence. Apply the suggested owner or confirm the owner manually first.

@@ -1112,7 +1112,8 @@ function renderSourceCoverage(sourceCoverage) {
           <b>音频分段待核对：分段 ${escapeHtml(item.segment_no || "")}</b>
           <p>${escapeHtml(item.sample || "该音频分段当前缺少足够转写文本，建议重新转写或回听确认。")}</p>
           <div class="summary-evidence-refs">
-            <span>${escapeHtml(formatTime(item.start_ms || 0))} - ${escapeHtml(formatTime(item.end_ms || 0))} · 转写 ${Number(item.transcript_segment_count || 0)} 段</span>
+            <span>${escapeHtml(formatTime(item.start_ms || 0))} - ${escapeHtml(formatTime(item.end_ms || 0))} · 有效转写 ${Number(item.substantive_transcript_segment_count || 0)} 段 / 复核行 ${Number(item.transcript_segment_count || 0)}</span>
+            ${renderEvidenceJumpButton(item)}
           </div>
         </div>
       `).join("")}

@@ -535,7 +535,9 @@ def test_multi_source_join_uploads_same_local_segment_without_conflict(tmp_path:
     ]
     assert len(detail["recordingSources"]) == 2
     assert detail["qualityReport"]["metrics"]["recording_source_count"] == 2
-    assert detail["qualityReport"]["metrics"]["source_segment_coverage"] == 1
+    assert detail["qualityReport"]["metrics"]["source_segment_coverage"] == 0
+    assert detail["qualityReport"]["metrics"]["placeholder_transcript_count"] == 2
+    assert len(detail["qualityReport"]["sourceCoverage"]["weakSegments"]) == 2
 
     transcript = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=owner_headers).json()
     assert {(item["source_id"], item["source_segment_no"]) for item in transcript["segments"]} == {
@@ -2241,6 +2243,196 @@ def test_final_processing_rechecks_reused_partial_context(tmp_path: Path) -> Non
     assert "semantic_final" in transcript["segments"][1]["flags"]
     assert "contextual_speaker_inference" in transcript["segments"][1]["flags"]
     assert transcript["segments"][1]["speaker_id"] == "SPEAKER_02"
+
+
+def test_final_processing_preserves_uncovered_audio_segment_for_review(
+    tmp_path: Path,
+) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "缺段保护"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+    import solorecord_server.processing as processing
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO audio_segments
+            (id, meeting_id, segment_no, file_name, storage_path, mime_type, size_bytes,
+             sha256, duration_ms, start_ms, end_ms, upload_status, created_at)
+            VALUES
+            ('aud_gap_1', ?, 1, 'part1.wav', 'missing1.wav', 'audio/wav', 1,
+             'sha-gap-1', 60000, 0, 60000, 'uploaded', 'now'),
+            ('aud_gap_2', ?, 2, 'part2.wav', 'missing2.wav', 'audio/wav', 1,
+             'sha-gap-2', 60000, 60000, 120000, 'uploaded', 'now')
+            """,
+            (meeting_id, meeting_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_gap_1', ?, 1, 1, 'SPEAKER_01', '任旭', 0, 60000,
+             '客户名单今天定版，销售逐个通知客户。', 0.86,
+             '["semantic_partial"]', 'now'),
+            ('seg_gap_2', ?, 1, 2, 'SPEAKER_02', '李娜', 60000, 120000,
+             '物料清单下午同步给客户。', 0.86,
+             '["semantic_partial"]', 'now')
+            """,
+            (meeting_id, meeting_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO processing_jobs
+            (id, meeting_id, type, status, current_stage, progress, asr_provider, created_at, updated_at)
+            VALUES ('job_gap_review', ?, 'transcribe', 'queued', 'queued', 0, 'mock', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    def drop_second_segment(_meeting_id, segments, force_semantic=False, scope=""):
+        kept = dict(segments[0])
+        kept["flags"] = ["semantic_final"]
+        return [kept]
+
+    with patch.object(processing, "_refine_segments", side_effect=drop_second_segment):
+        processing.process_transcription_job("job_gap_review")
+
+    transcript = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers).json()
+    assert len(transcript["segments"]) == 2
+    review_segment = transcript["segments"][1]
+    flags = parse_flags(review_segment["flags"])
+    assert review_segment["source_segment_no"] == 2
+    assert review_segment["display_name"] == "系统复核"
+    assert "source_coverage_gap" in flags
+    assert "missing_audio" in flags
+    assert "semantic_final" in flags
+    assert "最终转写没有覆盖" in review_segment["text"]
+
+    detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
+    report = detail["qualityReport"]
+    assert report["metrics"]["placeholder_transcript_count"] == 1
+    assert report["metrics"]["speaker_count"] == 1
+    assert report["metrics"]["speaker_review_count"] == 0
+    assert report["metrics"]["long_segment_count"] == 0
+    assert report["metrics"]["source_segment_coverage"] == 0.5
+    assert report["metrics"]["source_segment_weak_count"] == 1
+    weak_segment = report["sourceCoverage"]["weakSegments"][0]
+    assert weak_segment["segment_no"] == 2
+    assert weak_segment["transcript_segment_count"] == 1
+    assert weak_segment["substantive_transcript_segment_count"] == 0
+    assert weak_segment["has_review_placeholder"] is True
+    assert "source_segment_coverage_weak" in detail["knowledgeReadiness"]["blockers"]
+
+
+def test_final_processing_does_not_duplicate_existing_placeholder_segment(
+    tmp_path: Path,
+) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "空语音不重复"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+    import solorecord_server.processing as processing
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO audio_segments
+            (id, meeting_id, segment_no, file_name, storage_path, mime_type, size_bytes,
+             sha256, duration_ms, start_ms, end_ms, upload_status, created_at)
+            VALUES ('aud_empty_existing', ?, 1, 'empty.wav', 'missing.wav', 'audio/wav', 1,
+                    'sha-empty-existing', 60000, 0, 60000, 'uploaded', 'now')
+            """,
+            (meeting_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_empty_existing', ?, 1, 1, 'SPEAKER_01', '发言人 1', 0, 1000,
+             '音频分段 empty.wav 未识别到有效语音，请人工确认录音内容。',
+             0.0, '["empty_asr","semantic_partial"]', 'now')
+            """,
+            (meeting_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO processing_jobs
+            (id, meeting_id, type, status, current_stage, progress, asr_provider, created_at, updated_at)
+            VALUES ('job_empty_existing', ?, 'transcribe', 'queued', 'queued', 0, 'mock', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    with patch.object(processing, "_refine_segments", side_effect=lambda _meeting_id, segments, **_: segments):
+        processing.process_transcription_job("job_empty_existing")
+
+    transcript = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers).json()
+    assert len(transcript["segments"]) == 1
+    flags = parse_flags(transcript["segments"][0]["flags"])
+    assert "empty_asr" in flags
+    assert "source_coverage_gap" not in flags
+    report = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()["qualityReport"]
+    assert report["metrics"]["source_segment_coverage"] == 0
+    assert report["sourceCoverage"]["weakSegments"][0]["transcript_segment_count"] == 1
+
+
+def test_quality_probe_postprocess_simulates_source_gap_review_rows(
+    tmp_path: Path,
+) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "探针缺段"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+    import solorecord_server.quality_probe as quality_probe
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO audio_segments
+            (id, meeting_id, segment_no, file_name, storage_path, mime_type, size_bytes,
+             sha256, duration_ms, start_ms, end_ms, upload_status, created_at)
+            VALUES
+            ('aud_probe_gap_1', ?, 1, 'part1.wav', 'missing1.wav', 'audio/wav', 1,
+             'sha-probe-gap-1', 60000, 0, 60000, 'uploaded', 'now'),
+            ('aud_probe_gap_2', ?, 2, 'part2.wav', 'missing2.wav', 'audio/wav', 1,
+             'sha-probe-gap-2', 60000, 60000, 120000, 'uploaded', 'now')
+            """,
+            (meeting_id, meeting_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_probe_gap_1', ?, 1, 1, 'SPEAKER_01', '任旭', 0, 60000,
+             '客户名单今天定版，销售逐个通知客户。', 0.86,
+             '["semantic_partial"]', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    result = quality_probe.probe_meeting(
+        meeting_id,
+        run_llm=False,
+        run_postprocess=True,
+    )
+
+    assert result["postprocess"]["source_gap_review_segment_count"] == 1
+    report = result["postprocess"]["quality_report"]
+    assert report["metrics"]["source_segment_coverage"] == 0.5
+    assert report["metrics"]["placeholder_transcript_count"] == 1
+    weak_segment = report["sourceCoverage"]["weakSegments"][0]
+    assert weak_segment["segment_no"] == 2
+    assert weak_segment["has_review_placeholder"] is True
 
 
 def test_final_processing_keeps_called_person_followup_commitments(tmp_path: Path) -> None:

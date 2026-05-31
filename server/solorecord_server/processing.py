@@ -139,6 +139,7 @@ def process_transcription_job(job_id: str) -> None:
             force_semantic=True,
             scope="final",
         )
+        segments = _preserve_uncovered_audio_segments(meeting_id, segments)
         _replace_transcript(meeting_id, segments)
         summary, role_notes, actions = _summarize(segments)
         with get_db() as db:
@@ -1123,6 +1124,155 @@ def _refined_segments_cover_each_source(
         if covered / len(source_tokens) < 0.25:
             return False
     return True
+
+
+def _preserve_uncovered_audio_segments(
+    meeting_id: str,
+    segments: list[dict],
+) -> list[dict]:
+    """Keep every uploaded audio segment visible in the final evidence layer."""
+    with get_db() as db:
+        audio_rows = db.execute(
+            """
+            SELECT * FROM audio_segments
+            WHERE meeting_id = ?
+            ORDER BY start_ms, segment_no
+            """,
+            (meeting_id,),
+        ).fetchall()
+    if not audio_rows:
+        return segments
+    result, added = preserve_uncovered_audio_rows(segments, audio_rows)
+    if added:
+        with get_db() as db:
+            db.execute(
+                """
+                INSERT INTO audit_logs
+                (id, actor_user_id, action, resource_type, resource_id, metadata, created_at)
+                VALUES (?, 'system', 'transcript.source_gap_preserved', 'meeting', ?, ?, ?)
+                """,
+                (
+                    new_id("audlog"),
+                    meeting_id,
+                    json.dumps({"gap_count": added}, ensure_ascii=False),
+                    now_iso(),
+                ),
+            )
+    return result
+
+
+def preserve_uncovered_audio_rows(
+    segments: list[dict],
+    audio_rows: list,
+) -> tuple[list[dict], int]:
+    result = [dict(item) for item in segments]
+    covered_keys = _covered_source_segment_keys(result)
+    visible_keys = _visible_source_segment_keys(result)
+    added = 0
+    for row in audio_rows:
+        source_id = str(row["source_id"] or "primary")
+        source_segment_no = int(row["source_segment_no"] or row["segment_no"] or 0)
+        source_key = (source_id, source_segment_no)
+        if not source_segment_no or source_key in covered_keys or source_key in visible_keys:
+            continue
+        result.append(_source_coverage_gap_segment(row))
+        visible_keys.add(source_key)
+        added += 1
+    return sorted(
+        result,
+        key=lambda item: (
+            int(item.get("start_ms") or 0),
+            int(item.get("end_ms") or 0),
+            str(item.get("source_id") or ""),
+        ),
+    ), added
+
+
+def _covered_source_segment_keys(segments: list[dict]) -> set[tuple[str, int]]:
+    keys: set[tuple[str, int]] = set()
+    for segment in segments:
+        for key in _source_segment_refs(segment):
+            if _segment_has_substantive_text(segment):
+                keys.add(key)
+        source_no = segment.get("source_segment_no")
+        if source_no is None or not _segment_has_substantive_text(segment):
+            continue
+        try:
+            keys.add((str(segment.get("source_id") or "primary"), int(source_no)))
+        except (TypeError, ValueError):
+            continue
+    return keys
+
+
+def _visible_source_segment_keys(segments: list[dict]) -> set[tuple[str, int]]:
+    keys: set[tuple[str, int]] = set()
+    for segment in segments:
+        for key in _source_segment_refs(segment):
+            keys.add(key)
+        source_no = segment.get("source_segment_no")
+        if source_no is None:
+            continue
+        try:
+            keys.add((str(segment.get("source_id") or "primary"), int(source_no)))
+        except (TypeError, ValueError):
+            continue
+    return keys
+
+
+def _source_segment_refs(segment: dict) -> list[tuple[str, int]]:
+    refs: list[tuple[str, int]] = []
+    for flag in _flags(segment):
+        if not str(flag).startswith("multi_source_refs:"):
+            continue
+        raw_refs = str(flag).split(":", 1)[1]
+        for raw_ref in raw_refs.split(","):
+            if ":" not in raw_ref:
+                continue
+            source_id, source_no = raw_ref.rsplit(":", 1)
+            try:
+                refs.append((source_id or "primary", int(source_no)))
+            except (TypeError, ValueError):
+                continue
+    return list(dict.fromkeys(refs))
+
+
+def _segment_has_substantive_text(segment: dict) -> bool:
+    flags = set(_flags(segment))
+    if {"missing_audio", "empty_asr", "mock_asr", "source_coverage_gap"} & flags:
+        return False
+    text = _compact_alignment_text(str(segment.get("text") or ""))
+    return len(text) >= 6
+
+
+def _source_coverage_gap_segment(audio_row) -> dict:
+    source_id = str(audio_row["source_id"] or "primary")
+    source_segment_no = int(audio_row["source_segment_no"] or audio_row["segment_no"] or 0)
+    segment_no = int(audio_row["segment_no"] or source_segment_no)
+    start_ms = int(audio_row["start_ms"] or 0)
+    end_ms = int(audio_row["end_ms"] or start_ms)
+    if end_ms <= start_ms:
+        end_ms = start_ms + max(1000, int(audio_row["duration_ms"] or 1000))
+    file_name = Path(str(audio_row["file_name"] or "")).name or f"segment-{segment_no}"
+    return {
+        "source_id": source_id,
+        "source_segment_no": source_segment_no,
+        "speaker_id": "SYSTEM_REVIEW",
+        "display_name": "系统复核",
+        "start_ms": start_ms,
+        "end_ms": end_ms,
+        "text": (
+            f"音频分段 {segment_no}（{file_name}）已上传，但最终转写没有覆盖该来源分段。"
+            "请回听音频或重新转写后再入库。"
+        ),
+        "confidence": 0.0,
+        "flags": [
+            "missing_audio",
+            "source_coverage_gap",
+            "speaker_review",
+            "semantic_final",
+            "system_review",
+        ],
+    }
 
 
 def _related_refined_text(refined: list[dict], source: dict) -> str:
@@ -2123,7 +2273,7 @@ def _is_generic_speaker_name(name: str) -> bool:
     lowered = name.lower()
     if lowered.startswith("speaker") or name.startswith("发言人"):
         return True
-    return name in {"未知", "待确认", "不确定", "unknown"}
+    return name in {"未知", "待确认", "不确定", "系统复核", "unknown"}
 
 
 def _speaker_marker_count(text: str) -> int:

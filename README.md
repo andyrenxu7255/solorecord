@@ -234,7 +234,8 @@ If your self-hosted ASR is exposed through an OpenAI-compatible HTTP service,
 select `openai-compatible` or `funasr` and configure endpoint, API key, and
 model on the server. The server first calls `/audio/transcriptions`, then
 falls back to `/asr` when needed. Empty-speech results are kept as traceable
-placeholder transcript rows so the meeting remains usable.
+placeholder transcript rows so the meeting remains usable, but placeholder
+rows do not count as effective source-segment coverage.
 
 When ASR returns native speaker fields, the server uses them directly. If ASR
 returns only plain text, a single speaker, long native-speaker chunks, or

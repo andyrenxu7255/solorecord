@@ -104,7 +104,7 @@ Windows 版本下载后解压，运行 `SoloRecord.exe`。iOS、macOS 和 Harmon
 
 如果系统已经根据上下文拆出了“任旭”“李娜”这类名字，但旁边标记了“需确认”，说明这是模型推断结果，建议你重点看这一段原文和音频。Web 时间线还可能显示“大模型分段”或“规则分段”，它们表示系统在 ASR 之后又做了一次对话轮次整理。
 
-Web 详情页的“整理质量”会提示候选人名、需要校对的段落、发言人证据风险、分段覆盖率和待办证据率。待办证据率不是最终评分，而是提醒你：待办是否能在转写原文里找到依据。分段覆盖率用于发现某个音频分段在最终转写里过短或缺失。若出现“发言人缺少原文证据”“音频分段待核对”“待办缺少转写证据”或“待办与原文相反”，建议先回看对应转写或录音，再复制给 IM 或外部系统。
+Web 详情页的“整理质量”会提示候选人名、需要校对的段落、发言人证据风险、分段覆盖率和待办证据率。待办证据率不是最终评分，而是提醒你：待办是否能在转写原文里找到依据。分段覆盖率用于发现某个音频分段在最终转写里过短或缺失；如果系统补出“系统复核”转写行，表示这段音频已上传但缺少有效转写，需要回听或重新转写。若出现“发言人缺少原文证据”“音频分段待核对”“待办缺少转写证据”或“待办与原文相反”，建议先回看对应转写或录音，再复制给 IM 或外部系统。
 
 如果开启了多源同录，“整理质量”还会显示“多源合并”“多源互补”和“多源冲突”。多源合并表示系统发现多个录音源在同一时间记录了相近内容，并保留了更完整的一条；多源互补表示不同录音源各自漏掉了部分短语，系统把原始转写里能互相印证、且没有事实冲突的短语补到同一条记录中；多源冲突表示同一时间不同来源差异较大，或日期、数量、负责人等关键事实不一致，建议回听对应录音后再对外发送纪要。
 
@@ -465,6 +465,8 @@ Rename the role in record details and apply the change to all segments with the 
 If a row is marked “needs review”, the speaker was inferred from context and should be checked against the text or audio. Rows can also be marked “LLM segmented” or “rule segmented”, meaning SoloRecord reorganized the ASR text into dialogue turns after transcription.
 
 The Web detail page includes a quality panel with candidate names, rows needing review, speaker-evidence risk, and action evidence coverage. This is a review aid: if a speaker lacks source evidence, an action item lacks transcript evidence, or an action owner is marked weak, check the transcript or audio before sending it to IM or another system. Unsupported actions are shown as missing transcript evidence and are not also counted as weak-owner issues. A majority-source task still needs owner confirmation when it is marked weak. Suggested owners may come from named call-outs such as “Yitian, cover automated testing” even before the row is fully split; treat the suggestion as a review aid and save the action list after applying it.
+
+If the quality panel shows weak source-segment coverage or a "system review" transcript row, that audio segment is uploaded but lacks effective transcript text. Replay or re-transcribe it before copying the summary or sending the meeting to another system.
 
 In multi-source meetings, Web transcript filters and “jump to transcript” links use both the recording source and that device's local segment number. If two devices both upload segment 1, SoloRecord keeps them separate in review and evidence navigation.
 

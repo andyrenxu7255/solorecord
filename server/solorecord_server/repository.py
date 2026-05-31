@@ -9,6 +9,7 @@ from .owner_terms import ORG_OWNER_TERMS
 from .utils import row_to_dict
 
 PLACEHOLDER_ASR_FLAGS = {"mock_asr", "empty_asr", "missing_audio"}
+NON_SUBSTANTIVE_TRANSCRIPT_FLAGS = {*PLACEHOLDER_ASR_FLAGS, "source_coverage_gap"}
 SYSTEM_REVIEW_TASK_PREFIXES = (
     "检查转写结果并补充真实会议纪要",
     "按转写原文复核待办",
@@ -274,13 +275,18 @@ def build_quality_report(
     actionable_actions = [
         item for item in actions if not _is_system_review_action(item)
     ]
+    substantive_segments = [
+        item
+        for item, flags in zip(segments, flags_by_segment, strict=False)
+        if not _is_non_substantive_transcript_flags(flags)
+    ]
     speaker_names = [
         str(item.get("display_name") or item.get("speaker_id") or "").strip()
-        for item in segments
+        for item in substantive_segments
         if str(item.get("display_name") or item.get("speaker_id") or "").strip()
     ]
     unique_speakers = sorted(set(speaker_names))
-    speaker_alias_conflicts = _speaker_alias_conflicts(segments)
+    speaker_alias_conflicts = _speaker_alias_conflicts(substantive_segments)
     candidate_people = mentioned_people_candidates(segments, limit=24)
     generic_actions = [
         item
@@ -325,19 +331,23 @@ def build_quality_report(
     review_segments = [
         item for item, flags in zip(segments, flags_by_segment, strict=False)
         if "speaker_review" in flags
+        and not _is_non_substantive_transcript_flags(flags)
     ]
     weak_speaker_evidence_segments = [
         item for item, flags in zip(segments, flags_by_segment, strict=False)
         if "speaker_evidence_weak" in flags
+        and not _is_non_substantive_transcript_flags(flags)
     ]
     speaker_evidence = _speaker_evidence_items(segments, flags_by_segment)
     long_segments = [
         item for item in segments
-        if _segment_duration_ms(item) >= 180_000 or len(str(item.get("text") or "")) >= 900
+        if not _is_non_substantive_transcript_flags(_flags(item.get("flags")))
+        and (_segment_duration_ms(item) >= 180_000 or len(str(item.get("text") or "")) >= 900)
     ]
     possible_mixed_segments = [
         item for item in segments
-        if _looks_like_unresolved_mixed_segment(str(item.get("text") or ""))
+        if not _is_non_substantive_transcript_flags(_flags(item.get("flags")))
+        and _looks_like_unresolved_mixed_segment(str(item.get("text") or ""))
     ]
     llm_segments = sum(
         1
@@ -767,7 +777,7 @@ def _is_generic_speaker_label(name: str) -> bool:
     return (
         value.startswith("发言人")
         or value.lower().startswith("speaker")
-        or value in {"待确认", "未知", "不确定", "unknown"}
+        or value in {"待确认", "未知", "不确定", "系统复核", "unknown"}
     )
 
 
@@ -1109,6 +1119,10 @@ def _placeholder_transcript_segments(
         for item, flags in zip(segments, flags_by_segment, strict=False)
         if PLACEHOLDER_ASR_FLAGS & set(flags)
     ]
+
+
+def _is_non_substantive_transcript_flags(flags: list[str]) -> bool:
+    return bool(NON_SUBSTANTIVE_TRANSCRIPT_FLAGS & set(flags))
 
 
 def _is_system_review_action(action: dict) -> bool:
@@ -2019,11 +2033,17 @@ def _source_coverage_report(segments: list[dict], audio_segments: list[dict]) ->
         source_id = str(audio.get("source_id") or "primary")
         source_segment_no = int(audio.get("source_segment_no") or segment_no)
         related = transcript_by_source.get((source_id, source_segment_no), [])
-        text = " ".join(str(item.get("text") or "") for item in related)
+        substantive = [
+            item
+            for item in related
+            if not (NON_SUBSTANTIVE_TRANSCRIPT_FLAGS & set(_flags(item.get("flags"))))
+        ]
+        text = " ".join(str(item.get("text") or "") for item in substantive)
+        review_text = " ".join(str(item.get("text") or "") for item in related)
         char_count = len(_compact_evidence_text(text))
         duration_ms = max(0, int(audio.get("duration_ms") or 0))
         status = str(audio.get("upload_status") or "")
-        covered = bool(related and char_count >= _source_min_chars(duration_ms, status))
+        covered = bool(substantive and char_count >= _source_min_chars(duration_ms, status))
         item = {
             "segment_no": segment_no,
             "source_id": source_id,
@@ -2031,12 +2051,14 @@ def _source_coverage_report(segments: list[dict], audio_segments: list[dict]) ->
             "source_segment_no": source_segment_no,
             "status": "covered" if covered else "weak",
             "transcript_segment_count": len(related),
+            "substantive_transcript_segment_count": len(substantive),
+            "has_review_placeholder": len(related) > len(substantive),
             "char_count": char_count,
             "duration_ms": duration_ms,
             "start_ms": int(audio.get("start_ms") or 0),
             "end_ms": int(audio.get("end_ms") or 0),
             "upload_status": status,
-            "sample": _compact_snippet(text, 140),
+            "sample": _compact_snippet(text or review_text, 140),
         }
         items.append(item)
         if not covered:
