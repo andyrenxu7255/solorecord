@@ -220,6 +220,7 @@ Agent 验收时必须检查：
 - 如果 ASR 返回 `sentence_info`/`segments`/`sentences` 或嵌套 FunASR 原始结果，且带 `timestamp`/`timestamps` 或 `speaker_id`、`speaker`、`spk`、`spk_id`、`speakerLabel`，服务端应保留原生时间戳和说话人字段，并写入 `asr_speaker` flag。
 - 如果 ASR 只返回单段文本，或虽有多个原生 speaker 但单段很长、包含多个“某某说/某某：”标记或多个被点名人，服务端应通过 LLM 或规则拆成多个 `transcript_segments`。
 - 如果 ASR 或 LLM 输出没有在“某某你先说”和“我这边/我负责”回应之间拆段，服务端仍应通过残留规则把主持人点名和被点名人回应拆成两个可复核段落，并给回应段保留 `speaker_review` 和 `llm_residual_rule_refined`（若发生在 LLM 后）。
+- 如果点名前存在“先过整体节奏/先看背景/我们先对齐范围”等主持人导语，导语必须保留原 ASR 发言人并标记 `source_prefix_before_callout`，不能并入第一个被点名人的发言。
 - 如果主持人点名某人负责某议题，后续段落没有“我”字但继续围绕同一议题、交付物或时间节点展开，服务端可以做 `contextual_speaker_inference`，但必须保留 `speaker_review` 和 `reason:*`，不能当成声纹确认。
 - LLM 语义重分段输入和输出都应携带 `source_index`/`source_id`/`source_segment_no`。如果新增模型适配器，必须保留这些字段，避免最终转写失去原始音频分段追溯能力。
 - 即使 ASR 返回多个原生 speaker，只要存在未解析的“某某负责/某某确认/某某后面看”等任务归属线索，也应进入语义后处理；不能只因为有多个 `asr_speaker` 就跳过上下文分段。
@@ -677,6 +678,7 @@ Agent acceptance checks:
 - If ASR returns `sentence_info`/`segments`/`sentences` or nested FunASR raw output with `timestamp`/`timestamps` or `speaker_id`, `speaker`, `spk`, `spk_id`, or `speakerLabel`, the server should preserve native timestamps and speaker fields and write the `asr_speaker` flag.
 - If ASR returns one text segment, or native ASR speaker chunks are still long and contain multiple “name said/name:” markers or named call-outs, the server should split them into multiple `transcript_segments` through the LLM or rule fallback.
 - If ASR or LLM output fails to split a named call-out from a same-row first-person reply, the residual rule pass should still separate the host prompt from the called person's reply and keep `speaker_review`; when this happens after LLM refinement, also keep `llm_residual_rule_refined`.
+- Host preface text before a call-out, such as agenda/background setup, must remain assigned to the original ASR speaker and carry `source_prefix_before_callout`; do not merge it into the first called person's turn.
 - LLM semantic refinement input and output should carry `source_index`, `source_id`, and `source_segment_no`. New adapters must preserve these fields so final transcript rows remain traceable to source audio.
 - If a host calls on someone for a topic and the next segment continues the same topic, deliverable, or deadline without saying “I”, the server may write `contextual_speaker_inference`; it must keep `speaker_review` and `reason:*`, and agents must not treat it as voiceprint confirmation.
 - Partial transcripts should be visible after segment upload; `/finish` should write the full-meeting context-refined timeline back to the database, not only use it for summaries.

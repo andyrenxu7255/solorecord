@@ -1116,11 +1116,14 @@ def _coverage_tokens(text: str) -> list[str]:
 def _rule_refine_segments(segments: list[dict]) -> list[dict]:
     refined: list[dict] = []
     for segment in segments:
-        blocks = _split_mixed_speaker_blocks(str(segment.get("text") or ""))
+        blocks = _split_mixed_speaker_blocks(str(segment.get("text") or ""), segment)
         if len(blocks) < 2:
             blocks = _split_speaker_markers(str(segment.get("text") or ""))
         if len(blocks) < 2:
-            blocks = _split_addressed_speaker_blocks(str(segment.get("text") or ""))
+            blocks = _split_addressed_speaker_blocks(
+                str(segment.get("text") or ""),
+                segment,
+            )
         if len(blocks) < 2:
             blocks = _split_inline_addressed_response(segment)
         if len(blocks) < 2:
@@ -1200,7 +1203,8 @@ def _rule_refine_residual_mixed_segments(segments: list[dict]) -> list[dict]:
         text = str(segment.get("text") or "")
         has_multiple_markers = _speaker_marker_count(text) >= 2
         has_inline_response = bool(_split_inline_addressed_response(segment))
-        if not has_multiple_markers and not has_inline_response:
+        has_prefixed_callout = len(_split_mixed_speaker_blocks(text, segment)) >= 2
+        if not has_multiple_markers and not has_inline_response and not has_prefixed_callout:
             refined.append(segment)
             continue
         split = _rule_refine_segments([segment])
@@ -1442,7 +1446,10 @@ def _split_speaker_markers(text: str) -> list[dict]:
     return blocks
 
 
-def _split_mixed_speaker_blocks(text: str) -> list[dict]:
+def _split_mixed_speaker_blocks(
+    text: str,
+    source_segment: dict | None = None,
+) -> list[dict]:
     candidates: list[dict] = []
     candidates.extend(
         {
@@ -1474,8 +1481,6 @@ def _split_mixed_speaker_blocks(text: str) -> list[dict]:
                 "kind": "explicit",
             }
         )
-    if len(candidates) < 2:
-        return []
     candidates = sorted(candidates, key=lambda item: (item["marker_start"], item["start"]))
     deduped: list[dict] = []
     for item in candidates:
@@ -1490,10 +1495,16 @@ def _split_mixed_speaker_blocks(text: str) -> list[dict]:
                 deduped[-1] = item
             continue
         deduped.append(item)
-    if len(deduped) < 2:
+    if not deduped:
         return []
-    prefix = text[: int(deduped[0]["marker_start"])].strip()
+    prefix_end = int(deduped[0].get("start") or deduped[0]["marker_start"])
+    prefix = text[:prefix_end].strip()
     blocks: list[dict] = []
+    prefix_block = _source_prefix_block(prefix, source_segment)
+    if prefix_block:
+        blocks.append(prefix_block)
+    if len(deduped) < 2 and not prefix_block:
+        return []
     for index, item in enumerate(deduped):
         next_item = deduped[index + 1] if index + 1 < len(deduped) else None
         body_start = int(item.get("content_start") or item["marker_start"])
@@ -1503,7 +1514,7 @@ def _split_mixed_speaker_blocks(text: str) -> list[dict]:
         body = text[body_start:body_end].strip()
         if item.get("kind") == "addressed":
             body = _remove_address_prefix(body, str(item["speaker"]))
-        if prefix and index == 0:
+        if prefix and index == 0 and not prefix_block:
             body = f"{prefix}\n{body}".strip()
         if body:
             blocks.append(
@@ -1514,6 +1525,44 @@ def _split_mixed_speaker_blocks(text: str) -> list[dict]:
                 }
             )
     return blocks
+
+
+def _source_prefix_block(prefix: str, source_segment: dict | None) -> dict | None:
+    if not source_segment:
+        return None
+    speaker = str(
+        source_segment.get("display_name")
+        or source_segment.get("speaker")
+        or source_segment.get("speaker_id")
+        or ""
+    ).strip()
+    speaker_id = str(source_segment.get("speaker_id") or "").strip()
+    text = _clean_source_prefix_text(prefix, speaker)
+    if not speaker or not _is_substantive_source_prefix(text):
+        return None
+    return {
+        "speaker": speaker,
+        "speaker_id": speaker_id or _speaker_id(speaker),
+        "text": text,
+        "scenario": "native_speaker",
+        "flags": ["source_prefix_before_callout"],
+        "confidence_cap": 0.82,
+    }
+
+
+def _clean_source_prefix_text(prefix: str, speaker: str) -> str:
+    value = str(prefix or "").strip()
+    if speaker and value.startswith(speaker):
+        value = value[len(speaker) :].strip()
+        value = re.sub(r"^(?:说[，,、]?|[:：])\s*", "", value).strip()
+    return value
+
+
+def _is_substantive_source_prefix(text: str) -> bool:
+    value = re.sub(r"[\s，,。！？!?；;、:：]+", "", str(text or ""))
+    if len(value) < 4:
+        return False
+    return value not in {"好的", "可以", "没问题", "先这样"}
 
 
 def _single_speaker_marker_block(text: str) -> dict | None:
@@ -1539,11 +1588,12 @@ def _single_speaker_marker_block(text: str) -> dict | None:
     }
 
 
-def _split_addressed_speaker_blocks(text: str) -> list[dict]:
+def _split_addressed_speaker_blocks(
+    text: str,
+    source_segment: dict | None = None,
+) -> list[dict]:
     candidates: list[dict] = []
     candidates.extend(_extract_addressed_speakers(text))
-    if len(candidates) < 2:
-        return []
     candidates = sorted(candidates, key=lambda item: item["start"])
     deduped: list[dict] = []
     last_start = -1
@@ -1554,17 +1604,23 @@ def _split_addressed_speaker_blocks(text: str) -> list[dict]:
             continue
         deduped.append(item)
         last_start = item["start"]
-    if len(deduped) < 2:
+    if not deduped:
         return []
-    prefix = text[: deduped[0]["marker_start"]].strip()
+    prefix_end = int(deduped[0].get("start") or deduped[0]["marker_start"])
+    prefix = text[:prefix_end].strip()
     blocks: list[dict] = []
+    prefix_block = _source_prefix_block(prefix, source_segment)
+    if prefix_block:
+        blocks.append(prefix_block)
+    if len(deduped) < 2 and not prefix_block:
+        return []
     for index, item in enumerate(deduped):
         next_item = deduped[index + 1] if index + 1 < len(deduped) else None
         body_start = item["marker_start"]
         body_end = next_item["marker_start"] if next_item else len(text)
         body = text[body_start:body_end].strip()
         body = _remove_address_prefix(body, item["speaker"])
-        if prefix and index == 0:
+        if prefix and index == 0 and not prefix_block:
             body = f"{prefix}\n{body}".strip()
         if body:
             blocks.append(

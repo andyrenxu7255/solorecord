@@ -1520,14 +1520,17 @@ def test_semantic_segmentation_rule_fallback_splits_addressed_speakers(tmp_path:
     ]
     refined = processing._refine_segments(meeting_id, segments)
     names = [item["display_name"] for item in refined]
-    assert names == ["翼天", "围城", "海春"]
-    assert "错误样例" in refined[0]["text"]
-    assert "外接数据源" in refined[1]["text"]
-    assert "个部分" not in refined[1]["text"]
-    assert "模型调优" in refined[2]["text"]
+    assert names == ["傲寒", "翼天", "围城", "海春"]
+    assert refined[0]["text"] == "先过整体节奏。"
+    assert "错误样例" in refined[1]["text"]
+    assert "外接数据源" in refined[2]["text"]
+    assert "个部分" not in refined[2]["text"]
+    assert "模型调优" in refined[3]["text"]
     assert all("semantic_rule" in item["flags"] for item in refined)
-    assert "scenario:context_bridge" in refined[0]["flags"]
-    assert "scenario:task_ownership" in refined[1]["flags"]
+    assert "source_prefix_before_callout" in refined[0]["flags"]
+    assert "scenario:native_speaker" in refined[0]["flags"]
+    assert "scenario:context_bridge" in refined[1]["flags"]
+    assert "scenario:task_ownership" in refined[2]["flags"]
 
 
 def test_semantic_segmentation_does_not_promote_due_times_to_speakers(tmp_path: Path) -> None:
@@ -2687,11 +2690,11 @@ def test_quality_probe_postprocess_simulates_residual_splits_read_only(tmp_path:
     )
     post = result["postprocess"]
     assert result["mode"] == "postprocess"
-    assert post["segment_count"] == 4
-    assert {item[0] for item in post["speaker_counts"]} == {"翼天", "围城", "海春", "李波"}
+    assert post["segment_count"] == 5
+    assert {item[0] for item in post["speaker_counts"]} == {"傲寒", "翼天", "围城", "海春", "李波"}
     assert post["quality_report"]["metrics"]["long_segment_count"] == 0
     assert post["quality_report"]["metrics"]["mixed_marker_segment_count"] == 0
-    assert post["quality_report"]["metrics"]["speaker_review_count"] == 4
+    assert post["quality_report"]["metrics"]["speaker_review_count"] == 5
 
     with db.get_db() as conn:
         after = conn.execute(
@@ -4384,12 +4387,13 @@ def test_llm_residual_rule_refinement_splits_mixed_callout_segment() -> None:
 
     split = processing._rule_refine_residual_mixed_segments(refined)
 
-    assert [item["display_name"] for item in split] == ["翼天", "围城", "海春", "李波"]
+    assert [item["display_name"] for item in split] == ["傲寒", "翼天", "围城", "海春", "李波"]
     assert "整体节奏" in split[0]["text"]
-    assert "错误样例" in split[0]["text"]
-    assert "外接数据源" in split[1]["text"]
-    assert "模型调优" in split[2]["text"]
-    assert "登录界面" in split[3]["text"]
+    assert "source_prefix_before_callout" in split[0]["flags"]
+    assert "错误样例" in split[1]["text"]
+    assert "外接数据源" in split[2]["text"]
+    assert "模型调优" in split[3]["text"]
+    assert "登录界面" in split[4]["text"]
     assert all("llm_residual_rule_refined" in item["flags"] for item in split)
     assert all("speaker_review" in item["flags"] for item in split)
     assert all(float(item["confidence"]) <= 0.74 for item in split)
@@ -4423,6 +4427,31 @@ def test_llm_residual_rule_refinement_splits_inline_addressed_response() -> None
     assert "llm_residual_rule_refined" in split[1]["flags"]
     assert "speaker_review" in split[1]["flags"]
     assert split[1]["text"].startswith("我这边准备")
+
+
+def test_llm_residual_rule_refinement_splits_single_prefixed_callout() -> None:
+    import solorecord_server.processing as processing
+
+    refined = [
+        {
+            "speaker_id": "SPEAKER_01",
+            "display_name": "主持人",
+            "start_ms": 0,
+            "end_ms": 16000,
+            "text": "先过整体节奏。翼天你先说一下错误样例和自动测试。",
+            "confidence": 0.82,
+            "flags": ["llm_refined", "semantic_llm"],
+        }
+    ]
+
+    split = processing._rule_refine_residual_mixed_segments(refined)
+
+    assert [item["display_name"] for item in split] == ["主持人", "翼天"]
+    assert split[0]["text"] == "先过整体节奏。"
+    assert split[1]["text"] == "错误样例和自动测试。"
+    assert "source_prefix_before_callout" in split[0]["flags"]
+    assert all("llm_residual_rule_refined" in item["flags"] for item in split)
+    assert all("speaker_review" in item["flags"] for item in split)
 
 
 def test_quality_report_flags_inline_addressed_response_as_mixed_segment() -> None:
