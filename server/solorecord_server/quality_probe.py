@@ -403,6 +403,7 @@ def _issue_types(report: dict) -> set[str]:
 _LOWER_IS_BETTER_METRICS = [
     "generic_owner_count",
     "unsupported_action_count",
+    "action_contradiction_count",
     "weak_action_owner_count",
     "summary_unsupported_count",
     "source_segment_weak_count",

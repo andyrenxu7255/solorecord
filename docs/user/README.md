@@ -456,6 +456,8 @@ Check the transcript first. Fix transcript errors, then regenerate or edit the s
 
 If the quality panel shows "summary contradicts transcript", SoloRecord found transcript evidence on the same topic but the summary reversed the meaning, such as turning "not sent yet" into "sent". Review the linked transcript or audio before copying the summary or sending it to a knowledge base.
 
+If an action item is missing after regeneration, check whether the transcript said to wait, pause, cancel, or not perform that action yet. SoloRecord removes unsafe executable reminders that contradict the transcript, while keeping review tasks such as "confirm whether to send". Phrases like "wait for legal approval before sending" are shown as conditions, not automatic owner assignments to legal.
+
 What if I cannot find a meeting?
 
 Search by title, keyword, or transcript text on the Web. Also confirm you signed in with the same account.

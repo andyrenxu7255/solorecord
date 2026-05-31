@@ -2136,12 +2136,46 @@ def _org_owners_in_segments(segments: list[dict]) -> set[str]:
 
 def _org_owner_mentioned_as_owner(text: str, owner: str) -> bool:
     value = str(text or "")
+    chunks = [
+        chunk.strip()
+        for chunk in re.split(r"[，,、。！？!?；;\n\r]+", value)
+        if chunk.strip()
+    ]
+    return any(
+        not _org_owner_condition_phrase(chunk, owner)
+        and _org_owner_assignment_phrase(chunk, owner)
+        for chunk in chunks
+    )
+
+
+def _org_owner_assignment_phrase(text: str, owner: str) -> bool:
+    if not text or not owner:
+        return False
     escaped = re.escape(owner)
     return bool(
-        re.search(rf"{escaped}(?:这边|那边|团队|部门|组)", value)
+        re.search(rf"{escaped}(?:这边|那边|团队|部门|组)", text)
         or re.search(
             rf"{escaped}[^。！？!?；;\n\r]{{0,16}}"
             rf"(?:负责|跟进|处理|确认|补充|准备|整理|输出|完成|推进|看|改|发|做|搞)",
+            text,
+        )
+    )
+
+
+def _org_owner_condition_phrase(text: str, owner: str) -> bool:
+    value = str(text or "")
+    if not owner or not value:
+        return False
+    escaped = re.escape(owner)
+    return bool(
+        re.search(
+            rf"(?:等|待|等待|等到|等着){escaped}"
+            rf"[^。！？!?；;\n\r]{{0,10}}(?:确认|审批|批准|同意|回复|反馈|定版|定稿)",
+            value,
+        )
+        or re.search(
+            rf"{escaped}[^。！？!?；;\n\r]{{0,10}}(?:确认|审批|批准|同意|回复|反馈)"
+            rf"[^。！？!?；;\n\r]{{0,10}}(?:后|之后|以后|再)",
             value,
         )
     )

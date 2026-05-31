@@ -100,6 +100,7 @@ Authorization: Bearer replace-with-long-random-token
 - `actionItems[].evidenceStatus=weak_owner`：任务文本可能有多数源或普通转写证据，但负责人是 `待确认`、代词、时间短语或缺少负责人-任务上下文；此时 `knowledgeSafe=false`，应先人工应用或确认 `suggestedOwner`。
 - `actionItems[].evidenceStatus=conflict`：待办由 `multi_source_conflict` 片段支撑，通常表示不同录音源在日期、数量或负责人上不一致；此时 `knowledgeSafe=false`、`requiresReview=true`。
 - `actionItems[].evidenceStatus=contradiction`：待办把原文中的“先不要、暂缓、不能、取消”等阻止执行表达写成了执行动作；此时 `knowledgeSafe=false`、`requiresReview=true`，并触发 `knowledgeReadiness.status=hold`。
+- LLM 生成阶段会提示模型保留复核或暂缓语义，保存前也会移除反向执行型待办。若原文是“等法务确认后再说”，这只是前置条件，不代表法务就是待办 owner；只有“法务负责/确认/审批某事项”等同一短语窗口中的责任或动作证据，才能把法务作为组织 owner。
 
 ## ES/OpenSearch
 

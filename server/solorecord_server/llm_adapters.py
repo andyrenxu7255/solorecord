@@ -151,6 +151,9 @@ def _system_prompt() -> str:
         "但如果同场还有 multi_source_conflict，仍要提示少数冲突源需回听；"
         "带 multi_source_conflict 的内容必须在纪要中保留不确定性或提醒复核，"
         "不要把互相冲突的多源事实合并为单一结论。"
+        "如果原文表达'先不要/暂缓/不能/取消/待确认后再做'，不要生成相反的执行型待办；"
+        "只能生成'确认是否执行/等待条件满足后再处理/暂缓某动作'这类复核或暂缓待办。"
+        "例如原文是'先不要发客户通知'，不得生成'发送客户通知'，可以生成'确认是否发送客户通知'。"
         "为待办填写 owner 时，必须能从发言人、被点名、'我负责/交给某某'或同一议题上下文找到证据；"
         "如果只能猜测，不要硬填人名，写待确认。"
         "候选人名清单只是线索，不是最终结论；只有能从转写上下文支持时才使用。"
@@ -244,6 +247,9 @@ def _user_prompt(segments: list[dict]) -> str:
         "但如果同场还有 multi_source_conflict，仍要提示少数冲突源需回听；"
         "multi_source_conflict 表示不同录音源存在冲突，纪要和待办要保留复核提示，"
         "不要把互相冲突的多源事实合并为单一结论。\n\n"
+        "8. 如果转写说'先不要/暂缓/不能/取消/待确认后再做'，"
+        "待办必须保留复核或暂缓语义，不能反写成执行动作。"
+        "例如'先不要发客户通知'不能生成'发送客户通知'，只能生成'确认是否发送客户通知'或'暂缓发送客户通知'。\n\n"
         "会议转写：\n"
         + "\n".join(lines)
     )
@@ -438,6 +444,8 @@ def _clean_person_name(name: str) -> str:
         "",
         str(name or ""),
     )
+    if re.match(r"^(?:等|待|等待|等到|等着|找|通知|安排|让|叫|拉上|交给)", value):
+        return ""
     value = re.sub(
         r"(?:你|您|这边|那边|后面|先|再|来|把|帮|看|说|讲|分享|确认|负责|处理|弄|搞|发|补|改|调)+$",
         "",
@@ -452,6 +460,8 @@ def _is_invalid_person_name(name: str) -> bool:
         return True
     lowered = name.lower()
     if lowered.startswith("speaker") or name.startswith("发言人"):
+        return True
+    if re.match(r"^(?:等|待|等待|等到|等着|找|通知|安排|让|叫|拉上|交给)", name):
         return True
     if name in _PERSON_STOPWORDS:
         return True

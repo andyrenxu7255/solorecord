@@ -2272,6 +2272,7 @@ def _grounded_summary_result(
 ) -> tuple[str, str, list[dict]]:
     normalized_actions = _normalize_action_owners(actions, segments)
     grounded_actions = _prefer_suggested_action_owners(normalized_actions, segments)
+    grounded_actions = _drop_contradictory_action_items(grounded_actions, segments)
     if _summary_is_grounded(summary, role_notes, grounded_actions, segments):
         return summary, role_notes, grounded_actions
     fallback_summary, fallback_role_notes = _grounded_summary_from_segments(segments)
@@ -2408,6 +2409,47 @@ def _prefer_suggested_action_owners(actions: list[dict], segments: list[dict]) -
             item["owner"] = suggestion
         updated.append(item)
     return updated
+
+
+def _drop_contradictory_action_items(actions: list[dict], segments: list[dict]) -> list[dict]:
+    if not actions:
+        return actions
+    report = build_quality_report(
+        [_segment_row_like(item) for item in segments],
+        [
+            _action_row_like(
+                item,
+                fallback_id=f"act_probe_{index + 1}",
+            )
+            for index, item in enumerate(actions)
+        ],
+        [],
+        "",
+        "",
+    )
+    contradictory_ids = {
+        str(item.get("id") or "").strip()
+        for item in report.get("actionEvidence") or []
+        if item.get("status") == "contradiction"
+    }
+    if not contradictory_ids:
+        return actions
+    kept: list[dict] = []
+    for index, action in enumerate(actions):
+        action_id = str(action.get("id") or f"act_probe_{index + 1}").strip()
+        if action_id in contradictory_ids:
+            continue
+        kept.append(action)
+    if kept:
+        return kept
+    return [
+        {
+            "owner": "待确认",
+            "task": "按转写原文复核待办，原模型待办与原文存在反向证据",
+            "due": "",
+            "status": "open",
+        }
+    ]
 
 
 def _segment_row_like(segment: dict) -> dict:
@@ -2772,16 +2814,19 @@ def _has_owner_assignment(text: str, name: str) -> bool:
 def _org_owners_in_text(text: str) -> set[str]:
     owners: set[str] = set()
     value = str(text or "")
-    for owner in ORG_OWNER_TERMS:
-        if _org_owner_is_task_phrase(owner, value):
-            continue
-        escaped = re.escape(owner)
-        if re.search(
-            rf"{escaped}(?:这边|那边|团队|部门|组)?[^。！？!?；;\n\r]{{0,12}}"
-            rf"(?:负责|跟进|处理|确认|补充|准备|整理|输出|完成|推进|看|改|发|做|搞|检查)",
-            value,
-        ):
-            owners.add(owner)
+    chunks = [
+        chunk.strip()
+        for chunk in re.split(r"[，,、。！？!?；;\n\r]+", value)
+        if chunk.strip()
+    ]
+    for chunk in chunks:
+        for owner in ORG_OWNER_TERMS:
+            if _org_owner_is_task_phrase(owner, chunk):
+                continue
+            if _org_owner_is_condition_phrase(owner, chunk):
+                continue
+            if _org_owner_has_assignment(owner, chunk):
+                owners.add(owner)
     return owners
 
 
@@ -2797,15 +2842,25 @@ def _org_owner_assignment_windows(text: str) -> dict[str, str]:
         for owner in ORG_OWNER_TERMS:
             if _org_owner_is_task_phrase(owner, chunk):
                 continue
-            escaped = re.escape(owner)
-            if re.search(
-                rf"{escaped}(?:这边|那边|团队|部门|组)?[^。！？!?；;\n\r]{{0,12}}"
-                rf"(?:负责|跟进|处理|确认|补充|准备|整理|输出|完成|推进|看|改|发|做|搞|检查)",
-                chunk,
-            ):
+            if _org_owner_is_condition_phrase(owner, chunk):
+                continue
+            if _org_owner_has_assignment(owner, chunk):
                 existing = windows.get(owner, "")
                 windows[owner] = " ".join(part for part in [existing, chunk] if part).strip()
     return windows
+
+
+def _org_owner_has_assignment(owner: str, text: str) -> bool:
+    if not owner or not text:
+        return False
+    escaped = re.escape(owner)
+    return bool(
+        re.search(
+            rf"{escaped}(?:这边|那边|团队|部门|组)?[^。！？!?；;\n\r]{{0,12}}"
+            rf"(?:负责|跟进|处理|确认|补充|准备|整理|输出|完成|推进|看|改|发|做|搞|检查)",
+            text,
+        )
+    )
 
 
 def _org_owner_is_task_phrase(owner: str, text: str) -> bool:
@@ -2817,6 +2872,25 @@ def _org_owner_is_task_phrase(owner: str, text: str) -> bool:
     if owner == "产品" and re.search(r"(产品化|产品页面|产品功能)", value):
         return True
     return False
+
+
+def _org_owner_is_condition_phrase(owner: str, text: str) -> bool:
+    value = str(text or "")
+    if not owner or not value:
+        return False
+    escaped = re.escape(owner)
+    return bool(
+        re.search(
+            rf"(?:等|待|等待|等到|等着){escaped}"
+            rf"[^。！？!?；;\n\r]{{0,10}}(?:确认|审批|批准|同意|回复|反馈|定版|定稿)",
+            value,
+        )
+        or re.search(
+            rf"{escaped}[^。！？!?；;\n\r]{{0,10}}(?:确认|审批|批准|同意|回复|反馈)"
+            rf"[^。！？!?；;\n\r]{{0,10}}(?:后|之后|以后|再)",
+            value,
+        )
+    )
 
 
 def _infer_owner_from_context(
@@ -3046,6 +3120,8 @@ def _is_generic_owner(owner: str) -> bool:
 def _is_invalid_owner_candidate(owner: str) -> bool:
     value = str(owner or "").strip()
     if not value:
+        return True
+    if re.match(r"^(?:等|待|等待|等到|等着|找|通知|安排|让|叫|拉上|交给)", value):
         return True
     return (
         _is_generic_owner(value)

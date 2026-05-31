@@ -553,6 +553,8 @@ This section is for a server operations agent. The goal is to collect required U
 - It is acceptable to report "configured", "missing", or "validated"; never echo raw keys, tokens, client secrets, or database passwords.
 - Public GitHub Release client packages contain no real server URL or secret. Internal company packages may embed only the server URL.
 - After every config change, run health checks and smoke tests. Do not stop after merely starting containers.
+- When tuning LLM summaries or action extraction, preserve pause/review semantics. Do not let the model turn "do not send yet", "pause", "cannot", or "cancel" into executable reminders.
+- Treat phrases such as "wait for legal approval before sending" as conditions, not owner assignments. Organizational roles are owners only with explicit same-phrase responsibility or action evidence.
 
 #### Information To Collect From The Operator
 

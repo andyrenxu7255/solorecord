@@ -267,6 +267,12 @@ automatic ingestion, and must be rewritten or removed from the transcript
 evidence before downstream reminder agents use them. Review tasks such as
 "confirm whether to send" are treated as review work, not as contradictory send
 commands.
+The summary prompt asks the LLM to preserve pause/review semantics, and the
+server also removes contradictory executable action items before saving
+generated summaries. Short condition phrases such as "wait for legal approval"
+are treated as prerequisites, not owner assignments; organizational owners such
+as legal, sales, frontend, and QA are used only when the same short phrase
+contains an explicit action or responsibility.
 
 For multi-source recording, final processing merges near-overlapping text from
 different sources only when the key facts agree. If one device starts tens of

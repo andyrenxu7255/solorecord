@@ -893,6 +893,8 @@ Troubleshooting notes:
 - If an action shows `evidenceStatus=majority` or the "majority source confirmed" label, the primary result is supported by most recording sources and the owner is not generic or unknown. `knowledgeSafe=true` and `requiresReview=true` mean downstream systems may use it as primary evidence, but should preserve a replay-review hint.
 - If an action shows `evidenceStatus=weak_owner`, do not auto-send reminders even when the task text has majority-source evidence. Apply the suggested owner or confirm the owner manually first.
 - If the LLM returns a generic action owner such as "owner", "related owner", "host", "frontend developer", or a label ending with "owner", the server downgrades it to `待确认` before trying transcript-grounded repair. Seeing `待确认` during acceptance may be a safety guard against wrong reminders, not simply a missed extraction.
+- If the transcript says "do not send yet", "pause", "cannot", or "cancel", generated action items should preserve review or pause semantics. Executable actions that contradict these blockers are removed before saving summaries; if all generated actions were unsafe, the server keeps a review fallback action. Acceptance should verify both an unsafe action such as "send customer notice" is removed and a review action such as "confirm whether to send customer notice" remains.
+- Phrases such as "wait for legal approval before sending" are conditions, not owner assignments. Legal/sales/frontend/QA should become owners only when the same short phrase contains explicit responsibility or work, for example "legal approves the contract attachment".
 
 ### LLM Provider
 

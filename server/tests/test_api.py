@@ -2653,6 +2653,35 @@ def test_action_owner_normalization_uses_compact_org_deadline_context() -> None:
     assert normalized[1]["owner"] == "法务"
 
 
+def test_action_owner_normalization_ignores_org_condition_phrase() -> None:
+    import solorecord_server.processing as processing
+
+    actions = [
+        {"owner": "李娜", "task": "确认是否发送客户通知", "due": "", "status": "open"},
+        {"owner": "待确认", "task": "确认合同条款并给审批意见", "due": "月底前", "status": "open"},
+    ]
+    segments = [
+        {
+            "display_name": "李娜",
+            "text": "客户名单还没定版，下午先不要发客户通知，等法务确认后再说。",
+        },
+        {
+            "display_name": "发言人 2",
+            "text": "法务确认合同条款，月底前给审批意见。",
+        },
+        {
+            "display_name": "发言人 3",
+            "text": "客户通知还是等法务确认后再说，合同附件法务负责审批。",
+        },
+    ]
+
+    normalized = processing._normalize_action_owners(actions, segments)
+
+    assert normalized[0]["owner"] == "李娜"
+    assert normalized[1]["owner"] == "法务"
+    assert "法务" in processing._org_owners_in_text(segments[2]["text"])
+
+
 def test_action_normalization_dedupes_tasks_and_statuses() -> None:
     import solorecord_server.processing as processing
 
@@ -2716,6 +2745,11 @@ def test_llm_prompts_include_named_people_candidates() -> None:
         [{"speaker_id": "SPEAKER_01", "display_name": "发言人 1", "text": "下午发消息通知销售。"}]
     )
     assert "下午" not in time_people
+    condition_people = llm_adapters.mentioned_people_candidates(
+        [{"speaker_id": "SPEAKER_01", "display_name": "李娜", "text": "等法务确认后再说。"}]
+    )
+    assert "等法务" not in condition_people
+    assert "法务" not in condition_people
 
 
 def test_action_owner_normalization_uses_context_when_model_over_collapses() -> None:
@@ -4053,6 +4087,63 @@ def test_llm_summary_falls_back_when_summary_contradicts_transcript() -> None:
     assert actions[0]["owner"] == "李娜"
 
 
+def test_llm_summary_drops_contradictory_action_items_before_saving() -> None:
+    import solorecord_server.processing as processing
+    import solorecord_server.repository as repository
+
+    segments = [
+        {
+            "speaker_id": "MANUAL_lina",
+            "display_name": "李娜",
+            "source_id": "front",
+            "source_segment_no": 1,
+            "start_ms": 0,
+            "end_ms": 60000,
+            "text": "客户名单还没定版，下午先不要发客户通知，等法务确认后再说。",
+            "confidence": 0.86,
+            "flags": ["semantic_final"],
+        }
+    ]
+
+    summary, role_notes, actions = processing._grounded_summary_result(
+        "客户名单待法务确认后再处理。",
+        "李娜：客户名单还没定版，客户通知暂缓。",
+        [
+            {
+                "owner": "李娜",
+                "task": "发送客户通知",
+                "due": "下午",
+                "status": "open",
+            },
+            {
+                "owner": "李娜",
+                "task": "确认是否发送客户通知",
+                "due": "",
+                "status": "open",
+            },
+        ],
+        segments,
+    )
+
+    assert "发送客户通知" not in [item["task"] for item in actions]
+    assert actions == [
+        {
+            "owner": "李娜",
+            "task": "确认是否发送客户通知",
+            "due": "",
+            "status": "open",
+        }
+    ]
+    report = repository.build_quality_report(
+        [processing._segment_row_like(item) for item in segments],
+        [processing._action_row_like(item) for item in actions],
+        [],
+        summary,
+        role_notes,
+    )
+    assert report["metrics"]["action_contradiction_count"] == 0
+
+
 def test_grounded_summary_prefers_suggested_action_owner_without_fallback() -> None:
     import solorecord_server.processing as processing
 
@@ -4951,6 +5042,21 @@ def test_summary_prompt_exposes_multisource_context_to_llm() -> None:
     assert "multi_source_majority" in prompt
     assert "multi_source_majority 表示至少两个录音源一致" in prompt
     assert "不要把互相冲突的多源事实合并为单一结论" in prompt
+    assert "先不要发客户通知" in llm_adapters._system_prompt()
+    assert "确认是否发送客户通知" in llm_adapters._user_prompt(
+        [
+            {
+                "source_id": "front",
+                "source_segment_no": 1,
+                "speaker_id": "SPEAKER_01",
+                "display_name": "李娜",
+                "start_ms": 0,
+                "end_ms": 60000,
+                "text": "客户名单还没定版，下午先不要发客户通知。",
+                "flags": [],
+            }
+        ]
+    )
 
 
 def test_llm_refinement_prefers_source_id_over_wrong_source_index() -> None:

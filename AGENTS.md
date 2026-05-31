@@ -351,6 +351,8 @@ Multi-source recording reliability:
 - If sources conflict on dates, amounts, or owners, keep separate `multi_source_conflict` evidence rows instead of deduplicating away the disagreement.
 - `summary_evidence_contradiction` is a knowledge-ingestion blocker. It means a summary or role-note claim reverses same-topic transcript evidence around completion, sending, confirmation, or similar status. External agents must rebuild the summary from transcript evidence instead of storing that summary as confirmed knowledge.
 - `action_evidence_contradiction` is both a knowledge-ingestion and automatic-reminder blocker. It means an action item turned same-topic transcript blockers such as "do not send yet", "pause", "cannot", or "cancel" into an executable action. External agents must rewrite or remove the action from transcript evidence before sending reminders.
+- LLM prompts and post-save guards must preserve pause/review semantics. Contradictory executable action items are dropped before summary actions are saved; review actions such as "confirm whether to send" may remain.
+- Condition phrases such as "wait for legal approval before sending" are not owner assignments. Organizational owners require same-short-phrase responsibility or action evidence.
 
 ## Data Model
 
