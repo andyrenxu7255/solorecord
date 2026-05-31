@@ -443,6 +443,185 @@ def test_multi_source_join_uploads_same_local_segment_without_conflict(tmp_path:
     ).content == b"back source"
 
 
+def test_discover_joinable_multi_source_meetings_returns_metadata_only(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    owner_headers = login(client)
+    guest_headers = login_user(client)
+
+    create = client.post(
+        "/api/web/meetings",
+        headers=owner_headers,
+        json={
+            "title": "客户复盘可加入会议",
+            "join_code": "discover-1",
+            "recording_mode": "multi_source",
+            "max_sources": 3,
+            "source_label": "前排电脑",
+        },
+    )
+    assert create.status_code == 200
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            UPDATE meetings
+            SET summary='内部纪要不应在加入前泄露',
+                role_notes='分角色整理不应泄露'
+            WHERE id=?
+            """,
+            (meeting_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id,
+             display_name, start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_discover_hidden', ?, 1, 'primary', 1, 'SPEAKER_01', '任旭',
+             0, 1000, '这段转写不能在加入前返回。', 0.8, '[]', 'now')
+            """,
+            (meeting_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO action_items
+            (id, meeting_id, owner, task, due, status, created_at, updated_at)
+            VALUES
+            ('act_discover_hidden', ?, '任旭', '这条待办不能在加入前返回', '', 'open', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    response = client.get("/api/web/meetings/discover", headers=guest_headers)
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert len(items) == 1
+    item = items[0]
+    assert item == {
+        "id": meeting_id,
+        "title": "客户复盘可加入会议",
+        "join_code": "DISCOVER1",
+        "status": "local_recorded",
+        "owner_name": "Admin",
+        "source_count": 1,
+        "max_sources": 3,
+        "remaining_sources": 2,
+        "created_at": item["created_at"],
+        "updated_at": item["updated_at"],
+    }
+    assert "summary" not in item
+    assert "role_notes" not in item
+    assert "transcriptSegments" not in item
+    assert "audioSegments" not in item
+    assert "actionItems" not in item
+
+
+def test_discover_joinable_multi_source_filters_closed_full_and_query(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    owner_headers = login(client)
+    guest_headers = login_user(client)
+
+    open_meeting = client.post(
+        "/api/web/meetings",
+        headers=owner_headers,
+        json={
+            "title": "华东现场复盘",
+            "join_code": "alpha-42",
+            "recording_mode": "multi_source",
+            "max_sources": 3,
+        },
+    )
+    ready_meeting = client.post(
+        "/api/web/meetings",
+        headers=owner_headers,
+        json={
+            "title": "已完成会议",
+            "join_code": "ready-42",
+            "recording_mode": "multi_source",
+            "max_sources": 3,
+        },
+    )
+    failed_meeting = client.post(
+        "/api/web/meetings",
+        headers=owner_headers,
+        json={
+            "title": "失败会议",
+            "join_code": "failed-42",
+            "recording_mode": "multi_source",
+            "max_sources": 3,
+        },
+    )
+    ended_meeting = client.post(
+        "/api/web/meetings",
+        headers=owner_headers,
+        json={
+            "title": "已结束会议",
+            "join_code": "ended-42",
+            "recording_mode": "multi_source",
+            "max_sources": 3,
+        },
+    )
+    single_meeting = client.post(
+        "/api/web/meetings",
+        headers=owner_headers,
+        json={"title": "单源会议", "join_code": "single-42"},
+    )
+    full_meeting = client.post(
+        "/api/web/meetings",
+        headers=owner_headers,
+        json={
+            "title": "满员会议",
+            "join_code": "full-42",
+            "recording_mode": "multi_source",
+            "max_sources": 1,
+        },
+    )
+    assert all(
+        response.status_code == 200
+        for response in [
+            open_meeting,
+            ready_meeting,
+            failed_meeting,
+            ended_meeting,
+            single_meeting,
+            full_meeting,
+        ]
+    )
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        conn.execute(
+            "UPDATE meetings SET status='ready' WHERE id=?",
+            (ready_meeting.json()["meeting"]["id"],),
+        )
+        conn.execute(
+            "UPDATE meetings SET status='failed' WHERE id=?",
+            (failed_meeting.json()["meeting"]["id"],),
+        )
+        conn.execute(
+            "UPDATE meetings SET ended_at='now' WHERE id=?",
+            (ended_meeting.json()["meeting"]["id"],),
+        )
+
+    all_items = client.get("/api/web/meetings/discover", headers=guest_headers).json()["items"]
+    assert [item["join_code"] for item in all_items] == ["ALPHA42"]
+
+    by_title = client.get(
+        "/api/web/meetings/discover?q=华东",
+        headers=guest_headers,
+    ).json()["items"]
+    assert [item["join_code"] for item in by_title] == ["ALPHA42"]
+
+    by_code = client.get(
+        "/api/mobile/meetings/discover?q=alpha-42",
+        headers=guest_headers,
+    ).json()["items"]
+    assert [item["title"] for item in by_code] == ["华东现场复盘"]
+
+
 def test_multi_source_supports_eight_recorders_and_rejects_ninth(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     owner_headers = login(client)

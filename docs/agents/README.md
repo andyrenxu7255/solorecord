@@ -27,7 +27,7 @@ SoloRecord 已具备：
 - Android/Windows/macOS/iOS/HarmonyOS 终端应用上传和下载。
 - Windows Electron 客户端、iOS WKWebView 外壳、macOS Electron/SwiftUI 外壳、HarmonyOS Web 外壳工程。
 - Android 分段级断点续传：本地分段落盘，multipart 文件流上传，服务端确认后立即执行分段 ASR，并把阶段转写写回同一场会议；本地账本标记已上传，弱网重试只补传未完成分段。
-- 多源同录：1-8 个录音源通过同一 `join_code` 加入同一会议。重复加入时，同一用户、同一设备名和同一录音源名称应复用原 `source_id`；同一用户显式换录音源名称时可作为另一台设备。证据键是 `(source_id, source_segment_no)`；不要只用本地分段号判断覆盖或替换。最终处理会合并重复多源片段并标记 `multi_source_merged`；设备错峰起录但来源分段相邻、时间差和文本相似度满足保守阈值时，合并片段还会标记 `multi_source_time_aligned`。冲突片段标记 `multi_source_conflict`。
+- 多源同录：1-8 个录音源通过同一 `join_code` 加入同一会议。重复加入时，同一用户、同一设备名和同一录音源名称应复用原 `source_id`；同一用户显式换录音源名称时可作为另一台设备。`/api/mobile/meetings/discover` 和 `/api/web/meetings/discover` 只返回可加入会议元数据，不能返回转写、纪要、音频、待办或成员详情；用户仍需 join 后才可读会议详情。证据键是 `(source_id, source_segment_no)`；不要只用本地分段号判断覆盖或替换。最终处理会合并重复多源片段并标记 `multi_source_merged`；设备错峰起录但来源分段相邻、时间差和文本相似度满足保守阈值时，合并片段还会标记 `multi_source_time_aligned`。冲突片段标记 `multi_source_conflict`。
 - LDAP 用户名密码登录；SSO 浏览器登录回跳到 Android：`solorecord://auth/callback` 仍保留。
 - APK 重装后从 `/api/mobile/sync` 恢复记录，并可按权限下载服务器音频分段。
 - 待办可通过 `/api/web/meetings/{meetingId}/actions` 和 `/api/mobile/meetings/{meetingId}/actions` 更新，并进入同步、导出、外部 API 和可选 ES/OpenSearch 索引。
@@ -477,7 +477,7 @@ SoloRecord currently includes:
 - Android/Windows/macOS/iOS/HarmonyOS client upload/download.
 - Windows Electron client, iOS WKWebView shell, macOS Electron/SwiftUI shell, and HarmonyOS Web shell projects.
 - Android segment-level upload resume: recording segments are stored locally, uploaded as multipart files, marked uploaded after server acknowledgement, and skipped on retry.
-- Multi-source recording: 1-8 sources join the same meeting through `join_code`. Repeated joins should reuse the existing `source_id` when the same user, device name, and source label match; the same user may register another device by changing the source label. The evidence key is `(source_id, source_segment_no)`, not `source_segment_no` alone. Final processing merges duplicate multi-source rows with `multi_source_merged`; if devices start at different times but source-local segment numbers, start-time delta, and text similarity pass conservative checks, merged rows also carry `multi_source_time_aligned`. Divergent rows are flagged with `multi_source_conflict`.
+- Multi-source recording: 1-8 sources join the same meeting through `join_code`. Repeated joins should reuse the existing `source_id` when the same user, device name, and source label match; the same user may register another device by changing the source label. `/api/mobile/meetings/discover` and `/api/web/meetings/discover` return joinable meeting metadata only; they must not expose transcripts, summaries, audio, action items, or member details, and users still need to join before reading meeting details. The evidence key is `(source_id, source_segment_no)`, not `source_segment_no` alone. Final processing merges duplicate multi-source rows with `multi_source_merged`; if devices start at different times but source-local segment numbers, start-time delta, and text similarity pass conservative checks, merged rows also carry `multi_source_time_aligned`. Divergent rows are flagged with `multi_source_conflict`.
 - LDAP username/password login. Browser SSO returning to Android through `solorecord://auth/callback` remains available.
 - APK reinstall recovery through `/api/mobile/sync`, including permission-protected server audio download.
 - Local ASR command adapter.

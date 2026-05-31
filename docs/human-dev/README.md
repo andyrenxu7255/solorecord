@@ -231,11 +231,12 @@ Android 录音和上传采用连续录音、重叠分段、分段级断点续传
 - `audio_segments.source_id` + `source_segment_no` 表示某个设备自己的分段编号。多台设备都可以上传自己的第 1 段，服务端会分配不同的全局 `segment_no`，但保留各自的 `source_segment_no=1`。
 - `transcript_segments.source_id` + `source_segment_no` 是证据追溯键。分段重传只替换同一来源、同一本地分段的转写行；`primary` 兼容旧数据里的空 `source_id`。
 - `/api/mobile/meetings/join` 和 `/api/web/meetings/join` 支持按会议编号或标题加入。重复加入时，同一用户、同一设备名和同一录音源名称会复用原 `source_id`；同一用户显式换录音源名称时仍可注册另一台设备。上传接口也会校验 `max_sources`，不能绕过来源上限。
+- `/api/mobile/meetings/discover` 和 `/api/web/meetings/discover` 返回近期、未结束、未满员、仍在处理中的多源会议候选。返回内容只包含 `id/title/join_code/status/owner_name/source_count/max_sources/remaining_sources/created_at/updated_at`，用于录音页和文件补传页一键填入编号；加入前不能返回纪要、转写、音频、待办或成员详情。
 - `processing._merge_multisource_segments()` 在整场 finish 前做保守多源校对：同一时间窗、不同来源、文本高度相近且关键事实一致的段落合并为一条，并写入 `multi_source_merged`、`multi_source_count:*` 和 `multi_source_refs:*` flags；如果不同设备起录时间错开，会在来源分段号相邻、起点差不超过保守窗口、文本高度相近且关键事实一致时做错峰对齐，并额外写入 `multi_source_time_aligned`。若多个来源各自漏掉不同非冲突短语，会从原始转写补足到合并段并写入 `multi_source_complemented`。同一时间差异较大，或日期、数量、负责人等关键事实冲突的多源片段标记 `multi_source_conflict` 和 `speaker_review`，交给人工回听。
 - `qualityReport.metrics.recording_source_count`、`multi_source_merged_count`、`multi_source_complemented_count`、`multi_source_conflict_count` 和按 `(source_id, source_segment_no)` 计算的 `sourceCoverage` 用于 Web 和外部 Agent 判断证据质量。
 - Web 时间线筛选、证据跳转和保存转写都必须保留 `source_id`。前端筛选值使用 `source_id::source_segment_no`，不能退回只按 `source_segment_no` 匹配；合并后的多源段落通过 `multi_source_refs:*` 继续计入各原始来源覆盖率。
 
-目前“自动发现就近录制设备”尚未实现协议层，产品上先用共享会议编号加入；后续如果增加局域网发现或二维码邀请，只应创建/传递 `join_code`，不要绕过服务端权限和来源上限。
+目前“自动发现就近录制设备”尚未实现协议层，产品上先用共享会议编号加入；Web 会显示服务端可加入会议候选，但这不是局域网/Bluetooth 近场发现。后续如果增加局域网发现或二维码邀请，只应创建/传递 `join_code`，不要绕过服务端权限和来源上限。
 
 转写是企业知识平台的原始证据层。服务端使用 `transcript_segment_history` 归档被重处理或人工替换前的旧行。非 admin 用户更新转写时不能减少段落数；admin 可以删除段落，但删除前同样归档。知识平台 Agent 应通过 `/api/external/meetings/{meetingId}/transcript?include_history=true` 拉取当前转写和历史，不要直接读 SQLite。待办事项通过 `/api/web/meetings/{meetingId}/actions` 或 `/api/mobile/meetings/{meetingId}/actions` 更新，字段为 `owner`、`task`、`due`、`status`，更新后会出现在同步、导出、外部 API 和可选 ES/OpenSearch 索引中。
 
@@ -784,11 +785,12 @@ Key rules:
 - `audio_segments.source_id` plus `source_segment_no` records the device-local segment number. Multiple devices may upload local segment 1; the server allocates distinct global segment numbers while preserving `source_segment_no=1` for each source.
 - `transcript_segments.source_id` plus `source_segment_no` is the evidence key. Segment re-upload replaces only rows for the same source and local segment. `primary` is compatible with older empty `source_id` rows.
 - `/api/mobile/meetings/join` and `/api/web/meetings/join` join by code or title. Repeated joins reuse the existing `source_id` when the same user, device name, and source label match; the same user can still register another device by using a different source label. Upload endpoints also enforce `max_sources`, so clients cannot bypass the source limit.
+- `/api/mobile/meetings/discover` and `/api/web/meetings/discover` return recent, unfinished, not-full, still-processing multi-source meeting candidates. The response is metadata-only: `id/title/join_code/status/owner_name/source_count/max_sources/remaining_sources/created_at/updated_at`. Recorder and file-upload screens use it to fill a shared meeting code; it must not expose summary, transcripts, audio, action items, or member details before the user joins.
 - `processing._merge_multisource_segments()` runs before final semantic refinement. Near-overlapping, similar text from different sources is merged and marked with `multi_source_merged`, `multi_source_count:*`, and `multi_source_refs:*` only when key facts agree. If sources start at different times, the server can conservatively align rows by neighboring source-local segment numbers, start-time delta, and high text similarity; those merged rows also carry `multi_source_time_aligned`. When sources contain complementary non-conflicting clauses, the server can copy those clauses from original transcript evidence into the merged row and add `multi_source_complemented`. Divergent text, or conflicts in dates, amounts, or owners, is marked `multi_source_conflict` and `speaker_review`.
 - `qualityReport.metrics.recording_source_count`, `multi_source_merged_count`, `multi_source_complemented_count`, `multi_source_conflict_count`, and source coverage by `(source_id, source_segment_no)` support Web review and external agent gating.
 - Web timeline filters, evidence jumps, and transcript save payloads must preserve `source_id`. The frontend filter key is `source_id::source_segment_no`; do not match by `source_segment_no` alone. Merged multi-source rows still count toward original source coverage through `multi_source_refs:*`.
 
-Nearby device discovery is not implemented yet. Product flow currently uses a shared meeting code; future LAN discovery or QR invites should only create or pass `join_code` and must still rely on server-side permission checks and source limits.
+Nearby device discovery is not implemented yet. Product flow currently uses a shared meeting code; Web can show server-side joinable meeting candidates, but this is not LAN/Bluetooth proximity discovery. Future LAN discovery or QR invites should only create or pass `join_code` and must still rely on server-side permission checks and source limits.
 
 Transcripts are the evidence layer for enterprise knowledge platforms. The
 server archives rows replaced by reprocessing or manual edits in

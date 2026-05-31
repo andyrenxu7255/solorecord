@@ -96,6 +96,7 @@ Android 上传可靠性：
 多源同录可靠性：
 
 - 1-8 个录音源通过同一 `join_code` 归入同一会议。
+- `/api/mobile/meetings/discover` 和 `/api/web/meetings/discover` 只返回近期可加入会议元数据，加入前不得返回转写、纪要、音频、待办或成员详情。
 - 证据键始终是 `(source_id, source_segment_no)`，不能只按本地分段号判断覆盖、替换或跳转。
 - 最终处理会合并关键事实一致的重复多源片段并标记 `multi_source_merged`。
 - 设备错峰起录但来源分段相邻、时间差和文本相似度满足保守阈值时，合并片段还会标记 `multi_source_time_aligned`。
@@ -137,6 +138,7 @@ GET /api/mobile/sync
 ```text
 POST /api/mobile/meetings
 GET  /api/mobile/meetings
+GET  /api/mobile/meetings/discover
 GET  /api/mobile/meetings/{meetingId}
 POST /api/mobile/meetings/{meetingId}/segments
 POST /api/mobile/meetings/{meetingId}/segments-json
@@ -340,6 +342,7 @@ Android upload reliability:
 Multi-source recording reliability:
 
 - 1-8 recording sources join the same meeting through one `join_code`.
+- `/api/mobile/meetings/discover` and `/api/web/meetings/discover` return recent joinable meeting metadata only; they must not expose transcripts, summaries, audio, action items, or member details before the user joins.
 - The evidence key is always `(source_id, source_segment_no)`; never use the local segment number alone for coverage, replacement, or navigation.
 - Final processing merges duplicate multi-source rows only when key facts agree and marks them with `multi_source_merged`.
 - If devices start at different times but neighboring source-local segment numbers, start-time delta, and text similarity pass conservative checks, merged rows also carry `multi_source_time_aligned`.
@@ -381,6 +384,7 @@ Meeting:
 ```text
 POST /api/mobile/meetings
 GET  /api/mobile/meetings
+GET  /api/mobile/meetings/discover
 GET  /api/mobile/meetings/{meetingId}
 POST /api/mobile/meetings/{meetingId}/segments
 POST /api/mobile/meetings/{meetingId}/segments-json

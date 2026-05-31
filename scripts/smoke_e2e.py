@@ -236,6 +236,17 @@ def _run_multi_source_story(client: httpx.Client, owner_headers: dict[str, str])
     expect(create, 200, "multi-source create")
     meeting_id = create.json()["meeting"]["id"]
 
+    discover = client.get("/api/web/meetings/discover?q=SMOKE0601", headers=user_headers)
+    expect(discover, 200, "multi-source discover")
+    discover_items = discover.json()["items"]
+    assert len(discover_items) == 1, "expected one joinable multi-source meeting"
+    discover_item = discover_items[0]
+    assert discover_item["join_code"] == "SMOKE0601"
+    assert discover_item["source_count"] == 1
+    assert discover_item["remaining_sources"] == 2
+    for hidden_key in ("summary", "role_notes", "transcriptSegments", "audioSegments", "actionItems"):
+        assert hidden_key not in discover_item, f"discover leaked {hidden_key}"
+
     join = client.post(
         "/api/web/meetings/join",
         headers=user_headers,

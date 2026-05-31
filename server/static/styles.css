@@ -509,6 +509,79 @@ textarea.input {
   gap: 8px;
 }
 
+.join-discovery {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+}
+
+.join-discovery:empty {
+  display: none;
+}
+
+.join-discovery-title,
+.join-discovery-empty {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.join-discovery-list {
+  display: grid;
+  gap: 8px;
+}
+
+.join-discovery-item {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 9px 10px;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.join-discovery-item:hover,
+.join-discovery-item:focus-visible {
+  border-color: var(--primary);
+  background: var(--surface-soft);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
+  outline: none;
+}
+
+.join-discovery-item span,
+.join-discovery-meta {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.join-discovery-item b,
+.join-discovery-item small {
+  overflow-wrap: anywhere;
+}
+
+.join-discovery-item small,
+.join-discovery-meta small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.join-discovery-meta {
+  justify-items: end;
+  text-align: right;
+}
+
+.join-discovery-meta b {
+  color: var(--primary-strong);
+  font-size: 13px;
+}
+
 .upload-status {
   min-height: 38px;
   border: 1px solid var(--line);

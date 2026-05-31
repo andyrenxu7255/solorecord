@@ -45,6 +45,7 @@
 ### 代码地图
 
 - `server/solorecord_server/main.py`：FastAPI 路由。
+- `/api/mobile/meetings/discover` 和 `/api/web/meetings/discover` 只返回近期可加入多源会议的元数据：`id/title/join_code/status/owner_name/source_count/max_sources/remaining_sources/created_at/updated_at`。不要把它扩展成加入前会议详情接口；加入前不得暴露纪要、转写、音频、待办或成员详情。
 - `server/solorecord_server/db.py`：SQLite schema 和迁移。
 - `server/solorecord_server/auth.py`：会话、LDAP、SSO、外部 token 鉴权。
 - `server/solorecord_server/processing.py`：ASR、纪要、转发、索引流程。
@@ -121,6 +122,7 @@ cd clients\desktop; npm install; npm run pack; npm run portable:win
 ## Code Map
 
 - `server/solorecord_server/main.py`: FastAPI routes.
+- `/api/mobile/meetings/discover` and `/api/web/meetings/discover` return metadata only for recent joinable multi-source meetings: `id/title/join_code/status/owner_name/source_count/max_sources/remaining_sources/created_at/updated_at`. Do not turn them into pre-join detail endpoints; they must not expose summaries, transcripts, audio, action items, or member details before the user joins.
 - `server/solorecord_server/db.py`: SQLite schema and migrations.
 - `server/solorecord_server/auth.py`: Sessions, LDAP, SSO, external token auth.
 - `server/solorecord_server/processing.py`: ASR, summary, forwarding, indexing workflow.

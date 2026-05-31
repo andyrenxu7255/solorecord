@@ -297,21 +297,22 @@ SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
 
 ## 多源同录验收
 
-多源同录面向大会议室或多个参会人同时录音的场景。当前已支持共享会议编号加入同一会议；自动发现就近设备尚未实现，部署时不要承诺已经有局域网自动发现。
+多源同录面向大会议室或多个参会人同时录音的场景。当前已支持共享会议编号加入同一会议；Web 录音页和文件补传页会显示服务端可加入会议候选，用户点击后自动填入编号。自动发现就近设备尚未实现，部署时不要承诺已经有局域网或 Bluetooth 近场发现。
 
 验收步骤：
 
 1. 用账号 A 创建会议，填写会议编号，例如 `ROOM0601`，录音源名称写“前排手机”。
-2. 用账号 B 在另一台终端填写同一个会议编号，录音源名称写“后排手机”。
-3. 账号 B 用同一设备名和同一录音源名称重复加入一次，应返回同一个 `source_id`，录音源数量不应增加。
-4. 两台设备都上传自己的第 1 段。服务端应生成两个 `audio_segments`，全局 `segment_no` 不同，但 `source_segment_no` 都是 `1`，`source_id` 分别不同。
-5. Web 会议详情应显示多个录音源、多个录音分段，且两个来源的音频都可按权限下载/播放。
-6. 结束会议后，重复拾音内容应出现 `multi_source_merged_count`；如果两个来源同一时间内容差异较大，应出现 `multi_source_conflict_count` 和质量提示。
-7. 外部知识平台拉取 `/api/external/meetings/{meetingId}/transcript?include_history=true` 时，应能看到 `source_id`、`source_segment_no`、`qualityReport` 和 `knowledgeReadiness`。
+2. 用账号 B 打开 Web 录音页或文件补传页，应看到该会议候选；点击候选后，会议编号输入框应自动填入 `ROOM0601`，但不会展示会议转写、纪要、音频或待办内容。
+3. 用账号 B 在另一台终端填写同一个会议编号，录音源名称写“后排手机”。
+4. 账号 B 用同一设备名和同一录音源名称重复加入一次，应返回同一个 `source_id`，录音源数量不应增加。
+5. 两台设备都上传自己的第 1 段。服务端应生成两个 `audio_segments`，全局 `segment_no` 不同，但 `source_segment_no` 都是 `1`，`source_id` 分别不同。
+6. Web 会议详情应显示多个录音源、多个录音分段，且两个来源的音频都可按权限下载/播放。
+7. 结束会议后，重复拾音内容应出现 `multi_source_merged_count`；如果两个来源同一时间内容差异较大，应出现 `multi_source_conflict_count` 和质量提示。
+8. 外部知识平台拉取 `/api/external/meetings/{meetingId}/transcript?include_history=true` 时，应能看到 `source_id`、`source_segment_no`、`qualityReport` 和 `knowledgeReadiness`。
 
 运维排障要点：
 
-- `max_sources` 限制为 1-8，上传接口也会检查来源上限；如果出现 409，先确认是否超过会议来源数。
+- `max_sources` 限制为 1-8，上传接口也会检查来源上限；如果出现 409，先确认是否超过会议来源数。满员、已结束、已完成或失败的会议不会出现在可加入会议候选里。
 - 重复点击加入时，同一账号、同一设备名、同一录音源名称应复用原 `source_id`；同一账号要开第二台设备时，应使用不同录音源名称。
 - 多源会议中，不能只按 `source_segment_no` 判断覆盖率；应按 `(source_id, source_segment_no)` 看证据。
 - Web 时间线筛选、待办/纪要证据里的“定位转写”也按 `(source_id, source_segment_no)` 定位。若两台设备都有第 1 段，应分别跳到对应录音源；如果跳错，优先检查前端 payload 是否丢了 `source_id`。
@@ -858,20 +859,21 @@ Operations notes:
 
 ### Multi-Source Recording Acceptance
 
-Multi-source recording is for large rooms or multiple participants recording at the same time. Shared meeting-code join is implemented; nearby automatic device discovery is not implemented yet and should not be promised during deployment.
+Multi-source recording is for large rooms or multiple participants recording at the same time. Shared meeting-code join is implemented; Web recorder and upload screens show server-side joinable meeting candidates and fill the code after a click. Nearby automatic device discovery is not implemented yet and should not be promised during deployment.
 
 Acceptance steps:
 
 1. Use account A to create a meeting with a meeting code such as `ROOM0601` and source label `front phone`.
-2. Use account B on another device with the same meeting code and source label `back phone`.
-3. Upload local segment 1 from both devices. The server should create two `audio_segments` with different global `segment_no` values, while both keep `source_segment_no=1` and different `source_id` values.
-4. Web meeting detail should show multiple recording sources and multiple audio segments. Both audio files should be downloadable/playable by authorized users.
-5. After finish, duplicated captured speech should increase `multi_source_merged_count`. Divergent text at the same time should increase `multi_source_conflict_count` and appear in quality review hints.
-6. `/api/external/meetings/{meetingId}/transcript?include_history=true` should expose `source_id`, `source_segment_no`, `qualityReport`, and `knowledgeReadiness`.
+2. Use account B to open the Web recorder or file-upload screen. It should show the meeting as a joinable candidate and fill `ROOM0601` after a click, without exposing transcripts, summaries, audio, or action items before joining.
+3. Use account B on another device with the same meeting code and source label `back phone`.
+4. Upload local segment 1 from both devices. The server should create two `audio_segments` with different global `segment_no` values, while both keep `source_segment_no=1` and different `source_id` values.
+5. Web meeting detail should show multiple recording sources and multiple audio segments. Both audio files should be downloadable/playable by authorized users.
+6. After finish, duplicated captured speech should increase `multi_source_merged_count`. Divergent text at the same time should increase `multi_source_conflict_count` and appear in quality review hints.
+7. `/api/external/meetings/{meetingId}/transcript?include_history=true` should expose `source_id`, `source_segment_no`, `qualityReport`, and `knowledgeReadiness`.
 
 Troubleshooting notes:
 
-- `max_sources` is clamped to 1-8 and enforced on upload as well as explicit source creation. HTTP 409 usually means the meeting source limit was reached.
+- `max_sources` is clamped to 1-8 and enforced on upload as well as explicit source creation. HTTP 409 usually means the meeting source limit was reached. Full, ended, ready, or failed meetings are not returned by the joinable meeting discovery API.
 - In multi-source meetings, coverage must be checked by `(source_id, source_segment_no)`, not by local segment number alone.
 - Web timeline filters and action/summary evidence “jump to transcript” links also target `(source_id, source_segment_no)`. If two devices both have segment 1, each should jump to its own source; if it does not, first check whether the frontend payload lost `source_id`.
 - `multi_source_conflict` is not a processing failure; it means a human should listen to the different sources for that time window.

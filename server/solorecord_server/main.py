@@ -1,5 +1,6 @@
-from pathlib import Path
+from datetime import datetime, timedelta, timezone
 import json
+from pathlib import Path
 import re
 import secrets
 import sqlite3
@@ -291,6 +292,70 @@ def list_meetings(user: CurrentUser) -> dict:
             (user["id"],),
         ).fetchall()
     return {"items": [row_to_dict(row) for row in rows]}
+
+
+@app.get("/api/mobile/meetings/discover")
+@app.get("/api/web/meetings/discover")
+def discover_joinable_meetings(
+    user: CurrentUser,
+    q: str = "",
+    limit: int = Query(12, ge=1, le=50),
+    recent_hours: int = Query(12, ge=1, le=168),
+) -> dict:
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=recent_hours)).isoformat()
+    keyword = f"%{_normalize_join_code(q) or q.strip()}%"
+    params: list[object] = [cutoff]
+    filter_sql = ""
+    if q.strip():
+        filter_sql = "AND (meetings.join_code LIKE ? OR meetings.title LIKE ?)"
+        params.extend([keyword, f"%{q.strip()}%"])
+    params.append(limit)
+    with get_db() as db:
+        rows = db.execute(
+            f"""
+            SELECT meetings.id, meetings.title, meetings.join_code, meetings.status,
+                   meetings.max_sources, meetings.created_at, meetings.updated_at,
+                   users.display_name AS owner_name,
+                   COUNT(recording_sources.id) AS source_count
+            FROM meetings
+            JOIN users ON users.id = meetings.owner_id
+            LEFT JOIN recording_sources ON recording_sources.meeting_id = meetings.id
+            WHERE meetings.deleted_at IS NULL
+              AND meetings.recording_mode = 'multi_source'
+              AND meetings.ended_at IS NULL
+              AND meetings.status NOT IN ('ready', 'failed')
+              AND meetings.updated_at >= ?
+              {filter_sql}
+            GROUP BY meetings.id
+            HAVING COUNT(recording_sources.id) < CASE
+                WHEN meetings.max_sources < 1 THEN 1
+                WHEN meetings.max_sources > 8 THEN 8
+                ELSE meetings.max_sources
+            END
+            ORDER BY meetings.updated_at DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        ).fetchall()
+    items = []
+    for row in rows:
+        max_sources = _clamp_source_count(row["max_sources"], default=8)
+        source_count = int(row["source_count"] or 0)
+        items.append(
+            {
+                "id": row["id"],
+                "title": row["title"],
+                "join_code": row["join_code"] or "",
+                "status": row["status"],
+                "owner_name": row["owner_name"] or "",
+                "source_count": source_count,
+                "max_sources": max_sources,
+                "remaining_sources": max(0, max_sources - source_count),
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+        )
+    return {"items": items, "limit": limit, "recentHours": recent_hours}
 
 
 @app.get("/api/mobile/meetings/{meeting_id}")

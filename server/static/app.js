@@ -2,6 +2,7 @@ const state = {
   token: localStorage.getItem("solo_token") || "",
   user: JSON.parse(localStorage.getItem("solo_user") || "null"),
   meetings: [],
+  joinableMeetings: [],
   selectedMeetingId: "",
   selectedTranscriptVersion: 1,
   selectedDownloadPlatform: "android",
@@ -103,6 +104,7 @@ async function ldapLogin(event) {
     hideLogin();
     renderAccount();
     await loadMeetings();
+    await loadJoinableMeetings();
     toast("已登录");
   } catch (error) {
     toast("登录失败，请检查用户名、密码或服务器配置");
@@ -122,6 +124,7 @@ async function demoLogin() {
   localStorage.setItem("solo_user", JSON.stringify(state.user));
   renderAccount();
   await loadMeetings();
+  await loadJoinableMeetings();
   toast("已登录");
 }
 
@@ -159,9 +162,11 @@ function logout() {
   state.token = "";
   state.user = null;
   state.meetings = [];
+  state.joinableMeetings = [];
   renderAccount();
   renderMeetingList();
   renderMeetingSummaryStrip();
+  renderJoinableMeetingLists();
   toast("已退出登录");
 }
 
@@ -171,6 +176,83 @@ async function loadMeetings(query = "") {
   state.meetings = data.items || [];
   renderMeetingList();
   renderMeetingSummaryStrip();
+}
+
+async function loadJoinableMeetings(query = "") {
+  if (!state.token) {
+    state.joinableMeetings = [];
+    renderJoinableMeetingLists();
+    return;
+  }
+  try {
+    const data = await api(`/api/web/meetings/discover?q=${encodeURIComponent(query || "")}`);
+    state.joinableMeetings = data.items || [];
+  } catch (error) {
+    state.joinableMeetings = [];
+  }
+  renderJoinableMeetingLists();
+}
+
+function renderJoinableMeetingLists() {
+  renderJoinableMeetings("record");
+  renderJoinableMeetings("upload");
+}
+
+function renderJoinableMeetings(target) {
+  const container = $(`#${target}DiscoverList`);
+  const input = target === "record" ? $("#recordJoinCode") : $("#uploadJoinCode");
+  if (!container || !input) return;
+  const query = input.value.trim();
+  const normalizedQuery = normalizeJoinQuery(query);
+  const titleQuery = query.toLowerCase();
+  const items = state.joinableMeetings.filter((item) => {
+    if (!query) return true;
+    return String(item.join_code || "").includes(normalizedQuery)
+      || String(item.title || "").toLowerCase().includes(titleQuery);
+  });
+  if (!state.token) {
+    container.innerHTML = "";
+    return;
+  }
+  if (!items.length) {
+    container.innerHTML = `<div class="join-discovery-empty">暂无可加入会议</div>`;
+    return;
+  }
+  container.innerHTML = `
+    <div class="join-discovery-title">可加入会议</div>
+    <div class="join-discovery-list">
+      ${items.slice(0, 8).map((item) => `
+        <button type="button" class="join-discovery-item" data-join-code="${escapeAttr(item.join_code || "")}">
+          <span>
+            <b>${escapeHtml(item.title || "未命名会议")}</b>
+            <small>${escapeHtml(item.owner_name || "发起人")} · ${escapeHtml(statusLabel(item.status))}</small>
+          </span>
+          <span class="join-discovery-meta">
+            <b>${escapeHtml(item.join_code || "")}</b>
+            <small>${Number(item.source_count || 0)}/${Number(item.max_sources || 1)}</small>
+          </span>
+        </button>
+      `).join("")}
+    </div>
+  `;
+  container.querySelectorAll(".join-discovery-item").forEach((button) => {
+    button.addEventListener("click", () => {
+      input.value = button.dataset.joinCode || "";
+      input.focus();
+      renderJoinableMeetings(target);
+    });
+  });
+}
+
+function scheduleJoinableMeetingLoad(input) {
+  window.clearTimeout(input._soloDiscoverTimer);
+  input._soloDiscoverTimer = window.setTimeout(() => {
+    loadJoinableMeetings(input.value.trim());
+  }, 220);
+}
+
+function normalizeJoinQuery(value) {
+  return String(value || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
 }
 
 function renderMeetingList() {
@@ -1454,23 +1536,34 @@ async function createAndUpload() {
     button.textContent = "正在创建会议...";
     setUploadStatus(`正在创建会议：${file.name}（${formatBytes(file.size)}）`, "running");
     toast("正在创建会议");
-    const meetingPayload = {
-      title: $("#newMeetingTitle").value || file.name,
-      join_code: $("#uploadJoinCode")?.value || "",
-      recording_mode: $("#uploadJoinCode")?.value ? "multi_source" : "single",
-      max_sources: $("#uploadJoinCode")?.value ? 8 : 1,
-      source_label: $("#uploadSourceLabel")?.value || "",
-    };
-    const meeting = await api("/api/web/meetings", {
-      method: "POST",
-      body: JSON.stringify(meetingPayload),
-    });
+    const joinCode = $("#uploadJoinCode")?.value?.trim() || "";
+    const sourceLabel = $("#uploadSourceLabel")?.value || "";
+    const title = $("#newMeetingTitle").value || file.name;
+    const meeting = joinCode
+      ? await api("/api/web/meetings/join", {
+          method: "POST",
+          body: JSON.stringify({
+            title,
+            join_code: joinCode,
+            source_label: sourceLabel,
+            device_name: navigator.platform || "",
+          }),
+        })
+      : await api("/api/web/meetings", {
+          method: "POST",
+          body: JSON.stringify({
+            title,
+            recording_mode: "single",
+            max_sources: 1,
+            source_label: sourceLabel,
+          }),
+        });
     meetingId = meeting.meeting.id;
-    const sourceId = meeting.recordingSources?.[0]?.source_id || "primary";
+    const sourceId = meeting.joinedSource?.source_id || meeting.recordingSources?.[0]?.source_id || "primary";
     const form = new FormData();
     form.append("segment_no", "1");
     form.append("source_id", sourceId);
-    form.append("source_label", $("#uploadSourceLabel")?.value || "");
+    form.append("source_label", sourceLabel);
     form.append("source_segment_no", "1");
     form.append("start_ms", "0");
     form.append("end_ms", "180000");
@@ -1527,6 +1620,7 @@ async function loadRecorderConfig() {
     state.recorder.segmentMs = 5 * 60 * 1000;
   }
   renderRecorderSegments();
+  await loadJoinableMeetings();
 }
 
 async function startWebRecording() {
@@ -2344,6 +2438,15 @@ function bindEvents() {
     if (event.key === "Enter") loadMeetings($("#searchInput").value.trim());
   });
   $("#createUploadButton").addEventListener("click", createAndUpload);
+  ["recordJoinCode", "uploadJoinCode"].forEach((id) => {
+    const input = $(`#${id}`);
+    if (!input) return;
+    input.addEventListener("focus", () => loadJoinableMeetings(input.value.trim()));
+    input.addEventListener("input", () => {
+      renderJoinableMeetingLists();
+      scheduleJoinableMeetingLoad(input);
+    });
+  });
   $("#startRecordButton").addEventListener("click", () => {
     startWebRecording().catch(() => toast("无法开始录音，请检查麦克风权限"));
   });
@@ -2378,6 +2481,7 @@ async function init() {
       state.user = data.user;
       renderAccount();
       await loadMeetings();
+      await loadJoinableMeetings();
     } catch (error) {
       localStorage.removeItem("solo_token");
       localStorage.removeItem("solo_user");
