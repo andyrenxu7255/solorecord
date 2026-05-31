@@ -10,6 +10,7 @@ from .llm_adapters import (
     summarize_with_llm,
 )
 from .processing import (
+    _grounded_summary_result,
     _meeting_duration_ms,
     _merge_multisource_segments,
     _normalize_action_owners,
@@ -96,12 +97,17 @@ def probe_meeting(
             [_action_row_like(item) for item in action_rows],
             post_segments,
         )
+        post_summary, post_role_notes = _ground_summary_only(
+            meeting["summary"] if meeting else "",
+            meeting["role_notes"] if meeting else "",
+            post_segments,
+        )
         result["postprocess"] = _quality_snapshot(
             post_segments,
             post_actions,
             audio_rows,
-            meeting["summary"] if meeting else "",
-            meeting["role_notes"] if meeting else "",
+            post_summary,
+            post_role_notes,
         )
         result["postprocess"]["delta"] = _quality_delta(
             result["source"],
@@ -132,7 +138,12 @@ def probe_meeting(
             "llm",
         )
         summary, role_notes, actions = summarize_with_llm(refined, options)
-        actions = _normalize_action_owners(actions, refined)
+        summary, role_notes, actions = _grounded_summary_result(
+            summary,
+            role_notes,
+            actions,
+            refined,
+        )
         llm_result.update(
             {
                 "final_refined_count": len(refined),
@@ -190,6 +201,20 @@ def _postprocess_segments_without_llm(segments: list[dict]) -> list[dict]:
     return _normalize_semantic_segments(refined, "probe")
 
 
+def _ground_summary_only(
+    summary: str,
+    role_notes: str,
+    segments: list[dict],
+) -> tuple[str, str]:
+    grounded_summary, grounded_role_notes, _ = _grounded_summary_result(
+        summary,
+        role_notes,
+        [],
+        segments,
+    )
+    return grounded_summary, grounded_role_notes
+
+
 def _quality_snapshot(
     segments: list[dict],
     actions,
@@ -212,6 +237,8 @@ def _quality_snapshot(
         ).most_common(),
         "char_count": sum(len(str(item.get("text") or "")) for item in segments),
         "candidate_people": list(mentioned_people_candidates(segments, limit=24).keys()),
+        "summary_preview": summary[:500],
+        "role_notes_preview": role_notes[:500],
         "quality_report": report,
         "knowledge_readiness": build_knowledge_readiness(report),
     }

@@ -2366,7 +2366,7 @@ def _grounded_summary_from_segments(segments: list[dict]) -> tuple[str, str]:
         )
     else:
         summary = "基于转写原文的保守整理：\n" + "\n".join(
-            f"- {item['speaker']}：{item['text']}" for item in _speaker_segments(segments)[:8]
+            f"- {_summary_line_for_segment(item)}" for item in _speaker_segments(segments)[:8]
         )
     role_notes = "\n".join(
         f"{speaker}：{'；'.join(texts[:4])}"
@@ -2386,6 +2386,8 @@ def _grounded_topic_lines(segments: list[dict]) -> list[str]:
             line = f"{speaker}：{text}"
         else:
             line = text
+        if item["is_conflict"]:
+            line = f"多源冲突待确认：{line}"
         if line not in lines:
             lines.append(line)
     return lines
@@ -2398,7 +2400,14 @@ def _speaker_segments(segments: list[dict]) -> list[dict]:
         if not text:
             continue
         speaker = str(segment.get("display_name") or segment.get("speaker_id") or "").strip()
-        items.append({"speaker": speaker, "text": text})
+        flags = set(_flags(segment))
+        items.append(
+            {
+                "speaker": speaker,
+                "text": text,
+                "is_conflict": "multi_source_conflict" in flags,
+            }
+        )
     return items
 
 
@@ -2406,10 +2415,22 @@ def _group_text_by_speaker(segments: list[dict]) -> dict[str, list[str]]:
     grouped: dict[str, list[str]] = {}
     for item in _speaker_segments(segments):
         speaker = item["speaker"] or "待确认"
+        text = str(item["text"] or "")
+        if item.get("is_conflict"):
+            text = f"多源冲突待确认：{text}"
         grouped.setdefault(speaker, [])
-        if item["text"] not in grouped[speaker]:
-            grouped[speaker].append(item["text"])
+        if text not in grouped[speaker]:
+            grouped[speaker].append(text)
     return grouped
+
+
+def _summary_line_for_segment(item: dict) -> str:
+    speaker = str(item.get("speaker") or "").strip()
+    text = str(item.get("text") or "").strip()
+    line = f"{speaker}：{text}" if speaker else text
+    if item.get("is_conflict"):
+        return f"多源冲突待确认：{line}"
+    return line
 
 
 def _clean_summary_text(text: str, limit: int = 120) -> str:

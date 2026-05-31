@@ -112,7 +112,7 @@ Web 详情页的“整理质量”会提示候选人名、需要校对的段落�
 
 多源同录下，Web 的转写筛选和“定位转写”会按“录音源 + 该设备自己的分段号”定位。两台设备都上传“第 1 段”时，系统会分别显示到对应录音源，不会把不同设备的第 1 段混在一起。
 
-如果纪要标题出现“基于转写原文的保守整理”，说明系统发现大模型原始纪要证据不足，已经自动换成更贴近转写原文的版本。这个版本可能不够漂亮，但更适合先复核、再对外发送。系统也会在保存新生成待办前删除完全找不到转写依据的模型待办；如果全部模型待办都缺证据，会保留一条带原文片段的“按转写原文复核待办”，提醒你先看原文，而不是直接发起督办。如果当前只是没有配置大模型，但 ASR 已经生成了真实转写，系统只会保留保守纪要，不会自动塞入“检查转写结果”待办；只有占位转写、空语音或缺音频这类情况才会显示复核提醒。Web 会把这类条目标成“系统复核提醒”，复制待办时会自动跳过；如果确实要形成督办，请先把它改写成真实负责人和真实任务。
+如果纪要标题出现“基于转写原文的保守整理”，说明系统发现大模型原始纪要证据不足，已经自动换成更贴近转写原文的版本。这个版本可能不够漂亮，但更适合先复核、再对外发送。如果其中出现“多源冲突待确认”，说明不同录音源对同一关键事实不一致，系统只是把冲突原文列出来供你回听，不代表已经判断哪一条正确。系统也会在保存新生成待办前删除完全找不到转写依据的模型待办；如果全部模型待办都缺证据，会保留一条带原文片段的“按转写原文复核待办”，提醒你先看原文，而不是直接发起督办。如果当前只是没有配置大模型，但 ASR 已经生成了真实转写，系统只会保留保守纪要，不会自动塞入“检查转写结果”待办；只有占位转写、空语音或缺音频这类情况才会显示复核提醒。Web 会把这类条目标成“系统复核提醒”，复制待办时会自动跳过；如果确实要形成督办，请先把它改写成真实负责人和真实任务。
 
 ## 会议纪要和待办
 
@@ -362,9 +362,11 @@ The system generates:
 If the summary starts with "conservative transcript-grounded summary", the
 original LLM summary did not pass evidence checks and the server replaced it
 with a plainer transcript-grounded version. Newly generated action items that
-have no transcript evidence are removed before saving; if all generated actions
-are unsupported, the system keeps one transcript-referenced review action so
-you know to inspect the source text before sending reminders.
+have no transcript evidence are removed before saving. If the conservative
+summary says "multi-source conflict pending confirmation", replay the matching
+audio before treating that claim as true. If all generated actions are
+unsupported, the system keeps one transcript-referenced review action so you
+know to inspect the source text before sending reminders.
 If no LLM is configured but ASR produced real transcript text, the system keeps
 the conservative summary and does not create a synthetic "check transcript"
 action. That review action is only kept for placeholder, empty-speech, or

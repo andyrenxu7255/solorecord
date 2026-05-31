@@ -3364,6 +3364,64 @@ def test_quality_probe_postprocess_does_not_spread_same_source_conflict(
     assert result["postprocess"]["quality_report"]["metrics"]["multi_source_conflict_count"] == 2
 
 
+def test_quality_probe_postprocess_grounds_conflict_summary_read_only(
+    tmp_path: Path,
+) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post(
+        "/api/web/meetings",
+        headers=headers,
+        json={"title": "探针冲突纪要", "recording_mode": "multi_source", "max_sources": 2},
+    )
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+    import solorecord_server.quality_probe as quality_probe
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            UPDATE meetings
+            SET summary = '会议确认错误样例周三前补三类。'
+            WHERE id = ?
+            """,
+            (meeting_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id,
+             display_name, start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_probe_summary_conflict_front', ?, 1, 'front', 1, 'MANUAL_yitian', '翼天',
+             0, 30000, '错误样例周三前补三类。',
+             0.82, '["semantic_final","multi_source_conflict","speaker_review"]', 'now'),
+            ('seg_probe_summary_conflict_back', ?, 1, 'back', 1, 'MANUAL_yitian', '翼天',
+             200, 30200, '错误样例周五前补五类。',
+             0.82, '["semantic_final","multi_source_conflict","speaker_review"]', 'now')
+            """,
+            (meeting_id, meeting_id),
+        )
+
+    result = quality_probe.probe_meeting(
+        meeting_id,
+        run_llm=False,
+        run_postprocess=True,
+    )
+    source_metrics = result["source"]["quality_report"]["metrics"]
+    post = result["postprocess"]
+    post_metrics = post["quality_report"]["metrics"]
+
+    assert source_metrics["summary_unqualified_conflict_count"] == 1
+    assert "多源冲突待确认：翼天：错误样例周三前补三类" in post["summary_preview"]
+    assert "多源冲突待确认：错误样例周五前补五类" in post["role_notes_preview"]
+    assert post_metrics["summary_conflict_count"] > 0
+    assert post_metrics["summary_unqualified_conflict_count"] == 0
+
+    detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
+    assert detail["meeting"]["summary"] == "会议确认错误样例周三前补三类。"
+
+
 def test_quality_report_flags_action_owner_over_concentration(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)
@@ -4971,6 +5029,7 @@ def test_grounded_summary_prefers_suggested_action_owner_without_fallback() -> N
 
 def test_llm_summary_falls_back_when_multisource_conflict_is_definite() -> None:
     import solorecord_server.processing as processing
+    import solorecord_server.repository as repository
 
     segments = [
         {
@@ -5013,10 +5072,22 @@ def test_llm_summary_falls_back_when_multisource_conflict_is_definite() -> None:
 
     assert "会议确认错误样例周三前补三类" not in summary
     assert "基于转写原文的保守整理" in summary
+    assert "多源冲突待确认：翼天：错误样例周三前补三类" in summary
+    assert "多源冲突待确认：翼天：错误样例周五前补五类" in summary
     assert "错误样例周三前补三类" in summary
     assert "错误样例周五前补五类" in summary
-    assert role_notes
+    assert "多源冲突待确认：错误样例周三前补三类" in role_notes
+    assert "多源冲突待确认：错误样例周五前补五类" in role_notes
     assert actions[0]["owner"] == "翼天"
+    report = repository.build_quality_report(
+        [processing._segment_row_like(item) for item in segments],
+        [processing._action_row_like(item) for item in actions],
+        [],
+        summary,
+        role_notes,
+    )
+    assert report["metrics"]["summary_conflict_count"] > 0
+    assert report["metrics"]["summary_unqualified_conflict_count"] == 0
 
 
 def test_llm_summary_keeps_conflict_claim_with_review_language() -> None:
