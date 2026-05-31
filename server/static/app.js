@@ -810,6 +810,7 @@ function renderQualityReport(report) {
       <div><span>待办归属风险</span><b>${ownerRisk}</b></div>
     </div>
     ${renderSummaryEvidence(report.summaryEvidence)}
+    ${renderMultiSourceConflicts(report.multiSourceConflicts)}
     ${renderSourceCoverage(report.sourceCoverage)}
     ${renderSpeakerAliasConflicts(report.speakerAliasConflicts)}
     ${people.length ? `<p class="quality-people">候选人名：${escapeHtml(people.slice(0, 12).join("、"))}${people.length > 12 ? "..." : ""}</p>` : ""}
@@ -831,6 +832,42 @@ function renderQualityReport(report) {
       </div>
     ` : ""}
   `;
+}
+
+function renderMultiSourceConflicts(conflicts) {
+  const items = Array.isArray(conflicts) ? conflicts : [];
+  if (!items.length) return "";
+  return `
+    <div class="summary-risk-list multi-source-conflict-list">
+      ${items.slice(0, 6).map((item) => {
+        const nearby = Array.isArray(item.nearby) ? item.nearby : [];
+        return `
+          <div class="summary-evidence-item conflict">
+            <b>多源冲突：${escapeHtml(sourceConflictLabel(item))}</b>
+            <p>${escapeHtml(formatTime(item.start_ms || 0))} ${escapeHtml(item.speaker || "发言人")}：${escapeHtml(item.text || "")}</p>
+            ${renderEvidenceJumpButton(item)}
+            ${nearby.length ? `
+              <div class="summary-evidence-refs">
+                ${nearby.slice(0, 3).map((nearbyItem) => `
+                  <span>
+                    对照 ${escapeHtml(sourceConflictLabel(nearbyItem))} · ${escapeHtml(nearbyItem.speaker || "发言人")}：${escapeHtml(nearbyItem.text || "")}
+                    ${renderEvidenceJumpButton(nearbyItem)}
+                  </span>
+                `).join("")}
+              </div>
+            ` : ""}
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function sourceConflictLabel(item) {
+  const sourceId = item?.source_id || "primary";
+  const sourceSegment = item?.source_segment_no || "";
+  const label = sourceDisplayLabel(item);
+  return sourceSegment ? `${label} · 分段 ${sourceSegment}` : label || sourceId;
 }
 
 function renderSourceCoverage(sourceCoverage) {

@@ -3023,6 +3023,16 @@ def test_quality_report_marks_conflicting_multisource_actions_for_review(tmp_pat
     assert detail["actionItems"][0]["knowledgeSafe"] is False
     assert detail["actionItems"][0]["requiresReview"] is True
     assert "multi_source_conflict" in detail["knowledgeReadiness"]["reviewWarnings"]
+    conflict_items = detail["qualityReport"]["multiSourceConflicts"]
+    assert len(conflict_items) == 2
+    assert {item["source_id"] for item in conflict_items} == {"front", "back"}
+    assert all(item["source_segment_no"] == 1 for item in conflict_items)
+    assert all("multi_source_conflict" in item["flags"] for item in conflict_items)
+    assert all(item["nearby"] for item in conflict_items)
+    assert conflict_items[0]["nearby"][0]["segment_id"] in {
+        "seg_conflict_action_front",
+        "seg_conflict_action_back",
+    }
 
     external = client.get(
         f"/api/external/meetings/{meeting_id}",
@@ -3032,6 +3042,7 @@ def test_quality_report_marks_conflicting_multisource_actions_for_review(tmp_pat
     assert external_action["evidenceStatus"] == "conflict"
     assert external_action["knowledgeSafe"] is False
     assert external_action["requiresReview"] is True
+    assert len(external["qualityReport"]["multiSourceConflicts"]) == 2
 
 
 def test_quality_report_marks_conflicting_multisource_summary_for_review(tmp_path: Path) -> None:
@@ -4003,8 +4014,12 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "纪要多数源确认" in app_js
     assert "纪要多源冲突待核对" in app_js
     assert "summaryEvidenceStatusLabel" in app_js
+    assert "multiSourceConflicts" in app_js
+    assert "renderMultiSourceConflicts" in app_js
+    assert "sourceConflictLabel" in app_js
     assert ".summary-evidence-item.majority" in styles
     assert ".summary-evidence-item.conflict" in styles
+    assert ".summary-evidence-item p" in styles
     assert "detailRoleNotes" in app_js
     assert "分角色整理" in app_js
     assert "role_notes" in app_js

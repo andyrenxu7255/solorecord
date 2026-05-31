@@ -858,6 +858,11 @@ textarea.input {
   font-size: 12px;
 }
 
+.summary-evidence-item p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .summary-evidence-item.supported {
   background: #f2fbf8;
   border-color: #b8e3d2;

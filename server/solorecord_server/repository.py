@@ -285,6 +285,7 @@ def build_quality_report(
         1 for flags in flags_by_segment if "multi_source_complemented" in flags
     )
     multi_source_conflicts = sum(1 for flags in flags_by_segment if "multi_source_conflict" in flags)
+    multi_source_conflict_items = _multi_source_conflict_items(segments, flags_by_segment)
     scenario_counts: dict[str, int] = {}
     for flags in flags_by_segment:
         for flag in flags:
@@ -519,6 +520,7 @@ def build_quality_report(
         "weakActionOwners": weak_action_owners[:8],
         "summaryEvidence": summary_evidence,
         "sourceCoverage": source_coverage,
+        "multiSourceConflicts": multi_source_conflict_items,
         "issues": issues,
         "recommendations": _quality_recommendations(issues),
     }
@@ -576,6 +578,7 @@ def _quality_recommendations(issues: list[dict]) -> list[str]:
         "summary_evidence_weak": "逐条核对纪要要点，删除或改写转写原文无法支撑的内容。",
         "summary_multisource_conflict": "多源冲突支撑的纪要要保留待确认语气，必要时回听对应来源。",
         "source_segment_coverage_weak": "优先检查对应音频分段，必要时重新转写或回退到 ASR 原始结果。",
+        "multi_source_conflict": "打开多源冲突清单，逐条定位转写并回听对应录音源。",
         "owner_over_concentrated": "如果待办高度集中到主持人或单一人员，请按候选人名逐条复核负责人。",
         "candidate_people_not_speakers": "候选人名可以作为检查清单，逐个确认是否需要成为发言人或负责人。",
     }
@@ -669,6 +672,84 @@ def _speaker_evidence_items(segments: list[dict], flags_by_segment: list[list[st
         }
         items.append(item)
     return items
+
+
+def _multi_source_conflict_items(
+    segments: list[dict],
+    flags_by_segment: list[list[str]],
+) -> list[dict]:
+    conflict_segments = [
+        (index, segment, flags)
+        for index, (segment, flags) in enumerate(zip(segments, flags_by_segment, strict=False))
+        if "multi_source_conflict" in flags
+    ]
+    items: list[dict] = []
+    for index, segment, flags in conflict_segments:
+        item = _quality_segment_reference(segment, flags)
+        item["nearby"] = _nearby_conflict_references(segment, index, conflict_segments)
+        items.append(item)
+    return sorted(
+        items,
+        key=lambda item: (
+            int(item.get("start_ms") or 0),
+            str(item.get("source_id") or ""),
+            int(item.get("source_segment_no") or 0),
+            str(item.get("segment_id") or ""),
+        ),
+    )[:12]
+
+
+def _nearby_conflict_references(
+    target: dict,
+    target_index: int,
+    conflict_segments: list[tuple[int, dict, list[str]]],
+    limit: int = 3,
+) -> list[dict]:
+    target_source = str(target.get("source_id") or "")
+    target_start = int(target.get("start_ms") or 0)
+    target_end = int(target.get("end_ms") or target_start)
+    related: list[tuple[int, dict, list[str]]] = []
+    for index, segment, flags in conflict_segments:
+        if index == target_index:
+            continue
+        if target_source and str(segment.get("source_id") or "") == target_source:
+            continue
+        start_ms = int(segment.get("start_ms") or 0)
+        end_ms = int(segment.get("end_ms") or start_ms)
+        overlap = min(target_end, end_ms) - max(target_start, start_ms)
+        distance = min(abs(start_ms - target_start), abs(end_ms - target_end))
+        if overlap < 0 and distance > 90_000:
+            continue
+        related.append((max(0, distance - max(0, overlap)), segment, flags))
+    related.sort(
+        key=lambda item: (
+            item[0],
+            int(item[1].get("start_ms") or 0),
+            str(item[1].get("source_id") or ""),
+        )
+    )
+    return [
+        _quality_segment_reference(segment, flags, text_limit=110)
+        for _, segment, flags in related[:limit]
+    ]
+
+
+def _quality_segment_reference(
+    segment: dict,
+    flags: list[str] | None = None,
+    text_limit: int = 180,
+) -> dict:
+    return {
+        "segment_id": segment.get("id", ""),
+        "source_id": segment.get("source_id") or "",
+        "source_segment_no": segment.get("source_segment_no"),
+        "speaker": str(segment.get("display_name") or segment.get("speaker_id") or ""),
+        "speaker_id": segment.get("speaker_id", ""),
+        "start_ms": int(segment.get("start_ms") or 0),
+        "end_ms": int(segment.get("end_ms") or 0),
+        "text": _compact_snippet(str(segment.get("text") or ""), text_limit),
+        "flags": flags if flags is not None else _flags(segment.get("flags")),
+    }
 
 
 def _flag_value(flags: list[str], prefix: str) -> str:
