@@ -6,6 +6,7 @@ from reportlab.pdfgen import canvas
 
 from .config import get_settings
 from .db import get_db
+from .repository import build_quality_report
 from .utils import new_id, now_iso
 
 
@@ -18,14 +19,30 @@ def create_export(meeting_id: str, export_format: str) -> dict:
     export_dir.mkdir(parents=True, exist_ok=True)
     file_name = f"{meeting_id}.{_extension(export_format)}"
     path = export_dir / file_name
-    meeting, segments, actions = _load_meeting(meeting_id)
+    meeting, segments, actions, audio_rows = _load_meeting(meeting_id)
+    quality_report = build_quality_report(
+        segments,
+        actions,
+        audio_rows,
+        meeting.get("summary", ""),
+        meeting.get("role_notes", ""),
+    )
     if export_format == "markdown":
         path.write_text(_markdown(meeting, segments, actions), encoding="utf-8")
     elif export_format == "json":
         import json
 
         path.write_text(
-            json.dumps({"meeting": meeting, "segments": segments, "actions": actions}, ensure_ascii=False, indent=2),
+            json.dumps(
+                {
+                    "meeting": meeting,
+                    "segments": segments,
+                    "actions": actions,
+                    "qualityReport": quality_report,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
             encoding="utf-8",
         )
     elif export_format == "srt":
@@ -46,7 +63,7 @@ def create_export(meeting_id: str, export_format: str) -> dict:
     return {"id": export_id, "format": export_format, "path": str(path), "file_name": file_name}
 
 
-def _load_meeting(meeting_id: str) -> tuple[dict, list[dict], list[dict]]:
+def _load_meeting(meeting_id: str) -> tuple[dict, list[dict], list[dict], list[dict]]:
     with get_db() as db:
         meeting = db.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
         if not meeting:
@@ -59,7 +76,16 @@ def _load_meeting(meeting_id: str) -> tuple[dict, list[dict], list[dict]]:
             "SELECT * FROM action_items WHERE meeting_id = ? ORDER BY created_at",
             (meeting_id,),
         ).fetchall()
-    return dict(meeting), [dict(row) for row in segments], [dict(row) for row in actions]
+        audio_rows = db.execute(
+            "SELECT * FROM audio_segments WHERE meeting_id = ? ORDER BY segment_no",
+            (meeting_id,),
+        ).fetchall()
+    return (
+        dict(meeting),
+        [dict(row) for row in segments],
+        [dict(row) for row in actions],
+        [dict(row) for row in audio_rows],
+    )
 
 
 def _extension(export_format: str) -> str:
@@ -67,7 +93,20 @@ def _extension(export_format: str) -> str:
 
 
 def _markdown(meeting: dict, segments: list[dict], actions: list[dict]) -> str:
-    lines = [f"# {meeting['title']}", "", "## 会议纪要", "", meeting.get("summary") or "暂无纪要", "", "## 转写", ""]
+    lines = [
+        f"# {meeting['title']}",
+        "",
+        "## 会议纪要",
+        "",
+        meeting.get("summary") or "暂无纪要",
+        "",
+        "## 分角色整理",
+        "",
+        meeting.get("role_notes") or "暂无分角色整理",
+        "",
+        "## 转写",
+        "",
+    ]
     for segment in segments:
         lines.append(f"- [{_time(segment['start_ms'])}] **{segment['display_name']}**：{segment['text']}")
     lines.extend(["", "## 待办", ""])
@@ -91,6 +130,8 @@ def _docx(path: Path, meeting: dict, segments: list[dict], actions: list[dict]) 
     doc.add_heading(meeting["title"], level=1)
     doc.add_heading("会议纪要", level=2)
     doc.add_paragraph(meeting.get("summary") or "暂无纪要")
+    doc.add_heading("分角色整理", level=2)
+    doc.add_paragraph(meeting.get("role_notes") or "暂无分角色整理")
     doc.add_heading("转写", level=2)
     for segment in segments:
         doc.add_paragraph(f"[{_time(segment['start_ms'])}] {segment['display_name']}：{segment['text']}")
@@ -104,7 +145,14 @@ def _pdf(path: Path, meeting: dict, segments: list[dict], actions: list[dict]) -
     pdf = canvas.Canvas(str(path), pagesize=A4)
     width, height = A4
     y = height - 40
-    for line in [meeting["title"], "会议纪要", meeting.get("summary") or "暂无纪要", "转写"]:
+    for line in [
+        meeting["title"],
+        "会议纪要",
+        meeting.get("summary") or "暂无纪要",
+        "分角色整理",
+        meeting.get("role_notes") or "暂无分角色整理",
+        "转写",
+    ]:
         pdf.drawString(40, y, line[:90])
         y -= 22
     for segment in segments:

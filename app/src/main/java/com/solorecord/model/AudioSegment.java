@@ -10,6 +10,9 @@ public final class AudioSegment {
     private final long endMillis;
     private final String uploadStatus;
     private final String downloadUrl;
+    private final String sourceId;
+    private final int sourceSegmentNo;
+    private final String sourceLabel;
 
     public AudioSegment(int segmentNo, String path, long startMillis, long endMillis, String uploadStatus) {
         this(segmentNo, path, startMillis, endMillis, uploadStatus, "");
@@ -22,6 +25,19 @@ public final class AudioSegment {
             long endMillis,
             String uploadStatus,
             String downloadUrl) {
+        this(segmentNo, path, startMillis, endMillis, uploadStatus, downloadUrl, "primary", segmentNo, "");
+    }
+
+    public AudioSegment(
+            int segmentNo,
+            String path,
+            long startMillis,
+            long endMillis,
+            String uploadStatus,
+            String downloadUrl,
+            String sourceId,
+            int sourceSegmentNo,
+            String sourceLabel) {
         this.segmentNo = Math.max(1, segmentNo);
         this.path = path == null ? "" : path;
         this.startMillis = Math.max(0, startMillis);
@@ -30,6 +46,9 @@ public final class AudioSegment {
                 ? "local"
                 : uploadStatus.trim();
         this.downloadUrl = downloadUrl == null ? "" : downloadUrl.trim();
+        this.sourceId = sourceId == null || sourceId.trim().isEmpty() ? "primary" : sourceId.trim();
+        this.sourceSegmentNo = Math.max(1, sourceSegmentNo <= 0 ? this.segmentNo : sourceSegmentNo);
+        this.sourceLabel = sourceLabel == null ? "" : sourceLabel.trim();
     }
 
     public static AudioSegment fromJson(JSONObject json) {
@@ -39,7 +58,10 @@ public final class AudioSegment {
                 json.optLong("startMillis"),
                 json.optLong("endMillis"),
                 json.optString("uploadStatus", "local"),
-                json.optString("downloadUrl", json.optString("download_url")));
+                json.optString("downloadUrl", json.optString("download_url")),
+                json.optString("sourceId", json.optString("source_id", "primary")),
+                json.optInt("sourceSegmentNo", json.optInt("source_segment_no", json.optInt("segmentNo", 1))),
+                json.optString("sourceLabel", json.optString("source_label")));
     }
 
     public JSONObject toJson() throws JSONException {
@@ -50,6 +72,9 @@ public final class AudioSegment {
         json.put("endMillis", endMillis);
         json.put("uploadStatus", uploadStatus);
         json.put("downloadUrl", downloadUrl);
+        json.put("sourceId", sourceId);
+        json.put("sourceSegmentNo", sourceSegmentNo);
+        json.put("sourceLabel", sourceLabel);
         return json;
     }
 
@@ -77,6 +102,18 @@ public final class AudioSegment {
         return downloadUrl;
     }
 
+    public String getSourceId() {
+        return sourceId;
+    }
+
+    public int getSourceSegmentNo() {
+        return sourceSegmentNo;
+    }
+
+    public String getSourceLabel() {
+        return sourceLabel;
+    }
+
     public boolean isUploaded() {
         return "uploaded".equals(uploadStatus);
     }
@@ -90,10 +127,22 @@ public final class AudioSegment {
     }
 
     public AudioSegment withUploadStatus(String status) {
-        return new AudioSegment(segmentNo, path, startMillis, endMillis, status, downloadUrl);
+        return new AudioSegment(segmentNo, path, startMillis, endMillis, status, downloadUrl,
+                sourceId, sourceSegmentNo, sourceLabel);
     }
 
     public AudioSegment withUploadStatus(String status, String newDownloadUrl) {
-        return new AudioSegment(segmentNo, path, startMillis, endMillis, status, newDownloadUrl);
+        return new AudioSegment(segmentNo, path, startMillis, endMillis, status, newDownloadUrl,
+                sourceId, sourceSegmentNo, sourceLabel);
+    }
+
+    public AudioSegment withServerSegmentNo(int newSegmentNo, String status) {
+        return new AudioSegment(newSegmentNo, path, startMillis, endMillis, status, downloadUrl,
+                sourceId, sourceSegmentNo, sourceLabel);
+    }
+
+    public AudioSegment withRecordingSource(String newSourceId, String newSourceLabel) {
+        return new AudioSegment(segmentNo, path, startMillis, endMillis, uploadStatus, downloadUrl,
+                newSourceId, sourceSegmentNo, newSourceLabel);
     }
 }

@@ -126,6 +126,7 @@ POST /api/mobile/meetings/{meetingId}/process
 GET  /api/mobile/meetings/{meetingId}/status
 GET  /api/mobile/meetings/{meetingId}/transcript
 PUT  /api/mobile/meetings/{meetingId}/transcript
+PUT  /api/mobile/meetings/{meetingId}/actions
 POST /api/mobile/meetings/{meetingId}/speakers/rename
 GET  /api/mobile/releases/latest
 ```
@@ -139,6 +140,7 @@ GET  /api/web/meetings/{meetingId}
 PATCH /api/web/meetings/{meetingId}
 GET  /api/web/meetings/{meetingId}/transcript
 PUT  /api/web/meetings/{meetingId}/transcript
+PUT  /api/web/meetings/{meetingId}/actions
 POST /api/web/meetings/{meetingId}/process
 POST /api/web/meetings/{meetingId}/speakers/rename
 POST /api/web/meetings/{meetingId}/exports
@@ -216,7 +218,26 @@ Android 录音和上传采用连续录音、重叠分段、分段级断点续传
 
 `transcript_segments.source_segment_no` 用于分段重传时只替换该来源分段的阶段转写。不要用时间范围删除相邻段落，因为相邻分段存在约 2 秒重叠。
 
-转写是企业知识平台的原始证据层。服务端使用 `transcript_segment_history` 归档被重处理或人工替换前的旧行。非 admin 用户更新转写时不能减少段落数；admin 可以删除段落，但删除前同样归档。知识平台 Agent 应通过 `/api/external/meetings/{meetingId}/transcript?include_history=true` 拉取当前转写和历史，不要直接读 SQLite。
+## 多源同录与多源校对
+
+多源同录用于一个会议有 1-8 台设备同时录音的场景。用户可以在 Web、Windows 客户端或 Android 录音页填写相同 `join_code`，服务端会把这些录音源归入同一场会议。
+
+核心约定：
+
+- `meetings.join_code` 是加入同一会议的短编号，保存时会标准化为大写字母数字。
+- `meetings.recording_mode` 可为 `single` 或 `multi_source`；`max_sources` 限制在 1-8。
+- `recording_sources` 保存每个来源的 `source_id`、显示名、设备名和用户。
+- `audio_segments.segment_no` 仍是会议内全局唯一编号，用于下载 URL 和旧客户端兼容。
+- `audio_segments.source_id` + `source_segment_no` 表示某个设备自己的分段编号。多台设备都可以上传自己的第 1 段，服务端会分配不同的全局 `segment_no`，但保留各自的 `source_segment_no=1`。
+- `transcript_segments.source_id` + `source_segment_no` 是证据追溯键。分段重传只替换同一来源、同一本地分段的转写行；`primary` 兼容旧数据里的空 `source_id`。
+- `/api/mobile/meetings/join` 和 `/api/web/meetings/join` 支持按会议编号或标题加入。上传接口也会校验 `max_sources`，不能绕过来源上限。
+- `processing._merge_multisource_segments()` 在整场 finish 前做保守多源校对：同一时间窗、不同来源、文本高度相近的段落合并为一条，并写入 `multi_source_merged`、`multi_source_count:*` 和 `multi_source_refs:*` flags；同一时间差异较大的多源片段标记 `multi_source_conflict` 和 `speaker_review`，交给人工回听。
+- `qualityReport.metrics.recording_source_count`、`multi_source_merged_count`、`multi_source_conflict_count` 和按 `(source_id, source_segment_no)` 计算的 `sourceCoverage` 用于 Web 和外部 Agent 判断证据质量。
+- Web 时间线筛选、证据跳转和保存转写都必须保留 `source_id`。前端筛选值使用 `source_id::source_segment_no`，不能退回只按 `source_segment_no` 匹配；合并后的多源段落通过 `multi_source_refs:*` 继续计入各原始来源覆盖率。
+
+目前“自动发现就近录制设备”尚未实现协议层，产品上先用共享会议编号加入；后续如果增加局域网发现或二维码邀请，只应创建/传递 `join_code`，不要绕过服务端权限和来源上限。
+
+转写是企业知识平台的原始证据层。服务端使用 `transcript_segment_history` 归档被重处理或人工替换前的旧行。非 admin 用户更新转写时不能减少段落数；admin 可以删除段落，但删除前同样归档。知识平台 Agent 应通过 `/api/external/meetings/{meetingId}/transcript?include_history=true` 拉取当前转写和历史，不要直接读 SQLite。待办事项通过 `/api/web/meetings/{meetingId}/actions` 或 `/api/mobile/meetings/{meetingId}/actions` 更新，字段为 `owner`、`task`、`due`、`status`，更新后会出现在同步、导出、外部 API 和可选 ES/OpenSearch 索引中。
 
 `/segments-json` 仍保留作兼容和简单测试入口，Android 主流程不再使用它上传长会议音频。
 
@@ -254,6 +275,64 @@ stdout 必须是：
 命令适配器不使用 shell 执行命令，避免 shell 注入。新增占位符时，要在 `_render_command` 中显式加入。
 
 远程 STT 适配器同在 `asr_adapters.py`。`transcribe_with_openai_compatible()` 支持 `openai-compatible`、`remote-stt` 和 `funasr` Provider，优先调用 `/audio/transcriptions`，如果返回 404 再尝试 `/asr`。它会规范化 `text`、`transcript`、`result`、`data` 或 `segments` 数组。空文本不会让会议处理丢失状态，而是写入带 `empty_asr` 的占位转写。
+
+## 语义分段与发言人推断
+
+服务端后处理入口在：
+
+```text
+server/solorecord_server/processing.py
+```
+
+LLM 语义分段入口在：
+
+```text
+server/solorecord_server/llm_adapters.py
+```
+
+处理顺序：
+
+1. `asr_adapters.py` 尽量保留 ASR 原生 `sentence_info`、`segments`、`speaker_id`、`spk` 等字段，并把原生说话人标记为 `asr_speaker`。
+2. `processing._needs_semantic_segmentation()` 判断是否需要 LLM 重分段：如果 ASR 已经给出多个可靠 speaker id 且没有“某某你先说/某某你那个部分/我这边负责”等上下文线索，可以跳过重分段；只要出现点名、承接回应、被点名议题的后续延续、长文本单一发言人、多个“某某说/某某：”标记，或“某某负责/某某确认/某某后面看”这类未解析到人物的任务归属线索，仍会进入后处理。
+3. `llm_adapters.refine_segments_with_llm()` 要求模型只返回 `{"segments":[...]}`，每段包含 `source_index`、`source_id`、`source_segment_no`、`speaker`、`speaker_id`、`start_ms`、`end_ms`、`text`、`confidence`、`scenario`、`reason`。`source_index`、`source_id` 和 `source_segment_no` 用于把模型输出追溯到原始 ASR/音频分段。
+4. LLM 返回后，`processing._rule_refine_residual_mixed_segments()` 会再检查是否还残留明显的“某某说/某某：/某某你先说/某某后面看”混合段；如果有，会保守二次拆分并写入 `llm_residual_rule_refined` 和 `speaker_review`。
+5. LLM 不可用或返回非法 JSON 时，`processing._rule_refine_segments()` 用规则兜底拆明显人名标记；`_apply_contextual_speaker_inference()` 会继续处理“被点名后下一段以我这边/我负责回应”以及“没有我字但继续同一议题、交付物、时间节点”的归属，但会写入 `speaker_review` 和 `reason:*`，让用户确认。
+6. 分段上传会写入 `semantic_partial`，让用户在会议中先看到阶段草稿；结束会议后的 `/finish` 总是基于整场上下文再跑一次语义后处理，并写入 `semantic_final`。
+7. `_insert_transcript_segments()` 持久化 `flags` 和 `source_segment_no`，供 Web 标记“需确认”“大模型分段”“规则分段”“上下文推断”，也供外部知识平台追踪来源。已人工保存为具体人名的 `speaker_id` 会优先覆盖后续同 ID 的泛化 ASR 名称；`发言人 1/2/3` 这类泛化旧名不会压住模型新识别的人名。
+
+质量检查：
+
+- `repository.build_quality_report()` 会检查单一发言人、长段落、需人工确认的发言人、发言人是否缺少原文证据、原始音频分段是否被最终转写覆盖、泛化待办负责人、负责人过度集中、候选人名未成为发言人，以及待办是否能在转写文本中找到证据。
+- `speaker_evidence_weak_count` 用于发现模型把议题、时间短语或误听词当成真实人名。`llm_adapters._parse_refined_segments()` 会在这类分段上降低 `confidence` 并写入 `speaker_review`、`speaker_evidence_weak` flags。即使人名有上下文证据，只要它不是原始 speaker/display_name，而是通过 `context_bridge`、`dialogue_logic` 或 `task_ownership` 推断出来，也会保留 `speaker_review` 并限制置信度，因为这不是声纹确认。
+- `qualityReport.speakerEvidence` 会列出需要校对的发言人段落，包含 `segment_id`、`speaker`、`scenario_label`、`reason`、`risk` 和相邻上下文。Web 时间线用它展示“推断依据”，外部 Agent 可以用它决定是否等待人工校对。
+- `speaker_alias_conflict_count` 用于发现同一个 `display_name` 对应多个 `speaker_id` 的情况。知识图谱会按非泛化姓名合并展示同一人员节点，并在节点上保留 `speaker_ids` 追溯原始标签。
+- `knowledgeGraph` 现在包含 `topic` 节点。服务端从转写和待办里抽取轻量业务主题，连接“人员讨论主题”“主题产生待办”“待办截止时间”，用于缓解分段上下文断裂；主题节点是辅助索引，不替代原始转写证据。
+- `unsupported_action_count` 和 `action_evidence_coverage` 用于发现模型补写的待办。判定使用中文 2-4 字 ngram、英文 token 和 owner 线索做弱匹配，不要求逐字相同，但不能完全脱离转写原文。
+- 待办 owner 如果是“我、我们、他、这边、大家”等代词，`processing._normalize_action_owners()` 会先尝试从第一人称转写和任务关键词推断真实发言人；无法推断时降级为 `待确认`。`repository._is_generic_owner()` 也会把残留代词负责人视为泛化 owner。
+- `weak_action_owner_count` 用于发现“任务内容有证据，但负责人和该任务缺少上下文关联”的情况。例如文本中出现了李娜，也出现了错误样例任务，但只有翼天被点名负责错误样例时，李娜不能被视为有证据的负责人。
+- `qualityReport.actionEvidence` 会为每条待办输出 `supported`、`weak_owner` 或 `unsupported`，并附带相关转写片段。证据片段必须带 `segment_id` 和 `source_segment_no`，便于 Web 的“定位转写”和外部 Agent 追溯原文。若能从任务关键词和责任表述中找到更接近的人，还会输出 `suggested_owner`、`suggested_owner_reason` 和 `suggested_owner_evidence`。Web 待办区用它展示“有转写依据”“负责人证据弱”或“缺转写证据”，并提供“应用建议”按钮；复制待办时不包含证据文本。
+- `qualityReport.sourceCoverage` 会按 `(source_id, source_segment_no)` 检查当前转写是否覆盖每个音频分段。`source_segment_coverage_weak` 是知识入库阻塞项，通常说明 LLM 后处理丢段、分段重传缺失或 ASR 空结果，应先回听/重转写。
+- `processing._normalize_action_owners()` 会保留协作关系：如果主责人已经明确，但其他发言人说“我这边配合/协同/补充”且任务关键词匹配，会在 task 末尾追加 `协同：姓名`，避免后续 IM 督办漏掉配合人。
+- `processing._grounded_summary_result()` 会在 LLM 生成纪要后立即跑一次证据检查。若 `summary_evidence_coverage` 过低或缺证据要点过多，服务端会丢弃该版纪要，改用“基于转写原文的保守整理”，并把待办负责人按更强转写证据纠偏。默认输出宁可朴素，也不能保存脱离转写原文的模型结论。
+- `summaryEvidence.supportedClaims` 会列出纪要/分角色整理中已找到转写证据的要点及引用片段；引用片段也应带 `segment_id` 和 `source_segment_no`。`unsupportedClaims` 只列出缺证据要点。Web 质量区会同时展示“纪要有依据”和“纪要待核对”。
+- 新增 LLM 待办抽取逻辑时，要保证测试覆盖“有证据待办不误报、无证据待办会提示”。
+
+只读质量探测：
+
+```powershell
+$env:PYTHONPATH="server"
+python -m solorecord_server.quality_probe --meeting-id <meeting_id>
+python -m solorecord_server.quality_probe --meeting-id <meeting_id> --run-llm
+```
+
+`quality_probe` 用于真实会议效果复验。默认只读取当前数据库结果；`--run-llm` 会调用当前 LLM 配置做语义重分段、纪要和负责人归因的模拟评估，但不会替换 `transcript_segments`、`action_items` 或会议纪要。输出包含 `quality_report` 和 `knowledge_readiness`，用于判断是否可进入知识库、是否应先人工复核。新增大模型逻辑时，请保证这个命令仍然只读，并补充测试覆盖质量报告中的关键指标。
+
+注意事项：
+
+- 分段上传路径 `process_uploaded_segment()` 会先做局部分段后处理，给用户即时反馈，输出带 `semantic_partial`。
+- 完整 `/finish` 会再做整场上下文后处理，并把最终时间线写回数据库，输出带 `semantic_final`。这一步用于修复 5 分钟分片导致的上下文断裂，尤其是“前一段点名某人、后一段才说明交付物/时间”的场景。
+- 新增规则时要保证不删除原文事实；只做切分、speaker/display_name 归一和明显前缀去除。
+- 如果要接入真正的 diarization sidecar，优先让 sidecar 输出标准 `segments` JSON，不要把模型代码耦合进 FastAPI 主进程。
 
 ## LLM 适配
 
@@ -689,6 +768,25 @@ Android upload uses segment-level resume:
 
 `transcript_segments.source_segment_no` lets retries replace only the transcript rows from that segment. Do not delete by timestamp range because adjacent segments intentionally overlap by about two seconds.
 
+### Multi-Source Recording And Cross-Check
+
+Multi-source recording supports meetings recorded by 1-8 devices at the same time. Users enter the same `join_code` in Web, Windows, or Android to join the same meeting.
+
+Key rules:
+
+- `meetings.join_code` is normalized to uppercase letters and digits.
+- `meetings.recording_mode` is `single` or `multi_source`; `max_sources` is clamped to 1-8.
+- `recording_sources` stores source id, label, device name, and user.
+- `audio_segments.segment_no` remains globally unique within the meeting for download URLs and backward compatibility.
+- `audio_segments.source_id` plus `source_segment_no` records the device-local segment number. Multiple devices may upload local segment 1; the server allocates distinct global segment numbers while preserving `source_segment_no=1` for each source.
+- `transcript_segments.source_id` plus `source_segment_no` is the evidence key. Segment re-upload replaces only rows for the same source and local segment. `primary` is compatible with older empty `source_id` rows.
+- `/api/mobile/meetings/join` and `/api/web/meetings/join` join by code or title. Upload endpoints also enforce `max_sources`, so clients cannot bypass the source limit.
+- `processing._merge_multisource_segments()` runs before final semantic refinement. Near-overlapping, similar text from different sources is merged and marked with `multi_source_merged`, `multi_source_count:*`, and `multi_source_refs:*`. Near-overlapping but divergent text is marked `multi_source_conflict` and `speaker_review`.
+- `qualityReport.metrics.recording_source_count`, `multi_source_merged_count`, `multi_source_conflict_count`, and source coverage by `(source_id, source_segment_no)` support Web review and external agent gating.
+- Web timeline filters, evidence jumps, and transcript save payloads must preserve `source_id`. The frontend filter key is `source_id::source_segment_no`; do not match by `source_segment_no` alone. Merged multi-source rows still count toward original source coverage through `multi_source_refs:*`.
+
+Nearby device discovery is not implemented yet. Product flow currently uses a shared meeting code; future LAN discovery or QR invites should only create or pass `join_code` and must still rely on server-side permission checks and source limits.
+
 Transcripts are the evidence layer for enterprise knowledge platforms. The
 server archives rows replaced by reprocessing or manual edits in
 `transcript_segment_history`. Non-admin transcript updates cannot reduce segment
@@ -737,6 +835,50 @@ The remote STT adapter also lives in `asr_adapters.py`.
 then falls back to `/asr` on 404. It normalizes `text`, `transcript`, `result`,
 `data`, or `segments` responses. Empty text does not lose the meeting state;
 it is stored as an `empty_asr` placeholder transcript.
+
+### Semantic Segmentation And Speaker Inference
+
+Server-side post-processing starts in:
+
+```text
+server/solorecord_server/processing.py
+```
+
+LLM semantic segmentation lives in:
+
+```text
+server/solorecord_server/llm_adapters.py
+```
+
+Processing order:
+
+1. `asr_adapters.py` preserves native ASR `sentence_info`, `segments`, `speaker_id`, `spk`, and related fields when present, and marks native speaker output with `asr_speaker`.
+2. `processing._needs_semantic_segmentation()` decides whether LLM refinement is needed. Multiple reliable native speaker IDs skip refinement only when there are no contextual call-outs. Long single-speaker text, multiple “name said/name:” markers, named call-outs, first-person replies, or same-topic continuations after a call-out enter refinement.
+3. `llm_adapters.refine_segments_with_llm()` asks the model to return only `{"segments":[...]}`, with `speaker`, `speaker_id`, `start_ms`, `end_ms`, `text`, `confidence`, and `reason`.
+4. After the LLM returns, `processing._rule_refine_residual_mixed_segments()` checks whether clear mixed-person markers remain, such as “name said/name:/name please cover/name handle later”. If so, it applies a conservative second-pass split and writes `llm_residual_rule_refined` plus `speaker_review`.
+4. If the LLM is unavailable or returns invalid JSON, `processing._rule_refine_segments()` falls back to clear speaker-marker splitting, and `_apply_contextual_speaker_inference()` can conservatively link first-person or same-topic continuation replies to the previously called person. It always keeps `speaker_review` and `reason:*` flags for human review.
+5. Segment uploads write `semantic_partial` so users can see an in-meeting draft. The final `/finish` flow always runs full-meeting semantic post-processing and writes `semantic_final`.
+6. `_insert_transcript_segments()` persists `flags`, `source_id`, and `source_segment_no`, letting Web show “needs review”, “LLM segmented”, and “rule segmented”, and letting external knowledge agents trace evidence back to source segments. Concrete manually saved names for a `speaker_id` take precedence over later generic ASR names; generic names such as `Speaker 1` do not block new model-inferred names.
+
+Quality checks:
+
+- `repository.build_quality_report()` detects single-speaker meetings, long transcript rows, speaker-review rows, speakers that lack source evidence, generic action owners, over-concentrated owners, candidate people that are not represented as speakers, and action items that lack transcript evidence.
+- `speaker_evidence_weak_count` catches cases where the model turns topics, time phrases, or misheard words into apparent names. `llm_adapters._parse_refined_segments()` lowers confidence and writes `speaker_review` plus `speaker_evidence_weak` flags for these rows.
+- `speaker_alias_conflict_count` catches one `display_name` mapped to multiple `speaker_id` values. The knowledge graph merges non-generic display names into one person node and keeps `speaker_ids` for traceability.
+- `knowledgeGraph` now includes `topic` nodes. The server extracts lightweight business topics from transcripts and action items, then links speakers to topics, topics to actions, and actions to due dates. Topic nodes are an auxiliary context layer, not a replacement for transcript evidence.
+- `unsupported_action_count` and `action_evidence_coverage` help catch hallucinated action items. Matching uses Chinese 2-4 character ngrams, English tokens, and owner hints, so it is tolerant of wording changes but still grounded in the transcript.
+- If an action owner is a pronoun such as “I”, “we”, “he”, “this side”, or “everyone”, `processing._normalize_action_owners()` first tries to infer the real speaker from first-person transcript evidence and task keywords. If it cannot, the owner is downgraded to `待确认`; `repository._is_generic_owner()` treats any remaining pronoun owner as generic.
+- `qualityReport.actionEvidence` can also include `suggested_owner`, `suggested_owner_reason`, and `suggested_owner_evidence` when another speaker is better supported by task keywords and assignment wording. Web shows an "apply suggestion" button, but users still save the action list explicitly.
+- `processing._grounded_summary_result()` checks the LLM summary against transcript evidence before saving it. If summary evidence coverage is too low, the server replaces it with a conservative transcript-grounded summary and corrects clearly unsupported action owners when stronger transcript evidence exists. Default saved output should be plain but grounded, not polished but hallucinated.
+- `summaryEvidence.supportedClaims` lists grounded summary or role-note claims with transcript references. `unsupportedClaims` lists unsupported claims only.
+- When changing LLM action extraction, keep tests for supported, weak-owner, suggested-owner, and unsupported action evidence.
+
+Notes:
+
+- The segment-upload path `process_uploaded_segment()` runs local post-processing first so users get immediate feedback, marked with `semantic_partial`.
+- The final `/finish` flow runs full-meeting context post-processing and writes the final timeline back to the database, marked with `semantic_final`. This repairs context broken by five-minute chunks, especially when one chunk names a person and a later chunk contains the deliverable or deadline.
+- New rules must preserve original facts; limit them to splitting, speaker/display-name normalization, and obvious prefix removal.
+- For a true diarization sidecar, prefer standard `segments` JSON output instead of coupling model runtime into the FastAPI process.
 
 ### LLM Adapter
 

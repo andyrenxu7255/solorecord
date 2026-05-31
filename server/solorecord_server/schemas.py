@@ -16,6 +16,23 @@ class LdapLoginRequest(BaseModel):
 class MeetingCreate(BaseModel):
     title: str = ""
     started_at: str | None = None
+    join_code: str = ""
+    recording_mode: str = "single"
+    max_sources: int = 1
+    source_label: str = ""
+
+
+class RecordingSourceCreate(BaseModel):
+    source_id: str = ""
+    label: str = ""
+    device_name: str = ""
+
+
+class MultiSourceJoinRequest(BaseModel):
+    title: str = ""
+    join_code: str = ""
+    source_label: str = ""
+    device_name: str = ""
 
 
 class MeetingUpdate(BaseModel):
@@ -27,10 +44,13 @@ class MeetingUpdate(BaseModel):
 class SpeakerRename(BaseModel):
     speaker_id: str
     display_name: str
+    aliases: list[str] = Field(default_factory=list)
+    replace_text: bool = False
 
 
 class TranscriptSegmentIn(BaseModel):
     id: str | None = None
+    source_id: str = ""
     speaker_id: str = "SPEAKER_01"
     display_name: str = "发言人 1"
     source_segment_no: int | None = None
@@ -66,6 +86,10 @@ class ActionItemIn(BaseModel):
     status: str = "open"
 
 
+class ActionItemsUpdate(BaseModel):
+    items: list[ActionItemIn] = Field(default_factory=list)
+
+
 class ProviderConfig(BaseModel):
     asr_provider: str = "mock"
     asr_command: str = ""
@@ -86,10 +110,14 @@ class ProviderConfig(BaseModel):
     enable_diarization: bool = True
     enable_denoise: bool = False
     target_sample_rate: int = 16000
+    enable_semantic_segmentation: bool = True
 
 
 class SegmentJsonUpload(BaseModel):
     segment_no: int
+    source_id: str = ""
+    source_label: str = ""
+    source_segment_no: int | None = None
     file_name: str
     audio_base64: str
     start_ms: int = 0

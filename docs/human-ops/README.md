@@ -257,6 +257,63 @@ SOLO_ASR_MODEL=funasr-paraformer-zh
 - 服务端优先调用 `/audio/transcriptions`；如果对方返回 404，会回退尝试 `/asr`。
 - 远程 STT 返回空文本时，系统会保存带 `empty_asr` 标记的占位转写，会议仍可查看、导出和人工复核。
 
+## ASR 后语义分段与发言人推断
+
+SoloRecord 会把说话人拆分分成三层处理：
+
+1. 优先使用 ASR 返回的原生说话人字段，例如 `speaker_id`、`speaker`、`spk`、`spk_id`、`speakerLabel`。
+2. 如果 ASR 只返回整段文本、单一发言人，或虽有多个原生 speaker 但出现“某某你先说”“某某你那个部分”“我这边负责”“某某负责/确认/后面看”等上下文线索，服务端会调用已配置的 LLM，对转写做语义重分段，并根据上下文、姓名前缀、冒号、任务归属、议题延续和指代关系推断发言人。
+3. 如果 LLM 返回后仍残留明显的多人点名长段，例如“某某说/某某：/某某你先说/某某后面看”，服务端会再做一次规则细拆，并给这些段落保留 `speaker_review`。
+4. 如果 LLM 不可用，服务端会用轻量规则识别“张三说”“李四：”这类明确标记，也会对“被点名后下一段以我这边/我负责回应”，以及“没有我字但继续同一议题、交付物、时间节点”的场景做保守归属，至少把明显多人段拆开。
+
+配置开关：
+
+```text
+SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
+```
+
+运维注意：
+
+- 该能力依赖 LLM Provider；LLM 未配置时不会阻塞转写，会自动回退规则分段。
+- FunASR/OpenAI-compatible 请求会带上 `diarization=true`、`speaker_diarization=true`、`spk_model=cam++` 等参数；如果 ASR 服务实际返回 `sentence_info` 或 `segments` 里的说话人字段，系统会直接使用。
+- 当前联调过的部分 FunASR 兼容服务只返回 `text`，不返回说话人字段；这时大模型语义分段就是主要补偿手段。即使 ASR 返回多个原始 speaker，只要文本里存在点名、承接回应或被点名议题延续，系统也会尝试做上下文归属，并在前端提示人工校对。
+- Web 转写时间线会标记“需确认”“大模型分段”或“规则分段”。“需确认”代表模型推断可信度不足，建议会后人工校对。
+- 每个分段上传后会先做分段级后处理并标记 `semantic_partial`；点击结束会议后，服务端会用整场上下文再整理一次最终时间线、纪要和待办，并标记 `semantic_final`。
+- 语义重分段输出会保留 `source_index`/`source_segment_no`，方便从 Web 时间线、导出 JSON 或外部知识平台追溯到原始音频分段。通过上下文或任务归属推断的人名会保留 `speaker_review` 和 `reason:*`，上线验收时要把它当作“建议归属”，而不是声纹确认。
+- 如果用户已经把某个 `speaker_id` 改成具体人名，最终整理会优先保留这个人工校正；但 `发言人 1/2/3` 这类泛化旧名不会阻止模型根据上下文识别新的真实人名。
+- 会议详情里的“整理质量”会显示待办证据率。证据率低或出现“待办缺少转写证据”时，说明待办可能是模型补写或上下文关联不足，建议先回看转写/录音再对外发送。
+- 会议详情里的“整理质量”也会显示分段覆盖率。如果出现“音频分段待核对”或 `source_segment_coverage_weak`，说明某个上传音频分段在当前转写中没有足够文本，可能是 ASR 空结果、重传缺失或 LLM 后处理丢段。上线验收时应先回听或重转写该分段，不要把该会议直接交给知识平台自动入库。
+- 如果 `weak_action_owner_count` 大于 0，说明待办内容本身可能来自转写，但负责人和任务之间缺少明确上下文证据。上线验收时要重点检查这些待办，避免把督办消息发给错误的人。
+- 如果待办负责人显示为“我、我们、他、这边、大家”等代词，系统会尝试用第一人称转写和任务关键词换成真实发言人；换不出来会降级为 `待确认`，仍应人工确认后再复制到 IM。
+- 如果待办文本末尾出现 `协同：某人`，表示系统从转写中识别到配合/协助关系。它不会改变主责人，但复制给 IM 或同步给外部督办系统时应保留，避免遗漏配合人。
+- `qualityReport.actionEvidence` 会逐条列出待办证据状态：`supported` 表示可找到转写依据，`weak_owner` 表示任务有依据但负责人证据弱，`unsupported` 表示缺转写依据。若系统能找到更有证据的负责人，会同时给出 `suggested_owner` 和引用片段，Web 待办区会显示“建议负责人/应用建议”。证据引用带 `segment_id` 和 `source_segment_no`，Web 可用“定位转写”跳到对应原文。复制待办给 IM 时仍只复制待办正文。
+- 如果 `speaker_evidence_weak_count` 大于 0，说明某些发言人名称没有在原始 ASR 文本或原始说话人标签中找到依据。上线验收时应优先播放这些片段，确认模型没有把议题、时间短语或误听词当成人名。
+- `qualityReport.speakerEvidence` 会给出每个需校对发言人段落的推断场景、原因和相邻上下文。验收时不要只看数量，还要打开 Web 时间线检查“推断依据”是否符合真实会议语境。
+- 如果 `speaker_alias_conflict_count` 大于 0，说明同一个姓名被多个 `speaker_id` 表示。Web 会提示“同名多标签”，知识图谱会合并展示同一人员节点并保留原始标签，验收时应确认是否需要在人物校对里统一。
+- `knowledgeGraph` 会包含主题节点，把“人员讨论主题”“主题产生待办”“待办截止时间”串起来。主题来自转写和待办的轻量抽取，只用于辅助查阅和知识平台整理，最终事实仍以转写证据为准。
+- LLM 纪要不是无条件保存。服务端会先检查纪要/分角色整理是否能被转写支撑；如果证据率过低，会自动改成“基于转写原文的保守整理”，并按更强转写证据修正明显错误的待办负责人。验收时如果看到这个标题，说明系统选择了保守兜底，而不是模型自由发挥。
+- `qualityReport.summaryEvidence.supportedClaims` 会给出纪要和分角色整理中已匹配到的转写引用；`unsupportedClaims` 是缺证据结论。上线验收时应抽查两类内容：有依据的引用是否真的支撑结论，缺依据的结论是否需要删除或改写。
+
+## 多源同录验收
+
+多源同录面向大会议室或多个参会人同时录音的场景。当前已支持共享会议编号加入同一会议；自动发现就近设备尚未实现，部署时不要承诺已经有局域网自动发现。
+
+验收步骤：
+
+1. 用账号 A 创建会议，填写会议编号，例如 `ROOM0601`，录音源名称写“前排手机”。
+2. 用账号 B 在另一台终端填写同一个会议编号，录音源名称写“后排手机”。
+3. 两台设备都上传自己的第 1 段。服务端应生成两个 `audio_segments`，全局 `segment_no` 不同，但 `source_segment_no` 都是 `1`，`source_id` 分别不同。
+4. Web 会议详情应显示多个录音源、多个录音分段，且两个来源的音频都可按权限下载/播放。
+5. 结束会议后，重复拾音内容应出现 `multi_source_merged_count`；如果两个来源同一时间内容差异较大，应出现 `multi_source_conflict_count` 和质量提示。
+6. 外部知识平台拉取 `/api/external/meetings/{meetingId}/transcript?include_history=true` 时，应能看到 `source_id`、`source_segment_no`、`qualityReport` 和 `knowledgeReadiness`。
+
+运维排障要点：
+
+- `max_sources` 限制为 1-8，上传接口也会检查来源上限；如果出现 409，先确认是否超过会议来源数。
+- 多源会议中，不能只按 `source_segment_no` 判断覆盖率；应按 `(source_id, source_segment_no)` 看证据。
+- Web 时间线筛选、待办/纪要证据里的“定位转写”也按 `(source_id, source_segment_no)` 定位。若两台设备都有第 1 段，应分别跳到对应录音源；如果跳错，优先检查前端 payload 是否丢了 `source_id`。
+- `multi_source_conflict` 不是系统失败，而是提醒人工回听不同来源的同一时间段。
+
 ## LLM 配置
 
 默认 `mock` 生成占位纪要：
@@ -513,6 +570,14 @@ docker compose build --build-arg INSTALL_MEDIA_TOOLS=true solorecord
 - APK 已上传并可下载。
 - APK 已确认只内置服务器地址，不包含 ASR/LLM/SSO/Hermes/ES token 或 key。
 - 测试用户完成统一登录、录音、上传、转写、改名、导出、从服务器恢复记录、下载播放服务器音频。
+- 至少选一条真实会议跑只读大模型质量探测：
+
+```bash
+docker compose exec -T solorecord python -m solorecord_server.quality_probe --meeting-id <meeting_id>
+docker compose exec -T solorecord python -m solorecord_server.quality_probe --meeting-id <meeting_id> --run-llm
+```
+
+第一条只读当前持久化结果；第二条会调用已配置的大模型做模拟重分段和纪要探测，但仍不会写回数据库。上线前重点看 `qualityReport.status`、候选人名、`speaker_review_count`、`timeline_repaired_count`、`generic_owner_count` 和待办负责人是否可接受。
 - `scripts\smoke-e2e.ps1` 已通过。
 - `pip-audit -r server/requirements.txt` 无已知漏洞。
 
@@ -757,6 +822,55 @@ Operations notes:
 - Endpoint, API key, and model belong only in server-local `server/.env` or Web admin configuration, never in the APK.
 - The server calls `/audio/transcriptions` first; if the service returns 404, it falls back to `/asr`.
 - Empty remote STT text is saved with an `empty_asr` placeholder transcript so the meeting remains visible, exportable, and reviewable.
+
+### Semantic Segmentation And Speaker Inference After ASR
+
+SoloRecord handles speaker splitting in three layers:
+
+1. Prefer native speaker fields returned by ASR, such as `speaker_id`, `speaker`, `spk`, `spk_id`, or `speakerLabel`.
+2. If ASR returns only plain text, a single speaker, or contextual call-outs, the server calls the configured LLM to re-segment the transcript and infer speakers from names, colons, task ownership, topic continuation, references, and surrounding context.
+3. If the LLM is unavailable, the server uses lightweight rules for clear markers such as “Alice said” or “Bob:”. It also conservatively handles a named call-out followed by first-person replies or same-topic deliverable/deadline updates, while keeping review flags because this is not voiceprint confirmation.
+
+Configuration switch:
+
+```text
+SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
+```
+
+Operations notes:
+
+- This feature benefits from an LLM provider. If the LLM is not configured, transcription still succeeds and falls back to rule-based splitting.
+- FunASR/OpenAI-compatible requests include `diarization=true`, `speaker_diarization=true`, and `spk_model=cam++`. If the ASR service returns speaker fields inside `sentence_info` or `segments`, SoloRecord uses them directly.
+- Some FunASR-compatible services tested during integration returned only `text` without speaker fields. In that case, LLM semantic segmentation is the main compensation layer. Even with native speaker IDs, named call-outs and same-topic continuations can still trigger context-based review hints.
+- The Web transcript timeline marks rows as “needs review”, “LLM segmented”, or “rule segmented”. “Needs review” means the inferred speaker should be checked after the meeting.
+- Each uploaded segment gets partial post-processing first and is marked with `semantic_partial`. When the meeting is finished, the server uses full-meeting context to rewrite the final timeline, summary, and action items with `semantic_final`.
+- If a user has already corrected a `speaker_id` to a concrete name, final processing preserves that correction. Generic old names such as `Speaker 1/2/3` do not block new model-inferred names.
+- The meeting detail quality panel shows action evidence coverage. Low coverage or an “action item lacks transcript evidence” issue means an action may have been hallucinated or weakly linked, so operators should review the transcript/audio before sharing it.
+- LLM summaries are not saved blindly. The server first checks whether summary and role-note claims are supported by transcript evidence. If evidence coverage is too low, it replaces the result with a conservative transcript-grounded summary and corrects clearly unsupported action owners when stronger transcript evidence exists. Seeing the "conservative transcript-grounded summary" title means the safety fallback was used.
+- If an action owner is a pronoun such as “I”, “we”, “he”, “this side”, or “everyone”, SoloRecord tries to replace it with a concrete speaker from first-person transcript evidence and task keywords. If it cannot, the owner becomes `待确认` and should be reviewed before IM sharing.
+- If `speaker_evidence_weak_count` is above zero, some speaker names were not supported by original ASR text or original speaker labels. During acceptance, play those segments first and confirm the model did not turn topics, time phrases, or misheard words into names.
+- If `speaker_alias_conflict_count` is above zero, one display name maps to multiple `speaker_id` values. Web shows this as a same-name/multiple-label warning, and the knowledge graph merges the person node while preserving original IDs for traceability.
+- `knowledgeGraph` includes topic nodes linking “speaker discussed topic”, “topic produced action”, and “action has due date”. Topics are lightweight context helpers from transcripts and action items; transcript evidence remains the source of truth.
+
+### Multi-Source Recording Acceptance
+
+Multi-source recording is for large rooms or multiple participants recording at the same time. Shared meeting-code join is implemented; nearby automatic device discovery is not implemented yet and should not be promised during deployment.
+
+Acceptance steps:
+
+1. Use account A to create a meeting with a meeting code such as `ROOM0601` and source label `front phone`.
+2. Use account B on another device with the same meeting code and source label `back phone`.
+3. Upload local segment 1 from both devices. The server should create two `audio_segments` with different global `segment_no` values, while both keep `source_segment_no=1` and different `source_id` values.
+4. Web meeting detail should show multiple recording sources and multiple audio segments. Both audio files should be downloadable/playable by authorized users.
+5. After finish, duplicated captured speech should increase `multi_source_merged_count`. Divergent text at the same time should increase `multi_source_conflict_count` and appear in quality review hints.
+6. `/api/external/meetings/{meetingId}/transcript?include_history=true` should expose `source_id`, `source_segment_no`, `qualityReport`, and `knowledgeReadiness`.
+
+Troubleshooting notes:
+
+- `max_sources` is clamped to 1-8 and enforced on upload as well as explicit source creation. HTTP 409 usually means the meeting source limit was reached.
+- In multi-source meetings, coverage must be checked by `(source_id, source_segment_no)`, not by local segment number alone.
+- Web timeline filters and action/summary evidence “jump to transcript” links also target `(source_id, source_segment_no)`. If two devices both have segment 1, each should jump to its own source; if it does not, first check whether the frontend payload lost `source_id`.
+- `multi_source_conflict` is not a processing failure; it means a human should listen to the different sources for that time window.
 
 ### LLM Provider
 

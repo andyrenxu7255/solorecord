@@ -124,7 +124,10 @@ public final class MeetingStore {
                 Collections.emptyList(),
                 "",
                 "",
-                Collections.emptyList()));
+                Collections.emptyList(),
+                record.getJoinCode(),
+                record.getSourceId(),
+                record.getSourceLabel()));
     }
 
     private void saveAll(List<MeetingRecord> records) throws IOException {

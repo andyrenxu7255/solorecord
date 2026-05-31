@@ -6,6 +6,7 @@ import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.graphics.Typeface;
 import android.media.MediaPlayer;
 import android.net.Uri;
@@ -39,13 +40,25 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_RECORD_AUDIO = 1001;
     private static final int DEFAULT_SEGMENT_MINUTES = 5;
+    private static final int COLOR_BG = 0xFFF1F5F9;
+    private static final int COLOR_SURFACE = 0xFFFFFFFF;
+    private static final int COLOR_SURFACE_SOFT = 0xFFF8FAFC;
+    private static final int COLOR_TEXT = 0xFF101828;
+    private static final int COLOR_MUTED = 0xFF667085;
+    private static final int COLOR_PRIMARY = 0xFF176B87;
+    private static final int COLOR_PRIMARY_DARK = 0xFF0F5066;
+    private static final int COLOR_PRIMARY_SOFT = 0xFFE5F4F7;
+    private static final int COLOR_LINE = 0xFFD6DDE8;
+    private static final int COLOR_SIDEBAR = 0xFF102433;
 
     private final RollingAudioRecorder audioRecorder = new RollingAudioRecorder();
     private final SoloServerClient serverClient = new SoloServerClient();
@@ -68,6 +81,9 @@ public final class MainActivity extends Activity {
     private String recordingMeetingId = "";
     private MediaPlayer mediaPlayer;
     private boolean autoSyncRunning;
+    private EditText recordingTitleInput;
+    private EditText recordingJoinCodeInput;
+    private EditText recordingSourceLabelInput;
     private final Runnable segmentRotation = new Runnable() {
         @Override
         public void run() {
@@ -130,12 +146,12 @@ public final class MainActivity extends Activity {
     private void buildShell() {
         root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.rgb(245, 247, 251));
+        root.setBackgroundColor(COLOR_BG);
 
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.VERTICAL);
         header.setPadding(dp(18), dp(20), dp(18), dp(12));
-        header.setBackgroundColor(Color.rgb(16, 36, 51));
+        header.setBackgroundColor(COLOR_SIDEBAR);
 
         titleText = new TextView(this);
         titleText.setText("SoloRecord");
@@ -164,7 +180,7 @@ public final class MainActivity extends Activity {
         LinearLayout tabs = new LinearLayout(this);
         tabs.setOrientation(LinearLayout.HORIZONTAL);
         tabs.setPadding(dp(8), dp(8), dp(8), dp(8));
-        tabs.setBackgroundColor(Color.WHITE);
+        tabs.setBackgroundColor(COLOR_SURFACE);
         recordingTab = tabButton("录音", 0);
         recordsTab = tabButton("记录", 1);
         loginTab = tabButton("登录状态", 2);
@@ -229,8 +245,8 @@ public final class MainActivity extends Activity {
     }
 
     private void paintTab(Button button, boolean active) {
-        button.setTextColor(active ? Color.WHITE : Color.rgb(23, 32, 51));
-        button.setBackgroundColor(active ? Color.rgb(23, 107, 135) : Color.rgb(230, 237, 243));
+        button.setTextColor(active ? Color.WHITE : COLOR_TEXT);
+        button.setBackground(makeBg(active ? COLOR_PRIMARY : Color.rgb(232, 238, 245), dp(8), 0));
     }
 
     private void renderRecordingTab() {
@@ -248,7 +264,15 @@ public final class MainActivity extends Activity {
         addHint("点击开始后会立即保存本地音频。当前按约 " + sessionStore.getAudioSegmentMinutes()
                 + " 分钟滚动分段，每个分段会带约 2 秒重叠；在线时分段完成后自动上传并补充阶段转写。");
 
+        recordingTitleInput = input("", "会议标题（可选）");
+        content.addView(recordingTitleInput, spacedParams());
+        recordingJoinCodeInput = input(sessionStore.getDefaultJoinCode(), "会议编号（多人同录填同一个编号）");
+        content.addView(recordingJoinCodeInput, spacedParams());
+        recordingSourceLabelInput = input(defaultSourceLabel(), "录音源名称");
+        content.addView(recordingSourceLabelInput, spacedParams());
+
         TextView state = cardText(audioRecorder.isRecording() ? "录音中" : "准备录音");
+        state.setTextColor(audioRecorder.isRecording() ? Color.rgb(180, 35, 24) : COLOR_PRIMARY_DARK);
         content.addView(state, matchWrap());
 
         Button recordButton = primaryButton(audioRecorder.isRecording() ? "结束录音" : "开始录音");
@@ -323,13 +347,6 @@ public final class MainActivity extends Activity {
         sync.setOnClickListener(view -> syncMeeting(record));
         content.addView(sync, spacedParams());
 
-        if (!record.getTranscriptSegments().isEmpty()) {
-            addSectionTitle("转写");
-            for (TranscriptSegment segment : record.getTranscriptSegments()) {
-                addTranscriptSegment(record, segment);
-            }
-        }
-
         if (!record.getSummary().isEmpty()) {
             addSectionTitle("纪要");
             content.addView(cardText(record.getSummary()), matchWrap());
@@ -338,7 +355,39 @@ public final class MainActivity extends Activity {
         if (!record.getActionItems().isEmpty()) {
             addSectionTitle("待办");
             record.getActionItems().forEach(item ->
-                    content.addView(cardText(item.getOwner() + "：" + item.getTask() + " " + item.getDue()), spacedParams()));
+                    content.addView(cardText(item.getOwner() + "：" + item.getTask()
+                            + (item.getDue().isEmpty() ? "" : " · " + item.getDue())
+                            + " · " + actionStatusLabel(item.getStatus())), spacedParams()));
+        }
+
+        addSpeakerStats(record);
+
+        if (!record.getTranscriptSegments().isEmpty()) {
+            addSectionTitle("转写");
+            for (TranscriptSegment segment : record.getTranscriptSegments()) {
+                addTranscriptSegment(record, segment);
+            }
+        }
+    }
+
+    private void addSpeakerStats(MeetingRecord record) {
+        if (record.getTranscriptSegments().isEmpty()) {
+            return;
+        }
+        addSectionTitle("说话人");
+        Map<String, SpeakerStat> stats = new LinkedHashMap<>();
+        for (TranscriptSegment segment : record.getTranscriptSegments()) {
+            String key = segment.getSpeakerId();
+            SpeakerStat stat = stats.get(key);
+            if (stat == null) {
+                stat = new SpeakerStat(segment.getSpeaker());
+                stats.put(key, stat);
+            }
+            stat.count += 1;
+            stat.durationMillis += Math.max(0, segment.getEndMillis() - segment.getStartMillis());
+        }
+        for (SpeakerStat stat : stats.values()) {
+            content.addView(cardText(stat.name + " · " + stat.count + " 段 · " + time(stat.durationMillis)), spacedParams());
         }
     }
 
@@ -481,9 +530,19 @@ public final class MainActivity extends Activity {
         try {
             recordingStartedAt = System.currentTimeMillis();
             recordingMeetingId = "local_" + recordingStartedAt;
+            String title = inputValue(recordingTitleInput);
+            if (title.isEmpty()) {
+                title = "会议 " + TimeFormat.display(recordingStartedAt);
+            }
+            String joinCode = inputValue(recordingJoinCodeInput);
+            String sourceLabel = inputValue(recordingSourceLabelInput);
+            if (sourceLabel.isEmpty()) {
+                sourceLabel = defaultSourceLabel();
+            }
+            sessionStore.saveRecordingDefaults(joinCode, sourceLabel);
             currentMeeting = new MeetingRecord(
                     recordingMeetingId,
-                    "会议 " + TimeFormat.display(recordingStartedAt),
+                    title,
                     recordingStartedAt,
                     "",
                     Collections.emptyList(),
@@ -491,7 +550,10 @@ public final class MainActivity extends Activity {
                     Collections.emptyList(),
                     "",
                     "",
-                    Collections.emptyList());
+                    Collections.emptyList(),
+                    joinCode,
+                    "primary",
+                    sourceLabel);
             meetingStore.upsert(currentMeeting);
             startRecordingService();
             audioRecorder.start(this, recordingMeetingId);
@@ -588,6 +650,19 @@ public final class MainActivity extends Activity {
 
     private void stopRecordingService() {
         stopService(new Intent(this, RecordingService.class));
+    }
+
+    private String defaultSourceLabel() {
+        String saved = sessionStore.getDefaultSourceLabel();
+        if (!saved.isEmpty()) {
+            return saved;
+        }
+        String name = sessionStore.getDisplayName();
+        return name.isEmpty() ? "Android 录音源" : name + "的手机";
+    }
+
+    private String inputValue(EditText input) {
+        return input == null ? "" : input.getText().toString().trim();
     }
 
     private void syncLatestMeeting() {
@@ -972,18 +1047,24 @@ public final class MainActivity extends Activity {
             long seconds = Math.max(0, (System.currentTimeMillis() - recordingStartedAt) / 1000);
             card.addView(text("已录制：" + (seconds / 60) + " 分 " + (seconds % 60) + " 秒", 13, false), matchWrap());
         }
+        if (record.openRecordingSegmentCount() > 0 || record.hasPendingLocalAudio()) {
+            card.addView(text("仍有未完成上传的本地音频分段。请保持 App 数据，网络恢复后点击同步会继续补传。", 13, false), matchWrap());
+        }
+        if ("partial_ready".equals(record.getStatus())) {
+            card.addView(text("已有阶段转写，完整纪要和待办会在结束处理后继续补充。", 13, false), matchWrap());
+        }
         content.addView(card, spacedParams());
     }
 
     private void addSectionTitle(String label) {
         TextView view = text(label, 20, true);
-        view.setPadding(0, dp(8), 0, dp(8));
+        view.setPadding(0, dp(12), 0, dp(8));
         content.addView(view, matchWrap());
     }
 
     private void addHint(String label) {
         TextView view = text(label, 14, false);
-        view.setTextColor(Color.rgb(102, 112, 133));
+        view.setTextColor(COLOR_MUTED);
         content.addView(view, matchWrap());
     }
 
@@ -991,15 +1072,15 @@ public final class MainActivity extends Activity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(14), dp(14), dp(14), dp(14));
-        card.setBackgroundColor(Color.WHITE);
+        card.setBackground(makeBg(COLOR_SURFACE, dp(8), COLOR_LINE));
         return card;
     }
 
     private TextView cardText(String label) {
-        TextView view = text(label, 18, true);
-        view.setGravity(Gravity.CENTER);
-        view.setPadding(dp(16), dp(28), dp(16), dp(28));
-        view.setBackgroundColor(Color.WHITE);
+        TextView view = text(label, 16, true);
+        view.setGravity(Gravity.CENTER_VERTICAL);
+        view.setPadding(dp(14), dp(16), dp(14), dp(16));
+        view.setBackground(makeBg(COLOR_SURFACE, dp(8), COLOR_LINE));
         return view;
     }
 
@@ -1007,7 +1088,7 @@ public final class MainActivity extends Activity {
         TextView view = new TextView(this);
         view.setText(label == null ? "" : label);
         view.setTextSize(size);
-        view.setTextColor(Color.rgb(23, 32, 51));
+        view.setTextColor(COLOR_TEXT);
         if (bold) {
             view.setTypeface(Typeface.DEFAULT_BOLD);
         }
@@ -1021,20 +1102,24 @@ public final class MainActivity extends Activity {
         editText.setHint(hint);
         editText.setSingleLine(true);
         editText.setTextSize(15);
+        editText.setTextColor(COLOR_TEXT);
+        editText.setHintTextColor(COLOR_MUTED);
+        editText.setBackground(makeBg(COLOR_SURFACE, dp(8), COLOR_LINE));
+        editText.setPadding(dp(12), 0, dp(12), 0);
         return editText;
     }
 
     private Button primaryButton(String label) {
         Button button = makeButton(label);
         button.setTextColor(Color.WHITE);
-        button.setBackgroundColor(Color.rgb(23, 107, 135));
+        button.setBackground(makeBg(COLOR_PRIMARY, dp(8), 0));
         return button;
     }
 
     private Button secondaryButton(String label) {
         Button button = makeButton(label);
-        button.setTextColor(Color.rgb(23, 32, 51));
-        button.setBackgroundColor(Color.rgb(230, 237, 243));
+        button.setTextColor(COLOR_TEXT);
+        button.setBackground(makeBg(Color.rgb(232, 238, 245), dp(8), 0));
         return button;
     }
 
@@ -1043,6 +1128,7 @@ public final class MainActivity extends Activity {
         button.setText(label);
         button.setAllCaps(false);
         button.setTextSize(15);
+        button.setMinHeight(dp(42));
         return button;
     }
 
@@ -1072,6 +1158,19 @@ public final class MainActivity extends Activity {
             return "本地已保存";
         }
         return status == null || status.isEmpty() ? "未知" : status;
+    }
+
+    private String actionStatusLabel(String status) {
+        if ("doing".equals(status)) {
+            return "进行中";
+        }
+        if ("done".equals(status)) {
+            return "已完成";
+        }
+        if ("blocked".equals(status)) {
+            return "受阻";
+        }
+        return "待处理";
     }
 
     private String recordProgressText(MeetingRecord record) {
@@ -1112,11 +1211,31 @@ public final class MainActivity extends Activity {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
     }
 
+    private GradientDrawable makeBg(int color, int radius, int strokeColor) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(color);
+        drawable.setCornerRadius(radius);
+        if (strokeColor != 0) {
+            drawable.setStroke(dp(1), strokeColor);
+        }
+        return drawable;
+    }
+
     private void toast(String message) {
         Toast.makeText(this, message == null ? "" : message, Toast.LENGTH_SHORT).show();
     }
 
     private String valueOrDefault(String value, String fallback) {
         return value == null || value.trim().isEmpty() ? fallback : value.trim();
+    }
+
+    private static final class SpeakerStat {
+        private final String name;
+        private int count;
+        private long durationMillis;
+
+        private SpeakerStat(String name) {
+            this.name = name == null || name.trim().isEmpty() ? "发言人" : name;
+        }
     }
 }

@@ -1,5 +1,9 @@
 from pathlib import Path
 import json
+import re
+import secrets
+import sqlite3
+import string
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,11 +27,14 @@ from .exports import create_export
 from .processing import enqueue_transcription, process_uploaded_segment
 from .repository import list_documents_for_external, list_documents_for_user, meeting_document, transcript_document
 from .schemas import (
+    ActionItemsUpdate,
     LdapLoginRequest,
     LoginRequest,
     MeetingCreate,
     MeetingUpdate,
+    MultiSourceJoinRequest,
     ProviderConfig,
+    RecordingSourceCreate,
     SegmentJsonUpload,
     SpeakerRename,
     TranscriptUpdate,
@@ -145,6 +152,8 @@ def mobile_config() -> dict:
             "speakerRename": True,
             "exports": ["markdown", "json", "srt", "docx", "pdf"],
             "apkDownload": True,
+            "multiSourceRecording": True,
+            "maxRecordingSources": 8,
         },
     }
 
@@ -154,20 +163,117 @@ def mobile_config() -> dict:
 def create_meeting(request: MeetingCreate, user: CurrentUser) -> dict:
     meeting_id = new_id("mtg")
     title = request.title.strip() or "未命名会议"
+    recording_mode = "multi_source" if request.recording_mode == "multi_source" else "single"
+    max_sources = _clamp_source_count(request.max_sources, default=1 if recording_mode == "single" else 3)
+    join_code = _normalize_join_code(request.join_code) or _new_join_code()
     with get_db() as db:
         db.execute(
             """
-            INSERT INTO meetings (id, title, owner_id, status, created_at, updated_at, started_at)
-            VALUES (?, ?, ?, 'local_recorded', ?, ?, ?)
+            INSERT INTO meetings
+            (id, title, owner_id, status, join_code, recording_mode, max_sources, created_at, updated_at, started_at)
+            VALUES (?, ?, ?, 'local_recorded', ?, ?, ?, ?, ?, ?)
             """,
-            (meeting_id, title, user["id"], now_iso(), now_iso(), request.started_at),
+            (
+                meeting_id,
+                title,
+                user["id"],
+                join_code,
+                recording_mode,
+                max_sources,
+                now_iso(),
+                now_iso(),
+                request.started_at,
+            ),
         )
         db.execute(
             "INSERT INTO meeting_members (meeting_id, user_id, role) VALUES (?, ?, 'owner')",
             (meeting_id, user["id"]),
         )
+        _ensure_recording_source(
+            db,
+            meeting_id,
+            user,
+            source_id="primary",
+            label=request.source_label or user.get("display_name") or "主录音源",
+            device_name=request.source_label or "",
+        )
     audit(user["id"], "meeting.create", "meeting", meeting_id)
     return get_meeting(meeting_id, user)
+
+
+@app.post("/api/mobile/meetings/join")
+@app.post("/api/web/meetings/join")
+def join_multisource_meeting(request: MultiSourceJoinRequest, user: CurrentUser) -> dict:
+    title = request.title.strip()
+    join_code = _normalize_join_code(request.join_code)
+    if not title and not join_code:
+        raise HTTPException(status_code=400, detail="title or join_code is required")
+    with get_db() as db:
+        meeting = None
+        if join_code:
+            meeting = db.execute(
+                """
+                SELECT * FROM meetings
+                WHERE join_code = ? AND deleted_at IS NULL
+                """,
+                (join_code,),
+            ).fetchone()
+        if not meeting and title:
+            meeting = db.execute(
+                """
+                SELECT * FROM meetings
+                WHERE title = ? AND recording_mode = 'multi_source' AND deleted_at IS NULL
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (title,),
+            ).fetchone()
+        if not meeting:
+            temp_request = MeetingCreate(
+                title=title or join_code,
+                join_code=join_code,
+                recording_mode="multi_source",
+                max_sources=8,
+                source_label=request.source_label,
+            )
+            return create_meeting(temp_request, user)
+        _ensure_member(db, meeting["id"], user["id"], role="editor")
+        source = _register_recording_source(
+            db,
+            meeting,
+            user,
+            request.source_label,
+            request.device_name,
+        )
+    audit(user["id"], "meeting.join_multisource", "meeting", meeting["id"], {"source_id": source["source_id"]})
+    result = get_meeting(meeting["id"], user)
+    result["joinedSource"] = source
+    return result
+
+
+@app.get("/api/mobile/meetings/{meeting_id}/sources")
+@app.get("/api/web/meetings/{meeting_id}/sources")
+def list_recording_sources(meeting_id: str, user: CurrentUser) -> dict:
+    _assert_access(meeting_id, user)
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT * FROM recording_sources WHERE meeting_id = ? ORDER BY created_at",
+            (meeting_id,),
+        ).fetchall()
+    return {"items": [row_to_dict(row) for row in rows], "maxSources": _meeting_max_sources(meeting_id)}
+
+
+@app.post("/api/mobile/meetings/{meeting_id}/sources")
+@app.post("/api/web/meetings/{meeting_id}/sources")
+def create_recording_source(meeting_id: str, request: RecordingSourceCreate, user: CurrentUser) -> dict:
+    _assert_access(meeting_id, user, write=True)
+    with get_db() as db:
+        meeting = db.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        source = _register_recording_source(db, meeting, user, request.label, request.device_name, request.source_id)
+    audit(user["id"], "meeting.source.create", "meeting", meeting_id, {"source_id": source["source_id"]})
+    return {"source": source}
 
 
 @app.get("/api/mobile/meetings")
@@ -203,9 +309,13 @@ def get_meeting(meeting_id: str, user: CurrentUser) -> dict:
         "meeting": document["meeting"],
         "owner": document["owner"],
         "members": document["members"],
+        "recordingSources": document.get("recordingSources", []),
         "audioSegments": document["audioSegments"],
         "speakers": document["speakers"],
         "actionItems": document["actionItems"],
+        "exports": document["exports"],
+        "qualityReport": document["qualityReport"],
+        "knowledgeGraph": document["knowledgeGraph"],
         "jobs": [row_to_dict(row) for row in jobs],
     }
 
@@ -257,16 +367,40 @@ async def upload_segment(
     meeting_id: str,
     user: CurrentUser,
     segment_no: int = Form(...),
+    source_id: str = Form("primary"),
+    source_label: str = Form(""),
+    source_segment_no: int | None = Form(None),
     start_ms: int = Form(0),
     end_ms: int = Form(0),
     duration_ms: int = Form(0),
     file: UploadFile = File(...),
 ) -> dict:
     _assert_access(meeting_id, user, write=True)
-    meeting_dir = settings.storage_dir / "meetings" / meeting_id / "audio"
+    source_id = _normalize_source_id(source_id) or "primary"
+    source_segment_no = _normalize_source_segment_no(source_segment_no, segment_no)
+    with get_db() as db:
+        meeting = db.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        source = _ensure_upload_recording_source(
+            db,
+            meeting,
+            user,
+            source_id=source_id,
+            label=source_label or user.get("display_name") or source_id,
+            device_name="",
+        )
+        global_segment_no = _segment_no_for_source_upload(
+            db,
+            meeting_id,
+            source["source_id"],
+            source_segment_no,
+            segment_no,
+        )
+    meeting_dir = settings.storage_dir / "meetings" / meeting_id / "audio" / source_id
     meeting_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = Path(file.filename or f"part_{segment_no:04d}.m4a").name
-    path = meeting_dir / f"part_{segment_no:04d}_{safe_name}"
+    safe_name = Path(file.filename or f"part_{source_segment_no:04d}.m4a").name
+    path = meeting_dir / f"{source_id}_{source_segment_no:04d}_{safe_name}"
     with path.open("wb") as output:
         while chunk := await file.read(1024 * 1024):
             output.write(chunk)
@@ -276,11 +410,13 @@ async def upload_segment(
         db.execute(
             """
             INSERT INTO audio_segments
-            (id, meeting_id, segment_no, file_name, storage_path, mime_type, size_bytes, sha256,
+            (id, meeting_id, source_id, source_segment_no, segment_no,
+             file_name, storage_path, mime_type, size_bytes, sha256,
              duration_ms, start_ms, end_ms, upload_status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'uploaded', ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'uploaded', ?)
             ON CONFLICT(meeting_id, segment_no)
-            DO UPDATE SET file_name=excluded.file_name, storage_path=excluded.storage_path,
+            DO UPDATE SET source_id=excluded.source_id, source_segment_no=excluded.source_segment_no,
+                file_name=excluded.file_name, storage_path=excluded.storage_path,
                 mime_type=excluded.mime_type, size_bytes=excluded.size_bytes,
                 sha256=excluded.sha256, duration_ms=excluded.duration_ms,
                 start_ms=excluded.start_ms, end_ms=excluded.end_ms,
@@ -289,7 +425,9 @@ async def upload_segment(
             (
                 segment_id,
                 meeting_id,
-                segment_no,
+                source_id,
+                source_segment_no,
+                global_segment_no,
                 safe_name,
                 str(path),
                 file.content_type or "application/octet-stream",
@@ -305,10 +443,22 @@ async def upload_segment(
             "UPDATE meetings SET status='uploaded', updated_at=?, duration_ms=max(duration_ms, ?) WHERE id=?",
             (now_iso(), end_ms, meeting_id),
         )
-    audit(user["id"], "audio.upload", "meeting", meeting_id, {"segment_no": segment_no})
-    partial = process_uploaded_segment(meeting_id, segment_no)
+    audit(
+        user["id"],
+        "audio.upload",
+        "meeting",
+        meeting_id,
+        {
+            "segment_no": global_segment_no,
+            "source_id": source_id,
+            "source_segment_no": source_segment_no,
+        },
+    )
+    partial = process_uploaded_segment(meeting_id, global_segment_no)
     return {
-        "segmentNo": segment_no,
+        "segmentNo": global_segment_no,
+        "sourceId": source_id,
+        "sourceSegmentNo": source_segment_no,
         "sha256": digest,
         "sizeBytes": path.stat().st_size,
         "partial": partial,
@@ -320,10 +470,31 @@ def upload_segment_json(meeting_id: str, request: SegmentJsonUpload, user: Curre
     import base64
 
     _assert_access(meeting_id, user, write=True)
-    meeting_dir = settings.storage_dir / "meetings" / meeting_id / "audio"
+    source_id = _normalize_source_id(request.source_id) or "primary"
+    source_segment_no = _normalize_source_segment_no(request.source_segment_no, request.segment_no)
+    with get_db() as db:
+        meeting = db.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        source = _ensure_upload_recording_source(
+            db,
+            meeting,
+            user,
+            source_id=source_id,
+            label=request.source_label or user.get("display_name") or source_id,
+            device_name="",
+        )
+        global_segment_no = _segment_no_for_source_upload(
+            db,
+            meeting_id,
+            source["source_id"],
+            source_segment_no,
+            request.segment_no,
+        )
+    meeting_dir = settings.storage_dir / "meetings" / meeting_id / "audio" / source_id
     meeting_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = Path(request.file_name or f"part_{request.segment_no:04d}.m4a").name
-    path = meeting_dir / f"part_{request.segment_no:04d}_{safe_name}"
+    safe_name = Path(request.file_name or f"part_{source_segment_no:04d}.m4a").name
+    path = meeting_dir / f"{source_id}_{source_segment_no:04d}_{safe_name}"
     try:
         path.write_bytes(base64.b64decode(request.audio_base64))
     except Exception as exc:
@@ -334,11 +505,13 @@ def upload_segment_json(meeting_id: str, request: SegmentJsonUpload, user: Curre
         db.execute(
             """
             INSERT INTO audio_segments
-            (id, meeting_id, segment_no, file_name, storage_path, mime_type, size_bytes, sha256,
+            (id, meeting_id, source_id, source_segment_no, segment_no,
+             file_name, storage_path, mime_type, size_bytes, sha256,
              duration_ms, start_ms, end_ms, upload_status, created_at)
-            VALUES (?, ?, ?, ?, ?, 'audio/mp4', ?, ?, ?, ?, ?, 'uploaded', ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'audio/mp4', ?, ?, ?, ?, ?, 'uploaded', ?)
             ON CONFLICT(meeting_id, segment_no)
-            DO UPDATE SET file_name=excluded.file_name, storage_path=excluded.storage_path,
+            DO UPDATE SET source_id=excluded.source_id, source_segment_no=excluded.source_segment_no,
+                file_name=excluded.file_name, storage_path=excluded.storage_path,
                 mime_type=excluded.mime_type, size_bytes=excluded.size_bytes,
                 sha256=excluded.sha256, duration_ms=excluded.duration_ms,
                 start_ms=excluded.start_ms, end_ms=excluded.end_ms,
@@ -347,7 +520,9 @@ def upload_segment_json(meeting_id: str, request: SegmentJsonUpload, user: Curre
             (
                 segment_id,
                 meeting_id,
-                request.segment_no,
+                source_id,
+                source_segment_no,
+                global_segment_no,
                 safe_name,
                 str(path),
                 path.stat().st_size,
@@ -362,10 +537,22 @@ def upload_segment_json(meeting_id: str, request: SegmentJsonUpload, user: Curre
             "UPDATE meetings SET status='uploaded', updated_at=?, duration_ms=max(duration_ms, ?) WHERE id=?",
             (now_iso(), request.end_ms, meeting_id),
         )
-    audit(user["id"], "audio.upload_json", "meeting", meeting_id, {"segment_no": request.segment_no})
-    partial = process_uploaded_segment(meeting_id, request.segment_no)
+    audit(
+        user["id"],
+        "audio.upload_json",
+        "meeting",
+        meeting_id,
+        {
+            "segment_no": global_segment_no,
+            "source_id": source_id,
+            "source_segment_no": source_segment_no,
+        },
+    )
+    partial = process_uploaded_segment(meeting_id, global_segment_no)
     return {
-        "segmentNo": request.segment_no,
+        "segmentNo": global_segment_no,
+        "sourceId": source_id,
+        "sourceSegmentNo": source_segment_no,
         "sha256": digest,
         "sizeBytes": path.stat().st_size,
         "partial": partial,
@@ -455,21 +642,26 @@ def update_transcript(meeting_id: str, request: TranscriptUpdate, user: CurrentU
         next_version = request.version + 1
         archive_transcript_rows(db, meeting_id, None, user["id"], "user_update")
         db.execute("DELETE FROM transcript_segments WHERE meeting_id = ?", (meeting_id,))
+        seen_speakers: dict[str, str] = {}
         for item in request.segments:
+            speaker_id = item.speaker_id.strip() or "SPEAKER_01"
+            display_name = item.display_name.strip() or speaker_id
+            seen_speakers[speaker_id] = display_name
             db.execute(
                 """
                 INSERT INTO transcript_segments
-                (id, meeting_id, version, source_segment_no, speaker_id, display_name,
+                (id, meeting_id, version, source_id, source_segment_no, speaker_id, display_name,
                  start_ms, end_ms, text, confidence, flags, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     item.id or new_id("seg"),
                     meeting_id,
                     next_version,
+                    item.source_id.strip(),
                     item.source_segment_no,
-                    item.speaker_id,
-                    item.display_name,
+                    speaker_id,
+                    display_name,
                     item.start_ms,
                     item.end_ms,
                     item.text,
@@ -477,6 +669,16 @@ def update_transcript(meeting_id: str, request: TranscriptUpdate, user: CurrentU
                     json.dumps(item.flags, ensure_ascii=False),
                     now_iso(),
                 ),
+            )
+        for speaker_id, display_name in seen_speakers.items():
+            db.execute(
+                """
+                INSERT INTO speakers (id, meeting_id, speaker_id, display_name, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(meeting_id, speaker_id)
+                DO UPDATE SET display_name=excluded.display_name, updated_at=excluded.updated_at
+                """,
+                (new_id("spk"), meeting_id, speaker_id, display_name, now_iso(), now_iso()),
             )
         db.execute("UPDATE meetings SET version=?, updated_at=? WHERE id=?", (next_version, now_iso(), meeting_id))
     audit(user["id"], "transcript.update", "meeting", meeting_id)
@@ -488,6 +690,10 @@ def update_transcript(meeting_id: str, request: TranscriptUpdate, user: CurrentU
 @app.post("/api/mobile/meetings/{meeting_id}/speakers/rename")
 def rename_speaker(meeting_id: str, request: SpeakerRename, user: CurrentUser) -> dict:
     _assert_access(meeting_id, user, write=True)
+    display_name = request.display_name.strip()
+    if not display_name:
+        raise HTTPException(status_code=400, detail="display_name is required")
+    aliases = [alias.strip() for alias in request.aliases if alias.strip() and alias.strip() != display_name]
     with get_db() as db:
         db.execute(
             """
@@ -496,14 +702,84 @@ def rename_speaker(meeting_id: str, request: SpeakerRename, user: CurrentUser) -
             ON CONFLICT(meeting_id, speaker_id)
             DO UPDATE SET display_name=excluded.display_name, updated_at=excluded.updated_at
             """,
-            (new_id("spk"), meeting_id, request.speaker_id, request.display_name, now_iso(), now_iso()),
+            (new_id("spk"), meeting_id, request.speaker_id, display_name, now_iso(), now_iso()),
         )
         db.execute(
             "UPDATE transcript_segments SET display_name=? WHERE meeting_id=? AND speaker_id=?",
-            (request.display_name, meeting_id, request.speaker_id),
+            (display_name, meeting_id, request.speaker_id),
         )
+        if request.replace_text:
+            for alias in aliases:
+                db.execute(
+                    """
+                    UPDATE transcript_segments
+                    SET text = replace(text, ?, ?)
+                    WHERE meeting_id = ?
+                    """,
+                    (alias, display_name, meeting_id),
+                )
+                db.execute(
+                    """
+                    UPDATE action_items
+                    SET owner = CASE WHEN owner = ? THEN ? ELSE owner END,
+                        task = replace(task, ?, ?)
+                    WHERE meeting_id = ?
+                    """,
+                    (alias, display_name, alias, display_name, meeting_id),
+                )
+                db.execute(
+                    """
+                    UPDATE meetings
+                    SET summary = replace(summary, ?, ?),
+                        role_notes = replace(role_notes, ?, ?)
+                    WHERE id = ?
+                    """,
+                    (alias, display_name, alias, display_name, meeting_id),
+                )
+            db.execute(
+                "UPDATE meetings SET summary=replace(summary, ?, ?), role_notes=replace(role_notes, ?, ?) WHERE id=?",
+                (request.speaker_id, display_name, request.speaker_id, display_name, meeting_id),
+            )
         db.execute("UPDATE meetings SET version=version+1, updated_at=? WHERE id=?", (now_iso(), meeting_id))
-    audit(user["id"], "speaker.rename", "meeting", meeting_id, {"speaker_id": request.speaker_id})
+    audit(
+        user["id"],
+        "speaker.rename",
+        "meeting",
+        meeting_id,
+        {"speaker_id": request.speaker_id, "aliases": aliases, "replace_text": request.replace_text},
+    )
+    _try_index(meeting_id)
+    return get_meeting(meeting_id, user)
+
+
+@app.put("/api/web/meetings/{meeting_id}/actions")
+@app.put("/api/mobile/meetings/{meeting_id}/actions")
+def update_action_items(meeting_id: str, request: ActionItemsUpdate, user: CurrentUser) -> dict:
+    _assert_access(meeting_id, user, write=True)
+    with get_db() as db:
+        db.execute("DELETE FROM action_items WHERE meeting_id = ?", (meeting_id,))
+        for item in request.items:
+            task = item.task.strip()
+            if not task:
+                continue
+            db.execute(
+                """
+                INSERT INTO action_items (id, meeting_id, owner, task, due, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    new_id("act"),
+                    meeting_id,
+                    item.owner.strip() or "待确认",
+                    task,
+                    item.due.strip(),
+                    item.status.strip() or "open",
+                    now_iso(),
+                    now_iso(),
+                ),
+            )
+        db.execute("UPDATE meetings SET updated_at=?, version=version+1 WHERE id=?", (now_iso(), meeting_id))
+    audit(user["id"], "action_items.update", "meeting", meeting_id, {"count": len(request.items)})
     _try_index(meeting_id)
     return get_meeting(meeting_id, user)
 
@@ -571,7 +847,25 @@ def export_meeting(meeting_id: str, export_format: str, user: CurrentUser) -> di
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     audit(user["id"], "meeting.export", "meeting", meeting_id, {"format": export_format})
+    result["download_url"] = f"/api/web/exports/{result['id']}/download"
     return result
+
+
+@app.get("/api/web/exports/{export_id}/download")
+def download_export(export_id: str, user: CurrentUser) -> FileResponse:
+    with get_db() as db:
+        row = db.execute("SELECT * FROM exports WHERE id = ?", (export_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Export not found")
+    _assert_access(row["meeting_id"], user)
+    path = Path(row["storage_path"])
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Export file not found")
+    return FileResponse(
+        str(path),
+        filename=path.name,
+        media_type="application/octet-stream",
+    )
 
 
 @app.get("/api/web/search")
@@ -728,6 +1022,7 @@ def get_providers(user: CurrentUser) -> dict:
             "audio_segment_minutes": int(values.get("audio_segment_minutes", settings.audio_segment_minutes)),
             "enable_diarization": values.get("enable_diarization", "true") == "true",
             "enable_denoise": values.get("enable_denoise", "false") == "true",
+            "enable_semantic_segmentation": values.get("enable_semantic_segmentation", "true") == "true",
             "target_sample_rate": int(values.get("target_sample_rate", "16000")),
         }
     }
@@ -797,6 +1092,255 @@ def _config_values() -> dict[str, str]:
     with get_db() as db:
         rows = db.execute("SELECT key, value FROM app_config").fetchall()
     return {row["key"]: row["value"] for row in rows}
+
+
+def _clamp_source_count(value: int | None, default: int = 1) -> int:
+    try:
+        count = int(value if value is not None else default)
+    except (TypeError, ValueError):
+        count = default
+    return max(1, min(8, count))
+
+
+def _normalize_join_code(value: str | None) -> str:
+    code = re.sub(r"[^A-Za-z0-9]", "", str(value or "")).upper()
+    return code[:16]
+
+
+def _new_join_code() -> str:
+    alphabet = string.ascii_uppercase + string.digits
+    with get_db() as db:
+        for _ in range(32):
+            code = "".join(secrets.choice(alphabet) for _ in range(6))
+            row = db.execute("SELECT 1 FROM meetings WHERE join_code = ?", (code,)).fetchone()
+            if not row:
+                return code
+    return "".join(secrets.choice(alphabet) for _ in range(10))
+
+
+def _normalize_source_id(value: str | None) -> str:
+    source = re.sub(r"[^A-Za-z0-9_-]", "_", str(value or "").strip())
+    source = re.sub(r"_+", "_", source).strip("_-")
+    return source[:48]
+
+
+def _normalize_source_segment_no(value: int | None, fallback: int) -> int:
+    try:
+        segment_no = int(value if value is not None else fallback)
+    except (TypeError, ValueError):
+        segment_no = int(fallback or 1)
+    return max(1, segment_no)
+
+
+def _ensure_member(db, meeting_id: str, user_id: str, role: str = "editor") -> None:
+    existing = db.execute(
+        "SELECT role FROM meeting_members WHERE meeting_id = ? AND user_id = ?",
+        (meeting_id, user_id),
+    ).fetchone()
+    if existing:
+        if existing["role"] == "owner" or existing["role"] == role:
+            return
+        db.execute(
+            "UPDATE meeting_members SET role = ? WHERE meeting_id = ? AND user_id = ?",
+            (role, meeting_id, user_id),
+        )
+        return
+    db.execute(
+        "INSERT INTO meeting_members (meeting_id, user_id, role) VALUES (?, ?, ?)",
+        (meeting_id, user_id, role),
+    )
+
+
+def _ensure_recording_source(
+    db,
+    meeting_id: str,
+    user: dict,
+    source_id: str,
+    label: str = "",
+    device_name: str = "",
+) -> dict:
+    normalized_source_id = _normalize_source_id(source_id) or "primary"
+    display_label = (label or "").strip() or normalized_source_id
+    now = now_iso()
+    db.execute(
+        """
+        INSERT INTO recording_sources
+        (id, meeting_id, source_id, label, device_name, user_id, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+        ON CONFLICT(meeting_id, source_id)
+        DO UPDATE SET label=CASE
+                WHEN excluded.label != '' AND recording_sources.label = recording_sources.source_id
+                THEN excluded.label
+                ELSE recording_sources.label
+            END,
+            device_name=CASE
+                WHEN excluded.device_name != '' THEN excluded.device_name
+                ELSE recording_sources.device_name
+            END,
+            user_id=COALESCE(recording_sources.user_id, excluded.user_id),
+            status='active',
+            updated_at=excluded.updated_at
+        """,
+        (
+            new_id("src"),
+            meeting_id,
+            normalized_source_id,
+            display_label,
+            (device_name or "").strip(),
+            user.get("id"),
+            now,
+            now,
+        ),
+    )
+    row = db.execute(
+        "SELECT * FROM recording_sources WHERE meeting_id = ? AND source_id = ?",
+        (meeting_id, normalized_source_id),
+    ).fetchone()
+    return row_to_dict(row)
+
+
+def _register_recording_source(
+    db,
+    meeting,
+    user: dict,
+    label: str = "",
+    device_name: str = "",
+    source_id: str = "",
+) -> dict:
+    meeting_id = meeting["id"]
+    requested_source_id = _normalize_source_id(source_id)
+    if requested_source_id:
+        existing = db.execute(
+            """
+            SELECT * FROM recording_sources
+            WHERE meeting_id = ? AND source_id = ?
+            """,
+            (meeting_id, requested_source_id),
+        ).fetchone()
+        if existing:
+            return _ensure_recording_source(
+                db,
+                meeting_id,
+                user,
+                requested_source_id,
+                label or existing["label"],
+                device_name or existing["device_name"],
+            )
+    max_sources = _clamp_source_count(meeting["max_sources"], default=1)
+    count = db.execute(
+        "SELECT COUNT(*) AS count FROM recording_sources WHERE meeting_id = ?",
+        (meeting_id,),
+    ).fetchone()["count"]
+    if not requested_source_id and count >= max_sources:
+        raise HTTPException(status_code=409, detail="Recording source limit reached")
+    if requested_source_id and count >= max_sources:
+        raise HTTPException(status_code=409, detail="Recording source limit reached")
+    if not requested_source_id:
+        for index in range(1, max_sources + 1):
+            candidate = "primary" if index == 1 else f"source_{index:02d}"
+            row = db.execute(
+                "SELECT 1 FROM recording_sources WHERE meeting_id = ? AND source_id = ?",
+                (meeting_id, candidate),
+            ).fetchone()
+            if not row:
+                requested_source_id = candidate
+                break
+    if not requested_source_id:
+        raise HTTPException(status_code=409, detail="Recording source limit reached")
+    return _ensure_recording_source(
+        db,
+        meeting_id,
+        user,
+        requested_source_id,
+        label or user.get("display_name") or requested_source_id,
+        device_name,
+    )
+
+
+def _ensure_upload_recording_source(
+    db,
+    meeting,
+    user: dict,
+    source_id: str,
+    label: str = "",
+    device_name: str = "",
+) -> dict:
+    meeting_id = meeting["id"]
+    normalized_source_id = _normalize_source_id(source_id) or "primary"
+    existing = db.execute(
+        """
+        SELECT * FROM recording_sources
+        WHERE meeting_id = ? AND source_id = ?
+        """,
+        (meeting_id, normalized_source_id),
+    ).fetchone()
+    if existing:
+        return _ensure_recording_source(
+            db,
+            meeting_id,
+            user,
+            normalized_source_id,
+            label or existing["label"],
+            device_name or existing["device_name"],
+        )
+    max_sources = _clamp_source_count(meeting["max_sources"], default=1)
+    count = db.execute(
+        "SELECT COUNT(*) AS count FROM recording_sources WHERE meeting_id = ?",
+        (meeting_id,),
+    ).fetchone()["count"]
+    if count >= max_sources:
+        raise HTTPException(status_code=409, detail="Recording source limit reached")
+    return _ensure_recording_source(
+        db,
+        meeting_id,
+        user,
+        normalized_source_id,
+        label or user.get("display_name") or normalized_source_id,
+        device_name,
+    )
+
+
+def _meeting_max_sources(meeting_id: str) -> int:
+    with get_db() as db:
+        row = db.execute("SELECT max_sources FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
+    return _clamp_source_count(row["max_sources"] if row else 1, default=1)
+
+
+def _segment_no_for_source_upload(
+    db,
+    meeting_id: str,
+    source_id: str,
+    source_segment_no: int,
+    requested_segment_no: int,
+) -> int:
+    existing = db.execute(
+        """
+        SELECT segment_no FROM audio_segments
+        WHERE meeting_id = ? AND source_id = ? AND source_segment_no = ?
+        """,
+        (meeting_id, source_id, source_segment_no),
+    ).fetchone()
+    if existing:
+        return int(existing["segment_no"])
+    requested = max(1, int(requested_segment_no or source_segment_no or 1))
+    conflict = db.execute(
+        """
+        SELECT 1 FROM audio_segments
+        WHERE meeting_id = ? AND segment_no = ?
+        """,
+        (meeting_id, requested),
+    ).fetchone()
+    if not conflict:
+        return requested
+    row = db.execute(
+        """
+        SELECT COALESCE(MAX(segment_no), 0) + 1 AS next_no
+        FROM audio_segments
+        WHERE meeting_id = ?
+        """,
+        (meeting_id,),
+    ).fetchone()
+    return max(1, int(row["next_no"] if row else 1))
 
 
 def _try_index(meeting_id: str) -> None:

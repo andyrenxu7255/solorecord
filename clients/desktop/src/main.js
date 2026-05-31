@@ -1,8 +1,11 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { app, BrowserWindow, Menu, shell } = require("electron");
+const { app, BrowserWindow, Menu, session, shell } = require("electron");
 
 const DEFAULT_SERVER_URL = "http://127.0.0.1:8000";
+const SERVER_URL = getServerUrl();
+
+app.commandLine.appendSwitch("unsafely-treat-insecure-origin-as-secure", new URL(SERVER_URL).origin);
 
 function getServerUrl() {
   const cliArg = process.argv.find((arg) => arg.startsWith("--server="));
@@ -38,7 +41,7 @@ function normalizeUrl(value) {
   }
 }
 
-function createWindow() {
+function createWindow(serverUrl = SERVER_URL) {
   const mainWindow = new BrowserWindow({
     width: 1280,
     height: 860,
@@ -50,13 +53,39 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webSecurity: true,
     },
   });
 
-  mainWindow.loadURL(getServerUrl());
+  mainWindow.loadURL(withDesktopMode(serverUrl));
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: "deny" };
+  });
+}
+
+function withDesktopMode(serverUrl) {
+  const url = new URL(serverUrl);
+  url.searchParams.set("client", "desktop");
+  return url.toString();
+}
+
+function configureMediaPermissions(serverUrl = SERVER_URL) {
+  const allowedOrigin = new URL(serverUrl).origin;
+  const isAllowedOrigin = (value) => {
+    try {
+      return new URL(value || allowedOrigin).origin === allowedOrigin;
+    } catch {
+      return false;
+    }
+  };
+
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    callback(permission === "media" && isAllowedOrigin(webContents.getURL()));
+  });
+
+  session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
+    return permission === "media" && isAllowedOrigin(requestingOrigin || webContents?.getURL());
   });
 }
 
@@ -86,6 +115,7 @@ function buildMenu() {
 }
 
 app.whenReady().then(() => {
+  configureMediaPermissions();
   Menu.setApplicationMenu(buildMenu());
   createWindow();
   app.on("activate", () => {

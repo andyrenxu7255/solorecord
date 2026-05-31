@@ -23,11 +23,14 @@ SoloRecord 已具备：
 - 本地播放。
 - 服务端会议、音频、转写、纪要、待办。
 - Web 管理端。
+- Web 详情页按成熟会议记录产品体验组织：状态说明、进度概览、说话人统计、纪要、可编辑待办、授权音频播放、可筛选转写时间线和任务日志。
 - Android/Windows/macOS/iOS/HarmonyOS 终端应用上传和下载。
 - Windows Electron 客户端、iOS WKWebView 外壳、macOS Electron/SwiftUI 外壳、HarmonyOS Web 外壳工程。
 - Android 分段级断点续传：本地分段落盘，multipart 文件流上传，服务端确认后立即执行分段 ASR，并把阶段转写写回同一场会议；本地账本标记已上传，弱网重试只补传未完成分段。
+- 多源同录：1-8 个录音源通过同一 `join_code` 加入同一会议。证据键是 `(source_id, source_segment_no)`；不要只用本地分段号判断覆盖或替换。最终处理会合并重复多源片段并标记 `multi_source_merged`，冲突片段标记 `multi_source_conflict`。
 - LDAP 用户名密码登录；SSO 浏览器登录回跳到 Android：`solorecord://auth/callback` 仍保留。
 - APK 重装后从 `/api/mobile/sync` 恢复记录，并可按权限下载服务器音频分段。
+- 待办可通过 `/api/web/meetings/{meetingId}/actions` 和 `/api/mobile/meetings/{meetingId}/actions` 更新，并进入同步、导出、外部 API 和可选 ES/OpenSearch 索引。
 - 本地 ASR 命令适配器。
 - LLM 纪要适配器。
 - Hermes/Webhook 转发。
@@ -129,7 +132,8 @@ Docker smoke fallback 见 `docs/human-ops/README.md`。
 9. 配置 Provider：通过 Web 管理端或 API 保存 ASR/LLM/Hermes/ES 配置；密钥字段留空表示保持不变。
 10. 发布终端应用：Android 使用 `-PSOLO_SERVER_ENDPOINT=<SOLO_BASE_URL>` 构建 APK；Windows 使用 `clients/desktop` 构建 portable ZIP；macOS/iOS/HarmonyOS 在对应构建机签名出包；全部通过 `/api/admin/releases` 上传并设置 `platform`。
 11. 端到端联调：测试 LDAP 登录、录音上传、弱网重试只补传未完成分段、转写/纪要、说话人改名、服务器恢复记录、服务器音频下载、外部 API 拉取。
-12. 输出交付摘要：只列 URL、版本、健康状态、已启用能力、待接入项和下一步，不输出任何密钥。
+12. 质量联调：检查 `qualityReport` 中的 `speaker_review_count`、`speaker_evidence_weak_count`、`speakerEvidence`、`summaryEvidence.supportedClaims`、`summaryEvidence.unsupportedClaims`、`actionEvidence`、`generic_owner_count`、`unsupported_action_count`、`action_evidence_coverage`、`timeline_repaired_count` 和 `scenario_counts`；真实会议不要只看纪要是否“像样”，还要看发言人、纪要和待办是否能从转写原文中找到证据。若会议纪要标题为“基于转写原文的保守整理”，表示 LLM 原始纪要证据不足，服务端已自动降级为证据优先版本。
+13. 输出交付摘要：只列 URL、版本、健康状态、已启用能力、待接入项和下一步，不输出任何密钥。
 
 ### `server/.env` 写入规则
 
@@ -204,6 +208,34 @@ SOLO_ENABLE_DENOISE=false
 ```
 
 Agent 必须把远程 STT endpoint、key、model 只写入服务器本地 `server/.env` 或密钥系统。接口优先走 `/audio/transcriptions`，必要时回退 `/asr`；空语音结果应保留 `empty_asr` 占位转写，方便人工复核。
+
+ASR 后语义分段：
+
+```text
+SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
+```
+
+Agent 验收时必须检查：
+
+- 如果 ASR 返回 `sentence_info`/`segments` 且带 `speaker_id`、`speaker`、`spk`、`spk_id` 或 `speakerLabel`，服务端应保留这些原生说话人字段，并写入 `asr_speaker` flag。
+- 如果 ASR 只返回单段文本，或虽有多个原生 speaker 但单段很长、包含多个“某某说/某某：”标记或多个被点名人，服务端应通过 LLM 或规则拆成多个 `transcript_segments`。
+- 如果主持人点名某人负责某议题，后续段落没有“我”字但继续围绕同一议题、交付物或时间节点展开，服务端可以做 `contextual_speaker_inference`，但必须保留 `speaker_review` 和 `reason:*`，不能当成声纹确认。
+- LLM 语义重分段输入和输出都应携带 `source_index`/`source_id`/`source_segment_no`。如果新增模型适配器，必须保留这些字段，避免最终转写失去原始音频分段追溯能力。
+- 即使 ASR 返回多个原生 speaker，只要存在未解析的“某某负责/某某确认/某某后面看”等任务归属线索，也应进入语义后处理；不能只因为有多个 `asr_speaker` 就跳过上下文分段。
+- 分段上传后应能看到带 `semantic_partial` 的阶段转写；`/finish` 后应把带 `semantic_final` 的整场上下文重分段结果写回数据库，而不是只用于纪要。
+- 验证人工改名闭环：把某个 `speaker_id` 改成具体姓名后重新处理，最终时间线应保留该姓名；但旧的 `发言人 N` 泛化名称不应阻止大模型/规则识别新的真实人名。
+- Web 时间线应能显示 `speaker_review`、`llm_refined`/`semantic_llm`、`semantic_rule` 对应的校对标记。
+- `qualityReport.metrics.speaker_evidence_weak_count` 应反映 LLM 发言人名称是否缺少原始 ASR 证据；该值大于 0 时应优先播放对应片段。
+- `qualityReport.speakerEvidence` 应包含需校对段落的 `segment_id`、`scenario_label`、`reason` 和相邻上下文；如果 Web 时间线没有显示这些信息，先修前端再做真实会议验收。
+- `qualityReport.metrics.speaker_alias_conflict_count` 应反映同一 `display_name` 是否对应多个 `speaker_id`。外部知识 Agent 应按 `knowledgeGraph.nodes[].speaker_ids` 保留追溯，不要把同名多标签当成多个人。
+- `knowledgeGraph.nodes` 应包含 `topic` 节点，`edges` 应包含“讨论主题”“讨论”“产生待办”“截止”等关系。外部知识 Agent 可以用 topic 连接上下文，但必须保留转写引用作为证据层。
+- `qualityReport.metrics.action_evidence_coverage` 应反映待办是否有转写证据；`unsupported_action_count` 大于 0 时，前端应提示“待办缺少转写证据”，便于人工复核模型是否补写。
+- `qualityReport.metrics.source_segment_coverage` 和 `qualityReport.sourceCoverage.weakSegments` 应按 `(source_id, source_segment_no)` 反映每个上传音频分段是否被最终转写覆盖。`source_segment_coverage_weak` 是知识入库阻塞项，外部知识 Agent 不得把该会议视为完整证据。`multi_source_conflict_count` 大于 0 时也应保留人工复核状态。
+- `qualityReport.metrics.weak_action_owner_count` 应反映待办负责人和任务之间是否缺少上下文证据；调 prompt 或规则时，不能仅因为某个人名在全文出现过，就把该人判为某项任务负责人。
+- 当 `actionEvidence` 或 `weakActionOwners` 出现 `suggested_owner` 时，Web 应显示建议负责人和应用按钮；Agent 可以把它作为人工复核建议，但不得绕过用户确认直接改待办。
+- 如果 LLM 输出 owner 为“我/我们/他/这边/大家”等代词，服务端应尝试用第一人称转写和任务关键词推断真实发言人；推不出必须保留 `待确认`，外部督办 Agent 不得把代词 owner 当成可发送对象。
+- 如果 `processing._normalize_action_owners()` 给 task 追加 `协同：姓名`，外部督办 Agent 应保留该字段含义：owner 是主责人，协同人是配合人，不要把协同人改成新的主责人。
+- `qualityReport.actionEvidence` 应逐条覆盖全部待办，并提供 `supported`、`weak_owner` 或 `unsupported` 状态和证据片段。证据片段应包含 `segment_id`、`source_segment_no`、`start_ms`、`speaker` 和 `text`，外部督办 Agent 应优先消费该字段判断是否可以自动发送提醒，并保留证据追溯链接。
 
 LLM：
 
@@ -332,6 +364,7 @@ macOS/iOS/HarmonyOS 发布：
 - 不要把 ES 当成唯一存储。
 - 不要绕过 `_assert_access` 暴露会议数据。
 - 转写是知识平台的原始证据层。外部知识整理 Agent 只能通过 `/api/external/meetings/{meetingId}/transcript?include_history=true` 拉取，不能直接读 SQLite、`var/` 或音频文件路径。
+- 外部响应里的 `knowledgeReadiness` 是入库门禁摘要。`status=hold` 时不要自动沉淀纪要或督办；`status=review_first` 时可以入库但必须保留风险标记；`status=ready` 才适合无人工介入地进入知识库。
 - 非 admin 不允许删除转写段；转写重处理、分段重传或人工替换前必须保留 `transcript_segment_history`。
 - 不要在 Web 使用未转义的动态 HTML。
 - 不要让 Android 端承担重 ASR/降噪/说话人分离。
@@ -436,6 +469,7 @@ SoloRecord currently includes:
 - Android/Windows/macOS/iOS/HarmonyOS client upload/download.
 - Windows Electron client, iOS WKWebView shell, macOS Electron/SwiftUI shell, and HarmonyOS Web shell projects.
 - Android segment-level upload resume: recording segments are stored locally, uploaded as multipart files, marked uploaded after server acknowledgement, and skipped on retry.
+- Multi-source recording: 1-8 sources join the same meeting through `join_code`. The evidence key is `(source_id, source_segment_no)`, not `source_segment_no` alone. Final processing merges duplicate multi-source rows with `multi_source_merged` and flags divergent rows with `multi_source_conflict`.
 - LDAP username/password login. Browser SSO returning to Android through `solorecord://auth/callback` remains available.
 - APK reinstall recovery through `/api/mobile/sync`, including permission-protected server audio download.
 - Local ASR command adapter.
@@ -537,7 +571,8 @@ If Synology, ASR, LLM, or Hermes values are not ready, deploy the mock/demo loop
 9. Save ASR/LLM/Hermes/ES provider settings through Web admin or API. Empty secret fields mean "keep unchanged".
 10. Publish client packages. For Android, rebuild with `-PSOLO_SERVER_ENDPOINT=<SOLO_BASE_URL>`; for Windows, build the `clients/desktop` portable ZIP; for macOS/iOS/HarmonyOS, use the matching official build machine. Upload all packages through `/api/admin/releases` with `platform`.
 11. Run end-to-end integration: LDAP login, recording upload, weak-network retry that sends only pending segments, transcript/summary, speaker rename, server recovery, protected audio download, external API pull.
-12. Return a handoff summary with URLs, version, health state, enabled capabilities, missing integrations, and next actions. Do not include secrets.
+12. Run a read-only LLM quality probe on at least one real completed meeting. Use `python -m solorecord_server.quality_probe --meeting-id <meeting_id>` for current persisted quality, and add `--run-llm` only when the configured LLM can be called safely. Confirm the output has acceptable `qualityReport.status`, candidate people, speaker review count, `speaker_evidence_weak_count`, timeline repair count, action owner quality, `unsupported_action_count`, and `action_evidence_coverage`. If a generated summary says it is a conservative transcript-grounded summary, the original LLM summary failed evidence checks and was safely downgraded. This command must not rewrite transcript rows or action items.
+13. Return a handoff summary with URLs, version, health state, enabled capabilities, missing integrations, LLM quality probe result, and next actions. Do not include secrets.
 
 #### `server/.env` Writing Rules
 
@@ -615,6 +650,27 @@ The agent must store remote STT endpoint, key, and model only in server-local
 `server/.env` or a secret system. The adapter tries `/audio/transcriptions`
 first and falls back to `/asr` when needed. Empty-speech output should remain
 as an `empty_asr` placeholder transcript for human review.
+
+Semantic segmentation after ASR:
+
+```text
+SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
+```
+
+Agent acceptance checks:
+
+- If ASR returns `sentence_info`/`segments` with `speaker_id`, `speaker`, `spk`, `spk_id`, or `speakerLabel`, the server should preserve native speaker fields and write the `asr_speaker` flag.
+- If ASR returns one text segment, or native ASR speaker chunks are still long and contain multiple “name said/name:” markers or named call-outs, the server should split them into multiple `transcript_segments` through the LLM or rule fallback.
+- LLM semantic refinement input and output should carry `source_index`, `source_id`, and `source_segment_no`. New adapters must preserve these fields so final transcript rows remain traceable to source audio.
+- If a host calls on someone for a topic and the next segment continues the same topic, deliverable, or deadline without saying “I”, the server may write `contextual_speaker_inference`; it must keep `speaker_review` and `reason:*`, and agents must not treat it as voiceprint confirmation.
+- Partial transcripts should be visible after segment upload; `/finish` should write the full-meeting context-refined timeline back to the database, not only use it for summaries.
+- The Web timeline should surface review markers derived from `speaker_review`, `llm_refined`/`semantic_llm`, and `semantic_rule`.
+- `qualityReport.metrics.speaker_evidence_weak_count` should show whether LLM speaker names lack original ASR evidence. If it is above zero, play the affected segments first.
+- `qualityReport.metrics.speaker_alias_conflict_count` should show whether one `display_name` maps to multiple `speaker_id` values. External knowledge agents should use `knowledgeGraph.nodes[].speaker_ids` for traceability instead of treating same-name labels as separate people.
+- `knowledgeGraph.nodes` should include `topic` nodes, and `edges` should include “discussion topic”, “discussed”, “produced action”, and “due” relationships. External knowledge agents may use topics to bridge context, but transcript references remain the evidence layer.
+- `qualityReport.metrics.action_evidence_coverage` should show whether action items are grounded in transcript evidence. If `unsupported_action_count` is above zero, the Web UI should warn reviewers before the action list is shared.
+- `qualityReport.metrics.source_segment_coverage` and `qualityReport.sourceCoverage.weakSegments` should show whether each uploaded audio segment is covered by the final transcript, keyed by `(source_id, source_segment_no)`. `source_segment_coverage_weak` blocks knowledge ingestion. If `multi_source_conflict_count` is above zero, downstream agents should keep the meeting in human-review status.
+- If the LLM outputs a pronoun owner such as “I”, “we”, “he”, “this side”, or “everyone”, the server should infer a concrete speaker from first-person transcript evidence and task keywords when possible. If not possible, keep `待确认`; external action agents must not send reminders to pronoun owners.
 
 LLM:
 

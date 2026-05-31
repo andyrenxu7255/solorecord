@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+  <a class="skip-link" href="#mainContent">跳到主要内容</a>
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
@@ -17,34 +18,36 @@
         </div>
       </div>
       <nav class="nav">
-        <button class="nav-item active" data-view="meetings">会议</button>
-        <button class="nav-item" data-view="recorder">录音</button>
-        <button class="nav-item" data-view="downloads">App 下载</button>
-        <button class="nav-item" data-view="admin">管理</button>
+        <button type="button" class="nav-item active" data-view="meetings">会议</button>
+        <button type="button" class="nav-item" data-view="recorder">录音</button>
+        <button type="button" class="nav-item desktop-only" data-view="status">登录状态</button>
+        <button type="button" class="nav-item" data-view="downloads">App 下载</button>
+        <button type="button" class="nav-item" data-view="admin">管理</button>
       </nav>
       <div class="account-card">
         <span id="accountName">未登录</span>
-        <button id="loginButton">登录</button>
+        <button type="button" id="loginButton">登录</button>
       </div>
     </aside>
 
-    <main class="content">
+    <main id="mainContent" class="content">
       <section id="view-meetings" class="view active">
         <header class="page-header">
           <div>
-            <h2>会议记录</h2>
-            <p>查看、搜索、编辑转写和整理待办。</p>
+            <p class="eyebrow">Meeting workspace</p>
+            <h2>会议工作台</h2>
           </div>
           <div class="header-actions">
-            <input id="searchInput" class="input" placeholder="搜索标题、纪要、正文">
-            <button id="refreshMeetings" class="button secondary">刷新</button>
+            <input id="searchInput" class="input search-input" placeholder="搜索标题、纪要、正文" aria-label="搜索会议">
+            <button type="button" id="refreshMeetings" class="button secondary">刷新</button>
           </div>
         </header>
+        <div id="meetingSummaryStrip" class="summary-strip"></div>
         <div class="workspace">
-          <section class="panel list-panel">
+          <section class="list-panel" aria-label="会议列表">
             <div id="meetingList" class="meeting-list"></div>
           </section>
-          <section class="panel detail-panel">
+          <section class="detail-panel" aria-label="会议详情">
             <div id="meetingDetail" class="empty-state">选择一场会议查看详情</div>
           </section>
         </div>
@@ -53,15 +56,21 @@
       <section id="view-recorder" class="view">
         <header class="page-header">
           <div>
+            <p class="eyebrow">Capture</p>
             <h2>录音</h2>
-            <p>桌面端可直接录制会议，也可以补传已有音频文件。</p>
           </div>
         </header>
         <div class="recorder-layout">
-          <section class="panel form-panel">
+          <section class="tool-panel form-panel">
             <h3>实时录音</h3>
             <label>会议标题</label>
             <input id="recordMeetingTitle" class="input" placeholder="例如：客户复盘会">
+            <div class="form-grid compact-form">
+              <label>会议编号</label>
+              <input id="recordJoinCode" class="input" placeholder="多人同录可填同一个编号">
+              <label>录音源名称</label>
+              <input id="recordSourceLabel" class="input" placeholder="例如：任旭电脑、会议室前排">
+            </div>
             <div class="recorder-meter">
               <div class="record-dot" id="recordDot"></div>
               <div>
@@ -70,20 +79,26 @@
               </div>
             </div>
             <div class="recorder-actions">
-              <button id="startRecordButton" class="button primary">开始录音</button>
-              <button id="stopRecordButton" class="button secondary" disabled>结束录音</button>
+              <button type="button" id="startRecordButton" class="button primary">开始录音</button>
+              <button type="button" id="stopRecordButton" class="button secondary" disabled>结束录音</button>
             </div>
             <div id="recordSegmentList" class="segment-progress"></div>
-            <p class="hint">录音会按服务器配置的时长滚动分段并在网络可用时逐段上传；结束后同一条会议记录会继续生成完整纪要。</p>
+            <p class="hint" id="recordCapabilityHint"></p>
           </section>
-          <section class="panel form-panel">
+          <section class="tool-panel form-panel">
             <h3>文件补传</h3>
             <label>会议标题</label>
             <input id="newMeetingTitle" class="input" placeholder="例如：客户复盘会">
+            <div class="form-grid compact-form">
+              <label>会议编号</label>
+              <input id="uploadJoinCode" class="input" placeholder="可选，多源补传时填同一个编号">
+              <label>录音源名称</label>
+              <input id="uploadSourceLabel" class="input" placeholder="例如：手机A、会议室后排">
+            </div>
             <label>音频文件</label>
             <input id="audioFile" class="input" type="file" accept="audio/*">
-            <button id="createUploadButton" class="button primary">创建会议并上传</button>
-            <p class="hint">上传完成后会自动进入转写队列。未配置本地 ASR 时会生成占位转写，方便先验证系统闭环。</p>
+            <button type="button" id="createUploadButton" class="button primary">创建会议并上传</button>
+            <div id="uploadStatus" class="upload-status" aria-live="polite"></div>
           </section>
         </div>
       </section>
@@ -91,32 +106,53 @@
       <section id="view-downloads" class="view">
         <header class="page-header">
           <div>
+            <p class="eyebrow">Clients</p>
             <h2>App 下载</h2>
-            <p>公司内部 Android、Windows、macOS、iOS、HarmonyOS 终端分发入口。</p>
           </div>
         </header>
-        <section class="panel">
+        <section class="tool-panel">
           <div class="download-tabs" id="downloadTabs">
-            <button class="chip active" data-platform="android">Android</button>
-            <button class="chip" data-platform="windows">Windows</button>
-            <button class="chip" data-platform="macos">macOS</button>
-            <button class="chip" data-platform="ios">iOS</button>
-            <button class="chip" data-platform="harmony">HarmonyOS</button>
+            <button type="button" class="chip active" data-platform="android">Android</button>
+            <button type="button" class="chip" data-platform="windows">Windows</button>
+            <button type="button" class="chip" data-platform="macos">macOS</button>
+            <button type="button" class="chip" data-platform="ios">iOS</button>
+            <button type="button" class="chip" data-platform="harmony">HarmonyOS</button>
           </div>
           <div id="releaseBox" class="release-box">正在读取版本信息...</div>
+        </section>
+      </section>
+
+      <section id="view-status" class="view desktop-only">
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Session</p>
+            <h2>登录状态</h2>
+          </div>
+        </header>
+        <section class="tool-panel form-panel">
+          <h3>当前账号</h3>
+          <div class="status-banner">
+            <b id="desktopAccountStatus">未登录</b>
+            <span id="desktopAccountHint">录音和查看记录需要先登录。</span>
+          </div>
+          <div class="detail-actions">
+            <button type="button" id="desktopLoginButton" class="button primary">登录</button>
+            <button type="button" id="desktopLogoutButton" class="button secondary">退出登录</button>
+          </div>
+          <p class="hint">Windows 客户端只保存服务器地址和登录会话，不内置模型、LDAP、Hermes、ES 或外部系统密钥。</p>
         </section>
       </section>
 
       <section id="view-admin" class="view">
         <header class="page-header">
           <div>
+            <p class="eyebrow">Operations</p>
             <h2>系统管理</h2>
-            <p>配置模型、处理参数、查看任务和发布终端应用。</p>
           </div>
-          <button id="refreshAdmin" class="button secondary">刷新管理信息</button>
+          <button type="button" id="refreshAdmin" class="button secondary">刷新管理信息</button>
         </header>
         <div class="admin-grid">
-          <section class="panel">
+          <section class="tool-panel">
             <h3>模型与音频处理</h3>
             <div class="form-grid">
               <label>ASR 提供方</label>
@@ -168,18 +204,18 @@
               <label>目标采样率</label>
               <input id="targetSampleRate" class="input" type="number" min="8000" max="48000" value="16000">
               <label class="checkbox-row"><input id="enableDiarization" type="checkbox" checked> 启用说话人分离</label>
+              <label class="checkbox-row"><input id="enableSemanticSegmentation" type="checkbox" checked> 启用大模型语义重分段</label>
               <label class="checkbox-row"><input id="enableDenoise" type="checkbox"> 启用轻量降噪</label>
             </div>
-            <button id="saveProviders" class="button primary">保存配置</button>
-            <p class="hint">必填项保持很少：未配置模型时系统使用 mock，保证上传、队列、编辑和导出先能跑通。</p>
+            <button type="button" id="saveProviders" class="button primary">保存配置</button>
           </section>
 
-          <section class="panel">
+          <section class="tool-panel">
             <h3>任务队列</h3>
             <div id="jobList" class="job-list">暂无任务</div>
           </section>
 
-          <section class="panel">
+          <section class="tool-panel">
             <h3>发布终端应用</h3>
             <label>平台</label>
             <select id="releasePlatform" class="input">
@@ -197,15 +233,15 @@
             <textarea id="releaseNotes" class="input" rows="4"></textarea>
             <label class="checkbox-row"><input id="forceUpdate" type="checkbox"> 强制更新</label>
             <input id="releaseFile" class="input" type="file" accept=".apk,.exe,.dmg,.ipa,.hap,application/vnd.android.package-archive">
-            <button id="uploadRelease" class="button primary">上传发布包</button>
+            <button type="button" id="uploadRelease" class="button primary">上传发布包</button>
           </section>
         </div>
       </section>
     </main>
   </div>
-  <div id="loginModal" class="modal-backdrop hidden">
+  <div id="loginModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
     <form id="loginForm" class="modal-card">
-      <h2>登录 SoloRecord</h2>
+      <h2 id="loginTitle">登录 SoloRecord</h2>
       <label>用户名</label>
       <input id="loginUsername" class="input" autocomplete="username" placeholder="LDAP 用户名">
       <label>密码</label>
@@ -217,7 +253,7 @@
       <p class="hint">账号密码只提交给 SoloRecord 服务端用于 LDAP 校验，不会保存到浏览器。</p>
     </form>
   </div>
-  <div id="toast" class="toast"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/app.js"></script>
 </body>
 </html>

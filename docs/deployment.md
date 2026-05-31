@@ -142,6 +142,16 @@ SOLO_ASR_MODEL=funasr-paraformer-zh
 - 支持返回 `{ "text": "..." }`、`transcript`、`result`、`data` 或 `segments` 数组。
 - 如果远程 STT 返回空文本，服务端会生成带 `empty_asr` 标记的占位转写，保留会议记录可用性，方便人工复核。
 
+## ASR 后语义重分段
+
+如果 ASR 服务返回原生说话人字段，SoloRecord 会直接使用。如果只返回单段文本或单一发言人，服务端会调用已配置的 LLM 进行语义重分段和发言人推断；LLM 不可用时，会用规则兜底拆分“张三说”“李四：”这类明确标记。
+
+```text
+SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
+```
+
+每个上传分段会先生成阶段转写；点击结束会议后，服务端会基于整场上下文再整理一次最终时间线并写回数据库。
+
 ## Web 体验说明
 
 模型配置页有意减少必填项。内部用户可以先保存最小 Provider 名称，等 ASR runtime 准备好后再补 endpoint、model、command 等细节。
@@ -348,6 +358,22 @@ Notes:
 - The server uploads audio as multipart with field `file`; if `/audio/transcriptions` returns 404, it tries `/asr` with field `audio`.
 - Responses can use `text`, `transcript`, `result`, `data`, or a `segments` array.
 - Empty STT text is saved as a traceable `empty_asr` placeholder transcript so the meeting remains usable for review.
+
+## Semantic Re-Segmentation After ASR
+
+If ASR returns native speaker fields, SoloRecord uses them directly. If ASR
+returns only one text block or a single speaker, the server calls the configured
+LLM for semantic re-segmentation and speaker inference. If the LLM is
+unavailable, a rule fallback splits clear markers such as “Alice said” or
+“Bob:”.
+
+```text
+SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
+```
+
+Each uploaded segment receives partial transcript post-processing first. When
+the meeting is finished, the server refines the final timeline with full-meeting
+context and writes it back to the database.
 
 ## Web UX Notes
 

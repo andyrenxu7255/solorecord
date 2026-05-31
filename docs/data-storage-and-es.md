@@ -84,7 +84,17 @@ GET /api/external/meetings/{meetingId}/transcript?include_history=true
 Authorization: Bearer replace-with-long-random-token
 ```
 
-响应包含当前转写版本、结构化段落、纯文本 `plain_text`、说话人映射、音频分段证据、待办、`searchText`，以及可选历史归档 `history`。知识平台可以用当前段落生成知识条目，用历史归档做审计和冲突追溯。
+响应包含当前转写版本、结构化段落、纯文本 `plain_text`、说话人映射、音频分段证据、待办、`searchText`、`qualityReport`、`knowledgeReadiness`、`knowledgeGraph`，以及可选历史归档 `history`。知识平台可以用当前段落生成知识条目，用历史归档做审计和冲突追溯。
+
+`knowledgeGraph` 是给人和外部 Agent 的辅助关系图，包含 meeting、speaker、topic、action、time 节点。topic 节点来自转写和待办文本的轻量抽取，用来连接“谁讨论了什么”“什么主题产生了哪些待办”“待办何时截止”。它只能辅助上下文衔接和可视化查阅，不能替代 `transcript.segments`、`qualityReport.speakerEvidence`、`qualityReport.actionEvidence` 这些证据层字段。
+
+`knowledgeReadiness` 是给外部 Agent 的入库建议：
+
+- `status=ready`：可自动入库。
+- `status=review_first`：可入库但应保留风险标记或等待人工校对。
+- `status=hold`：存在阻塞风险，建议暂缓自动入库。
+- `blockers`：阻塞入库的问题类型，例如缺少转写证据的待办或缺证据纪要。
+- `reviewWarnings`：建议人工复核的问题类型，例如发言人证据弱、负责人归属弱。
 
 ## ES/OpenSearch
 
@@ -242,8 +252,17 @@ Authorization: Bearer replace-with-long-random-token
 
 The response includes the current transcript version, structured segments,
 `plain_text`, speaker mappings, audio-segment evidence, action items,
-`searchText`, and optional archived `history`. Knowledge agents can use current
-segments for extraction and history for audit/conflict tracing.
+`searchText`, `qualityReport`, `knowledgeReadiness`, `knowledgeGraph`, and
+optional archived `history`. Knowledge agents can use current segments for
+extraction and history for audit/conflict tracing.
+
+`knowledgeGraph` is an auxiliary relationship graph for people and agents. It
+contains meeting, speaker, topic, action, and time nodes. Topic nodes are
+lightly extracted from transcript/action text and connect who discussed what,
+which topic produced which action, and when an action is due. It helps context
+bridging and visualization, but it does not replace evidence-layer fields such
+as `transcript.segments`, `qualityReport.speakerEvidence`, or
+`qualityReport.actionEvidence`.
 
 ## ES/OpenSearch
 

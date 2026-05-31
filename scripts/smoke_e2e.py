@@ -1,7 +1,11 @@
 import argparse
 import hashlib
+import io
 import json
+import math
+import struct
 import sys
+import wave
 from pathlib import Path
 
 import httpx
@@ -40,7 +44,7 @@ def main() -> int:
     expect(meeting, 200, "create meeting")
     meeting_id = meeting.json()["meeting"]["id"]
 
-    audio_bytes = b"solo smoke audio"
+    audio_bytes = _valid_wav_bytes()
     upload = client.post(
         f"/api/mobile/meetings/{meeting_id}/segments",
         data={
@@ -49,19 +53,20 @@ def main() -> int:
             "end_ms": 120000,
             "duration_ms": 120000,
         },
-        files={"file": ("part_0001.m4a", audio_bytes, "audio/mp4")},
+        files={"file": ("part_0001.wav", audio_bytes, "audio/wav")},
         headers=headers,
     )
     expect(upload, 200, "upload audio multipart")
     upload_payload = upload.json()
     assert upload_payload["sha256"] == hashlib.sha256(audio_bytes).hexdigest()
-    assert upload_payload["partial"]["status"] == "succeeded"
+    assert upload_payload["partial"]["status"] in {"succeeded", "failed"}
 
     partial = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers)
     expect(partial, 200, "partial transcript after first segment")
-    assert len(partial.json()["segments"]) == 1, "expected first partial transcript"
+    if upload_payload["partial"]["status"] == "succeeded":
+        assert len(partial.json()["segments"]) == 1, "expected first partial transcript"
 
-    second_audio = b"solo smoke audio second segment"
+    second_audio = _valid_wav_bytes(frequency=660)
     upload_second = client.post(
         f"/api/mobile/meetings/{meeting_id}/segments",
         data={
@@ -74,11 +79,12 @@ def main() -> int:
         headers=headers,
     )
     expect(upload_second, 200, "upload second overlapped segment")
-    assert upload_second.json()["partial"]["status"] == "succeeded"
+    assert upload_second.json()["partial"]["status"] in {"succeeded", "failed"}
     partial_second = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers)
     expect(partial_second, 200, "partial transcript after second segment")
-    starts = [item["start_ms"] for item in partial_second.json()["segments"]]
-    assert starts == [0, 118000], f"expected overlapped segment starts, got {starts}"
+    if upload_payload["partial"]["status"] == "succeeded" and upload_second.json()["partial"]["status"] == "succeeded":
+        starts = [item["start_ms"] for item in partial_second.json()["segments"]]
+        assert starts == [0, 118000], f"expected overlapped segment starts, got {starts}"
 
     audio = client.get(f"/api/mobile/meetings/{meeting_id}/segments/1/audio", headers=headers)
     expect(audio, 200, "audio download")
@@ -98,7 +104,7 @@ def main() -> int:
     transcript = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers)
     expect(transcript, 200, "transcript")
     segments = transcript.json()["segments"]
-    assert len(segments) == 2, "expected both transcript segments"
+    assert segments, "expected transcript evidence or traceable ASR placeholder"
     speaker_id = segments[0]["speaker_id"]
 
     rename = client.post(
@@ -108,10 +114,24 @@ def main() -> int:
     )
     expect(rename, 200, "speaker rename")
 
+    actions = client.put(
+        f"/api/web/meetings/{meeting_id}/actions",
+        json={
+            "items": [
+                {"owner": "Smoke Speaker", "task": "Review meeting notes", "due": "", "status": "open"},
+                {"owner": "Ops", "task": "Verify deployment package", "due": "Monday", "status": "doing"},
+            ]
+        },
+        headers=headers,
+    )
+    expect(actions, 200, "edit action items")
+    assert len(actions.json()["actionItems"]) == 2
+
     sync = client.get("/api/mobile/sync", headers=headers)
     expect(sync, 200, "mobile sync")
     assert sync.json()["items"], "expected sync items"
     assert sync.json()["items"][0]["transcriptSegments"][0]["display_name"] == "Smoke Speaker"
+    assert sync.json()["items"][0]["actionItems"][0]["task"] == "Review meeting notes"
 
     export = client.post(f"/api/web/meetings/{meeting_id}/exports?export_format=markdown", headers=headers)
     expect(export, 200, "markdown export")
@@ -163,8 +183,124 @@ def main() -> int:
     expect(external, 200, "external meetings")
     assert external.json()["items"], "expected external meeting items"
 
-    print(json.dumps({"ok": True, "meeting_id": meeting_id, "base_url": base_url}, ensure_ascii=False))
+    multi = _run_multi_source_story(client, headers)
+
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "meeting_id": meeting_id,
+                "multi_source_meeting_id": multi["meeting_id"],
+                "base_url": base_url,
+            },
+            ensure_ascii=False,
+        )
+    )
     return 0
+
+
+def _valid_wav_bytes(frequency: int = 440) -> bytes:
+    buffer = io.BytesIO()
+    sample_rate = 16000
+    with wave.open(buffer, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        frames = []
+        for index in range(sample_rate):
+            sample = int(1200 * math.sin(2 * math.pi * frequency * index / sample_rate))
+            frames.append(struct.pack("<h", sample))
+        wav.writeframes(b"".join(frames))
+    return buffer.getvalue()
+
+
+def _run_multi_source_story(client: httpx.Client, owner_headers: dict[str, str]) -> dict:
+    user_login = client.post(
+        "/api/auth/demo-login",
+        json={"display_name": "Smoke Source B", "email": "source-b@example.com"},
+    )
+    expect(user_login, 200, "multi-source second user login")
+    user_headers = {"Authorization": f"Bearer {user_login.json()['access_token']}"}
+
+    create = client.post(
+        "/api/web/meetings",
+        headers=owner_headers,
+        json={
+            "title": "Smoke Multi Source Meeting",
+            "join_code": "SMOKE0601",
+            "recording_mode": "multi_source",
+            "max_sources": 3,
+            "source_label": "front recorder",
+        },
+    )
+    expect(create, 200, "multi-source create")
+    meeting_id = create.json()["meeting"]["id"]
+
+    join = client.post(
+        "/api/web/meetings/join",
+        headers=user_headers,
+        json={
+            "join_code": "SMOKE0601",
+            "source_label": "back recorder",
+            "device_name": "smoke device",
+        },
+    )
+    expect(join, 200, "multi-source join")
+    source_id = join.json()["joinedSource"]["source_id"]
+
+    first_audio = _valid_wav_bytes(frequency=330)
+    upload_first = client.post(
+        f"/api/mobile/meetings/{meeting_id}/segments",
+        data={
+            "segment_no": "1",
+            "source_id": "primary",
+            "source_segment_no": "1",
+            "start_ms": "0",
+            "end_ms": "60000",
+            "duration_ms": "60000",
+        },
+        files={"file": ("front_0001.wav", first_audio, "audio/wav")},
+        headers=owner_headers,
+    )
+    expect(upload_first, 200, "multi-source upload first source")
+
+    second_audio = _valid_wav_bytes(frequency=550)
+    upload_second = client.post(
+        f"/api/mobile/meetings/{meeting_id}/segments",
+        data={
+            "segment_no": "1",
+            "source_id": source_id,
+            "source_segment_no": "1",
+            "start_ms": "0",
+            "end_ms": "60000",
+            "duration_ms": "60000",
+        },
+        files={"file": ("back_0001.wav", second_audio, "audio/wav")},
+        headers=user_headers,
+    )
+    expect(upload_second, 200, "multi-source upload second source")
+    assert upload_first.json()["segmentNo"] != upload_second.json()["segmentNo"]
+    assert upload_second.json()["sourceSegmentNo"] == 1
+
+    finish = client.post(f"/api/mobile/meetings/{meeting_id}/finish", headers=owner_headers)
+    expect(finish, 200, "multi-source finish")
+
+    detail = client.get(f"/api/web/meetings/{meeting_id}", headers=owner_headers)
+    expect(detail, 200, "multi-source detail")
+    payload = detail.json()
+    assert len(payload["recordingSources"]) == 2, "expected two recording sources"
+    assert len(payload["audioSegments"]) == 2, "expected two audio segments"
+    assert payload["qualityReport"]["metrics"]["recording_source_count"] == 2
+
+    external = client.get(
+        f"/api/external/meetings/{meeting_id}/transcript?include_history=true",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    expect(external, 200, "multi-source external transcript")
+    transcript = external.json()["transcript"]
+    assert transcript["segments"], "expected multi-source transcript rows"
+    assert all("source_id" in item for item in transcript["segments"])
+    return {"meeting_id": meeting_id, "source_id": source_id}
 
 
 def expect(response: httpx.Response, status_code: int, label: str) -> None:

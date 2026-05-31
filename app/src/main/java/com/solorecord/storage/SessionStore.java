@@ -46,6 +46,21 @@ public final class SessionStore {
         return preferences.getString("username", "");
     }
 
+    public String getDefaultJoinCode() {
+        return preferences.getString("defaultJoinCode", "");
+    }
+
+    public String getDefaultSourceLabel() {
+        return preferences.getString("defaultSourceLabel", "");
+    }
+
+    public void saveRecordingDefaults(String joinCode, String sourceLabel) {
+        preferences.edit()
+                .putString("defaultJoinCode", joinCode == null ? "" : joinCode.trim())
+                .putString("defaultSourceLabel", sourceLabel == null ? "" : sourceLabel.trim())
+                .apply();
+    }
+
     public void saveLogin(String token, String displayName, String email) {
         preferences.edit()
                 .putString("token", token == null ? "" : token)

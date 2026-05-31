@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     target_sample_rate: int = 16000
     enable_diarization: bool = True
     enable_denoise: bool = False
+    enable_semantic_segmentation: bool = True
 
     llm_provider: str = "mock"
     llm_endpoint: str = ""

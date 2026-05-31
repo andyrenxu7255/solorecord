@@ -47,6 +47,8 @@ Windows 版本下载后解压，运行 `SoloRecord.exe`。iOS、macOS 和 Harmon
 2. 第一次使用时允许麦克风权限。
 3. 会议结束后点击“结束录音”。
 
+多人同录时，所有参与录音的人在“会议编号”里填写同一个编号，例如 `0601A`；“录音源名称”建议写成“任旭手机”“会议室后排”“客户侧电脑”这类可辨识名称。系统会把 1-8 个录音源归集到同一场会议，各来源先独立上传和转写，整场结束后再由系统做多源校对、去重和冲突提示。
+
 录音时系统会滚动保存音频。即使会议较长，也会按小段保存，减少意外丢失风险。默认约 5 分钟一个分段，具体时长由服务器配置；相邻分段会保留约 2 秒重叠，减少分段边界丢词。
 
 录音中页面会显示音频分段数、已上传数、待上传数和正在写入的当前段。当前段也会定期写入本地索引，WAV 文件头会边录边刷新；如果系统异常关闭，已写入的部分更容易被本机保留下来。下次打开 App 时，异常中断的当前段会转成待上传分段。正常结束录音时，最后一段会先保存到本机，再提交服务器处理。
@@ -98,6 +100,16 @@ Windows 版本下载后解压，运行 `SoloRecord.exe`。iOS、macOS 和 Harmon
 
 例如把 `发言人 1` 改成 `张三`，后面所有 `发言人 1` 都会显示为 `张三`。
 
+如果系统已经根据上下文拆出了“任旭”“李娜”这类名字，但旁边标记了“需确认”，说明这是模型推断结果，建议你重点看这一段原文和音频。Web 时间线还可能显示“大模型分段”或“规则分段”，它们表示系统在 ASR 之后又做了一次对话轮次整理。
+
+Web 详情页的“整理质量”会提示候选人名、需要校对的段落、发言人证据风险、分段覆盖率和待办证据率。待办证据率不是最终评分，而是提醒你：待办是否能在转写原文里找到依据。分段覆盖率用于发现某个音频分段在最终转写里过短或缺失。若出现“发言人缺少原文证据”“音频分段待核对”或“待办缺少转写证据”，建议先回看对应转写或录音，再复制给 IM 或外部系统。
+
+如果开启了多源同录，“整理质量”还会显示“多源合并”和“多源冲突”。多源合并表示系统发现多个录音源在同一时间记录了相近内容，并保留了更完整的一条；多源冲突表示同一时间不同来源差异较大，建议回听对应录音后再对外发送纪要。
+
+多源同录下，Web 的转写筛选和“定位转写”会按“录音源 + 该设备自己的分段号”定位。两台设备都上传“第 1 段”时，系统会分别显示到对应录音源，不会把不同设备的第 1 段混在一起。
+
+如果纪要标题出现“基于转写原文的保守整理”，说明系统发现大模型原始纪要证据不足，已经自动换成更贴近转写原文的版本。这个版本可能不够漂亮，但更适合先复核、再对外发送。
+
 ## 会议纪要和待办
 
 系统会根据转写生成：
@@ -113,7 +125,19 @@ Windows 版本下载后解压，运行 `SoloRecord.exe`。iOS、macOS 和 Harmon
 - 截止时间
 - 状态
 
-如果识别不准确，可以在 Web 端编辑。
+如果识别不准确，可以在 Web 端编辑。Web 端的会议详情页可以新增、删除和修改待办；保存后，手机同步、导出文件和企业知识平台接口都会读取更新后的待办。
+
+## 会后校对顺序
+
+建议按这个顺序检查会议：
+
+1. 看顶部状态和分段数量，确认没有待上传分段。
+2. 播放关键录音分段，确认音频可用。
+3. 修改说话人名称。
+4. 检查会议纪要是否符合真实结论。
+5. 检查待办的负责人、任务、截止时间和状态。
+6. 用说话人或音频分段筛选转写，校对关键原文。
+7. 导出或交给企业知识平台。
 
 ## Web 和桌面端怎么用
 
@@ -121,13 +145,20 @@ Windows 版本下载后解压，运行 `SoloRecord.exe`。iOS、macOS 和 Harmon
 
 - 登录。
 - 在“录音”页直接录音，或补传已有音频文件。
+- 多源同录时填写相同会议编号，并为每个录音设备填写录音源名称。
 - 查看会议列表。
 - 搜索会议标题、纪要、转写正文。
 - 查看会议详情。
 - 修改会议标题。
 - 修改会议纪要。
+- 修改分角色整理。
+- 修改待办负责人、任务、截止时间和状态。
+- 查看待办证据；如果系统给出“建议负责人”，可以先应用建议，再保存待办。证据旁边的“定位转写”可以跳到对应原文段落，方便回听和校对。
+- 检查待办里的“协同：某人”。这表示主责人明确，但转写里还有配合或协助关系，复制到 IM 前建议一并保留。
 - 修改转写文本。
 - 批量修改说话人名称。
+- 按说话人或音频分段筛选转写时间线。
+- 加载并播放服务器上的录音分段。
 - 导出 Markdown、Word、PDF、JSON、SRT。
 - 下载 Android、Windows、macOS、iOS、HarmonyOS 发布包。
 
@@ -183,6 +214,10 @@ Windows 版本下载后解压，运行 `SoloRecord.exe`。iOS、macOS 和 Harmon
 ### 纪要不准确怎么办？
 
 先检查转写是否准确。转写有错时先改转写，再重新整理会议。
+
+### 待办负责人不准怎么办？
+
+先看待办下面的证据提示。“负责人证据弱”表示任务内容能在转写里找到，但负责人可能不对；可以点击证据旁边的“定位转写”跳到原文。如果出现“建议负责人”，可以点击单条“应用建议”，也可以点击“应用全部建议负责人”批量填入，再保存待办。建议负责人只是辅助判断，重要会议仍建议结合转写或录音确认。
 
 ### 找不到某场会议怎么办？
 
@@ -257,6 +292,8 @@ Open the Recording tab:
 2. Allow microphone permission on first use.
 3. Tap End Recording when the meeting is over.
 
+For multi-source recording, every recorder should enter the same meeting code, for example `0601A`. Use a recognizable source name such as "Renxu phone", "back of meeting room", or "customer laptop". The server groups 1-8 recording sources into one meeting. Each source uploads and transcribes independently, then the final processing merges duplicate evidence and flags conflicts.
+
 The app saves audio in rolling segments while recording. The default is about five minutes per segment, controlled by the server. Adjacent segments keep about two seconds of overlap to reduce boundary word loss. Long meetings are split into smaller files to reduce loss risk. If the app is closed, recording stops and the current segment is preserved as far as possible.
 
 During recording, the screen shows segment count, uploaded count, pending count, and the segment currently being written. The current segment is checkpointed into the local index, and the WAV header is refreshed while recording. If the system closes the app unexpectedly, already written audio is easier to recover. On next launch, the interrupted open segment becomes a pending upload segment. On normal stop, the last segment is saved locally before server processing starts.
@@ -319,7 +356,19 @@ Action items usually include:
 - Due date
 - Status
 
-If the result is inaccurate, edit it on the Web.
+If the result is inaccurate, edit it on the Web. The Web meeting detail page can add, remove, and update action items. Saved action items appear in mobile sync, exports, and enterprise knowledge APIs.
+
+### Post-Meeting Review Order
+
+Recommended review flow:
+
+1. Check the top status and segment counts to confirm nothing is pending upload.
+2. Play key audio segments to confirm audio availability.
+3. Rename speakers.
+4. Check whether the summary matches the actual meeting decisions.
+5. Check action owners, tasks, due dates, and status.
+6. Filter the transcript by speaker or audio segment to review key evidence.
+7. Export or let the enterprise knowledge platform ingest the record.
 
 ### Web And Desktop Usage
 
@@ -327,13 +376,17 @@ The SoloRecord Web app supports:
 
 - Login/logout
 - Live recording from the Recording page, or uploading an existing audio file
+- Multi-source recording by sharing the same meeting code across devices
 - Meeting list
 - Search by title, summary, transcript, or keyword
 - Meeting details
 - Title editing
 - Summary editing
+- Action-item editing for owner, task, due date, and status
 - Transcript editing
 - Batch speaker rename
+- Transcript filtering by speaker or source audio segment
+- Authorized playback of server-side audio segments
 - Export to Markdown, Word, PDF, JSON, and SRT
 - Android, Windows, macOS, iOS, and HarmonyOS downloads
 
@@ -378,6 +431,12 @@ Server records remain. Sign in again and recover records from the server. Unsync
 What if the speaker is wrong?
 
 Rename the role in record details and apply the change to all segments with the same speaker id.
+
+If a row is marked “needs review”, the speaker was inferred from context and should be checked against the text or audio. Rows can also be marked “LLM segmented” or “rule segmented”, meaning SoloRecord reorganized the ASR text into dialogue turns after transcription.
+
+The Web detail page includes a quality panel with candidate names, rows needing review, speaker-evidence risk, and action evidence coverage. This is a review aid: if a speaker lacks source evidence or an action item lacks transcript evidence, check the transcript or audio before sending it to IM or another system.
+
+In multi-source meetings, Web transcript filters and “jump to transcript” links use both the recording source and that device's local segment number. If two devices both upload segment 1, SoloRecord keeps them separate in review and evidence navigation.
 
 What if the summary is inaccurate?
 

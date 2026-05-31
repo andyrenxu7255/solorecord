@@ -39,6 +39,9 @@ CREATE TABLE IF NOT EXISTS meetings (
     title TEXT NOT NULL,
     owner_id TEXT NOT NULL,
     status TEXT NOT NULL,
+    join_code TEXT,
+    recording_mode TEXT NOT NULL DEFAULT 'single',
+    max_sources INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     started_at TEXT,
@@ -49,6 +52,21 @@ CREATE TABLE IF NOT EXISTS meetings (
     version INTEGER NOT NULL DEFAULT 1,
     deleted_at TEXT,
     FOREIGN KEY(owner_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS recording_sources (
+    id TEXT PRIMARY KEY,
+    meeting_id TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    label TEXT NOT NULL,
+    device_name TEXT NOT NULL DEFAULT '',
+    user_id TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(meeting_id, source_id),
+    FOREIGN KEY(meeting_id) REFERENCES meetings(id),
+    FOREIGN KEY(user_id) REFERENCES users(id)
 );
 
 CREATE TABLE IF NOT EXISTS meeting_members (
@@ -63,6 +81,8 @@ CREATE TABLE IF NOT EXISTS meeting_members (
 CREATE TABLE IF NOT EXISTS audio_segments (
     id TEXT PRIMARY KEY,
     meeting_id TEXT NOT NULL,
+    source_id TEXT NOT NULL DEFAULT 'primary',
+    source_segment_no INTEGER,
     segment_no INTEGER NOT NULL,
     file_name TEXT NOT NULL,
     storage_path TEXT NOT NULL,
@@ -100,6 +120,7 @@ CREATE TABLE IF NOT EXISTS transcript_segments (
     id TEXT PRIMARY KEY,
     meeting_id TEXT NOT NULL,
     version INTEGER NOT NULL DEFAULT 1,
+    source_id TEXT NOT NULL DEFAULT '',
     source_segment_no INTEGER,
     speaker_id TEXT NOT NULL,
     display_name TEXT NOT NULL,
@@ -117,6 +138,7 @@ CREATE TABLE IF NOT EXISTS transcript_segment_history (
     original_segment_id TEXT NOT NULL,
     meeting_id TEXT NOT NULL,
     version INTEGER NOT NULL DEFAULT 1,
+    source_id TEXT NOT NULL DEFAULT '',
     source_segment_no INTEGER,
     speaker_id TEXT NOT NULL,
     display_name TEXT NOT NULL,
@@ -219,6 +241,26 @@ def init_db() -> None:
         ]
         if "source_segment_no" not in transcript_columns:
             connection.execute("ALTER TABLE transcript_segments ADD COLUMN source_segment_no INTEGER")
+        if "source_id" not in transcript_columns:
+            connection.execute("ALTER TABLE transcript_segments ADD COLUMN source_id TEXT NOT NULL DEFAULT ''")
+        history_columns = [
+            row["name"] for row in connection.execute("PRAGMA table_info(transcript_segment_history)").fetchall()
+        ]
+        if "source_id" not in history_columns:
+            connection.execute("ALTER TABLE transcript_segment_history ADD COLUMN source_id TEXT NOT NULL DEFAULT ''")
+        meeting_columns = [row["name"] for row in connection.execute("PRAGMA table_info(meetings)").fetchall()]
+        if "join_code" not in meeting_columns:
+            connection.execute("ALTER TABLE meetings ADD COLUMN join_code TEXT")
+        if "recording_mode" not in meeting_columns:
+            connection.execute("ALTER TABLE meetings ADD COLUMN recording_mode TEXT NOT NULL DEFAULT 'single'")
+        if "max_sources" not in meeting_columns:
+            connection.execute("ALTER TABLE meetings ADD COLUMN max_sources INTEGER NOT NULL DEFAULT 1")
+        audio_columns = [row["name"] for row in connection.execute("PRAGMA table_info(audio_segments)").fetchall()]
+        if "source_id" not in audio_columns:
+            connection.execute("ALTER TABLE audio_segments ADD COLUMN source_id TEXT NOT NULL DEFAULT 'primary'")
+        if "source_segment_no" not in audio_columns:
+            connection.execute("ALTER TABLE audio_segments ADD COLUMN source_segment_no INTEGER")
+            connection.execute("UPDATE audio_segments SET source_segment_no=segment_no WHERE source_segment_no IS NULL")
         release_columns = [row["name"] for row in connection.execute("PRAGMA table_info(apk_releases)").fetchall()]
         if "platform" not in release_columns:
             connection.execute("ALTER TABLE apk_releases ADD COLUMN platform TEXT NOT NULL DEFAULT 'android'")
@@ -230,6 +272,19 @@ def init_db() -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_apk_releases_platform_version
             ON apk_releases(platform, version_code DESC, created_at DESC)
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_meetings_join_code
+            ON meetings(join_code)
+            WHERE join_code IS NOT NULL AND join_code != ''
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_audio_segments_source
+            ON audio_segments(meeting_id, source_id, source_segment_no)
             """
         )
 

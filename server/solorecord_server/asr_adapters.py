@@ -85,7 +85,22 @@ def transcribe_with_command(
 
 def _post_transcription(base: str, headers: dict[str, str], model: str, path: Path) -> dict:
     url = f"{base}/audio/transcriptions"
-    data = {"model": model, "response_format": "json"}
+    is_funasr = "funasr" in model.lower() or "paraformer" in model.lower()
+    data = {
+        "model": model,
+        "response_format": "json",
+        "timestamp_granularities[]": "segment",
+    }
+    if is_funasr:
+        data.update(
+            {
+                "vad": "true",
+                "punc": "true",
+                "diarization": "true",
+                "speaker_diarization": "true",
+                "spk_model": "cam++",
+            }
+        )
     try:
         with path.open("rb") as audio:
             files = {"file": (path.name, audio, "application/octet-stream")}
@@ -105,12 +120,67 @@ def _post_transcription(base: str, headers: dict[str, str], model: str, path: Pa
         raise AsrAdapterError("ASR HTTP response must be JSON") from exc
     if not isinstance(payload, dict):
         raise AsrAdapterError("ASR HTTP response JSON must be an object")
+    if is_funasr and not _payload_has_rich_segments(payload):
+        native_payload = _post_funasr_native_transcription(base, headers, path)
+        if native_payload and _payload_has_rich_segments(native_payload):
+            return native_payload
     return payload
+
+
+def _post_funasr_native_transcription(base: str, headers: dict[str, str], path: Path) -> dict | None:
+    candidates = [f"{base}/asr/transcribe"]
+    if not base.rstrip("/").endswith("/v1"):
+        candidates.append(f"{base}/v1/asr/transcribe")
+    for url in candidates:
+        try:
+            with path.open("rb") as audio:
+                files = {"file": (path.name, audio, "application/octet-stream")}
+                data = {"return_raw": "true"}
+                with httpx.Client(timeout=get_settings().asr_timeout_seconds) as client:
+                    response = client.post(url, headers=headers, data=data, files=files)
+            if response.status_code == 404:
+                continue
+            response.raise_for_status()
+            payload = response.json()
+        except (httpx.HTTPError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+
+def _payload_has_rich_segments(payload: dict) -> bool:
+    for key in ("segments", "sentence_info", "sentences", "result"):
+        value = payload.get(key)
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            text = str(
+                item.get("text")
+                or item.get("sentence")
+                or item.get("onebest")
+                or item.get("value")
+                or ""
+            ).strip()
+            has_time = any(time_key in item for time_key in ("start", "end", "start_ms", "end_ms"))
+            has_speaker = any(
+                speaker_key in item
+                for speaker_key in ("spk", "spk_id", "speaker", "speaker_id", "speakerLabel")
+            )
+            if text and (has_time or has_speaker):
+                return True
+    return False
 
 
 def _segments_from_remote_result(payload: dict, offset_ms: int) -> list[dict]:
     if isinstance(payload.get("segments"), list):
         return _normalize_segments(payload["segments"], offset_ms)
+    if isinstance(payload.get("sentence_info"), list):
+        return _normalize_segments(payload["sentence_info"], offset_ms)
+    if isinstance(payload.get("sentences"), list):
+        return _normalize_segments(payload["sentences"], offset_ms)
     if isinstance(payload.get("result"), list):
         return _normalize_segments(payload["result"], offset_ms)
     text = str(
@@ -140,12 +210,31 @@ def _normalize_segments(raw_segments: list, offset_ms: int) -> list[dict]:
     for index, item in enumerate(raw_segments):
         if not isinstance(item, dict):
             continue
-        text = str(item.get("text") or item.get("sentence") or item.get("value") or "").strip()
+        text = str(
+            item.get("text")
+            or item.get("sentence")
+            or item.get("onebest")
+            or item.get("value")
+            or ""
+        ).strip()
         if not text:
             continue
-        speaker_id = str(item.get("speaker_id") or item.get("speaker") or "SPEAKER_01").strip()
+        speaker = (
+            item.get("speaker_id")
+            or item.get("speaker")
+            or item.get("spk")
+            or item.get("spk_id")
+            or item.get("speakerLabel")
+            or "SPEAKER_01"
+        )
+        speaker_id = _normalize_speaker_id(speaker)
         start_ms = offset_ms + _millis(item, "start_ms", "startMillis", "start", default=index * 1000)
         end_ms = offset_ms + _millis(item, "end_ms", "endMillis", "end", default=start_ms + 1000 - offset_ms)
+        flags = item.get("flags", [])
+        if not isinstance(flags, list):
+            flags = [str(flags)]
+        if any(key in item for key in ("spk", "spk_id", "speaker", "speaker_id", "speakerLabel")):
+            flags = [*flags, "asr_speaker", "scenario:native_speaker"]
         normalized.append(
             {
                 "speaker_id": speaker_id or "SPEAKER_01",
@@ -154,7 +243,7 @@ def _normalize_segments(raw_segments: list, offset_ms: int) -> list[dict]:
                 "end_ms": max(max(0, start_ms), end_ms),
                 "text": text,
                 "confidence": item.get("confidence"),
-                "flags": item.get("flags", []),
+                "flags": flags,
             }
         )
     return normalized
@@ -192,7 +281,7 @@ def _parse_segments(output: str) -> list[dict]:
         text = str(item.get("text", "")).strip()
         if not text:
             continue
-        speaker_id = str(item.get("speaker_id") or item.get("speaker") or "SPEAKER_01").strip()
+        speaker_id = _normalize_speaker_id(item.get("speaker_id") or item.get("speaker") or item.get("spk") or "SPEAKER_01")
         display_name = str(item.get("display_name") or item.get("speaker_name") or speaker_id).strip()
         start_ms = _millis(item, "start_ms", "startMillis", "start", default=index * 1000)
         end_ms = _millis(item, "end_ms", "endMillis", "end", default=start_ms + 1000)
@@ -223,3 +312,18 @@ def _millis(item: dict, *keys: str, default: int) -> int:
             return default
         return int(number * 1000) if key in {"start", "end"} and number < 100_000 else int(number)
     return default
+
+
+def _normalize_speaker_id(value) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "SPEAKER_01"
+    if text.upper().startswith("SPEAKER_"):
+        return text.upper()
+    if text.lower().startswith("spk"):
+        suffix = "".join(char for char in text if char.isdigit())
+        if suffix:
+            return f"SPEAKER_{int(suffix) + 1:02d}"
+    if text.isdigit():
+        return f"SPEAKER_{int(text) + 1:02d}"
+    return text

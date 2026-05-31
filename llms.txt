@@ -48,7 +48,10 @@
 - `server/solorecord_server/db.py`：SQLite schema 和迁移。
 - `server/solorecord_server/auth.py`：会话、LDAP、SSO、外部 token 鉴权。
 - `server/solorecord_server/processing.py`：ASR、纪要、转发、索引流程。
+- `processing.py` 在 ASR 后执行语义分段：优先使用 ASR 原生 speaker 字段；若只有单一发言人、长段、多人标记，或虽有多个原生 speaker 但出现“某某你先说/我这边负责/某某负责/某某确认/某某后面看”这类上下文归属线索，会调用 LLM 重分段；LLM 输入和输出都应保留 `source_index`/`source_id`/`source_segment_no`，保证最终段落可追溯到原始录音源和音频分段；多源同录先按 `(source_id, source_segment_no)` 保留证据，最终处理会合并重复多源片段并标记 `multi_source_merged`，冲突片段标记 `multi_source_conflict`；LLM 返回后仍有明显多人点名长段时，`_rule_refine_residual_mixed_segments()` 会二次规则细拆并保留 `llm_residual_rule_refined`、`speaker_review`；LLM 不可用时用规则拆“某某说/某某：”，并保守处理被点名后的回应归属，包括没有“我”字但继续同一议题、交付物或时间节点的段落。
 - `server/solorecord_server/repository.py`：完整会议文档聚合。
+- `repository.py` 的 `qualityReport` 是转写/纪要质量兜底层，包含发言人校对、`speakerEvidence` 发言人推断依据、发言人证据弱提示、同名多标签 `speakerAliasConflicts`、按 `(source_id, source_segment_no)` 计算的 `sourceCoverage` 原始音频分段覆盖检查、多源合并/冲突指标、`summaryEvidence.supportedClaims/unsupportedClaims` 纪要证据引用、`actionEvidence` 每条待办证据状态和可选 `suggested_owner`、候选人名、待办负责人集中度、待办证据覆盖率和待办负责人证据弱提示；证据引用应带 `segment_id`、`source_id` 和 `source_segment_no`，Web 用“定位转写”跳回原文，外部 Agent 用它做证据追溯。`knowledgeReadiness` 是外部 Agent 入库门禁摘要。`processing._normalize_action_owners()` 会把“我/我们/他/这边/大家”等代词 owner 尽量换成有第一人称转写证据的具体发言人，否则降级为 `待确认`；如果主责明确但转写出现“配合/协同/补充”等协作关系，会在 task 末尾追加 `协同：姓名`。分段阶段转写带 `semantic_partial`；结束会议后的整场上下文复核带 `semantic_final`。`suggested_owner` 只能作为人工复核建议，不能自动覆盖用户待办。`source_segment_coverage_weak` 是知识入库阻塞项；`multi_source_conflict_count`、`speaker_evidence_weak_count`、`speaker_alias_conflict_count`、`unsupported_action_count` 或 `weak_action_owner_count` 大于 0 时需要人工复核。
+- `knowledgeGraph` 包含 meeting、speaker、topic、action、time 节点；topic 来自转写和待办的轻量抽取，用于连接“谁讨论了什么、产生了什么待办、何时截止”。图谱是查阅和外部知识整理辅助，不替代转写证据。
 - `server/solorecord_server/search_index.py`：ES/OpenSearch 索引。
 - `server/static/index.html`：Web 外壳。
 - `server/static/app.js`：Web 交互。
@@ -109,6 +112,8 @@ cd clients\desktop; npm install; npm run pack; npm run portable:win
 - [PRD](docs/meeting-app-prd-v2.md): Product scope, UX, architecture, data model, acceptance criteria.
 - [Synology SSO + ASR Architecture](docs/synology-bailian-architecture.md): Security decision, Synology SSO, Bailian/Qwen ASR analysis.
 - [Open Source Research](docs/open-source-research.md): sherpa-onnx, whisper.cpp, Vosk, Whishper, Meetily, licensing notes.
+- [UX User Story Acceptance](docs/ux-user-story-acceptance.md): Mainstream meeting-recorder benchmark, end-to-end user stories, and UX acceptance checklist.
+- [UI/UE Design System](docs/ui-ue-design-system.md): Office-role UI principles, Web/Android design rules, and visual acceptance criteria.
 - [Distribution Mode](docs/distribution-mode.md): Original internal-distribution notes.
 - [Multi-platform Clients](docs/multi-platform-clients.md): Client projects, builds, signing, and server-side publishing.
 - [Roadmap](docs/roadmap.md): Follow-up enhancement ideas.
@@ -119,7 +124,11 @@ cd clients\desktop; npm install; npm run pack; npm run portable:win
 - `server/solorecord_server/db.py`: SQLite schema and migrations.
 - `server/solorecord_server/auth.py`: Sessions, LDAP, SSO, external token auth.
 - `server/solorecord_server/processing.py`: ASR, summary, forwarding, indexing workflow.
+- `processing.py` runs post-ASR semantic segmentation: prefer native ASR speaker fields, otherwise use LLM refinement, then a residual rule pass for clear mixed-person markers that the LLM left in place. LLM input/output must preserve `source_index`, `source_id`, and `source_segment_no`. Multi-source meetings keep evidence by `(source_id, source_segment_no)`; final processing merges duplicate rows with `multi_source_merged` and flags divergent rows with `multi_source_conflict`. The residual pass writes `llm_residual_rule_refined` and `speaker_review`. Named call-outs followed by first-person or same-topic continuation replies can produce `contextual_speaker_inference`; keep `speaker_review` and `reason:*` because this is contextual evidence, not voiceprint confirmation.
 - `server/solorecord_server/repository.py`: Full meeting document aggregation.
+- `repository.py` builds the quality-report safety layer: speaker review, weak speaker evidence, same-name/multiple-label `speakerAliasConflicts`, candidate people, owner concentration, and action evidence coverage. `processing._normalize_action_owners()` converts pronoun owners such as “I/we/he/this side/everyone” to concrete speakers only when first-person transcript evidence supports it; otherwise it keeps `待确认`. Review meetings when `speaker_evidence_weak_count`, `speaker_alias_conflict_count`, or `unsupported_action_count` is above zero.
+- `knowledgeGraph` contains meeting, speaker, topic, action, and time nodes. Topic nodes come from lightweight transcript/action extraction and connect who discussed what, which action was produced, and when it is due. The graph helps review and downstream knowledge organization; it does not replace transcript evidence.
+- `server/solorecord_server/quality_probe.py`: Read-only real-meeting LLM quality probe. Use `python -m solorecord_server.quality_probe --meeting-id <id>` and optionally `--run-llm`; it must not rewrite transcripts or action items.
 - `server/solorecord_server/search_index.py`: ES/OpenSearch indexing.
 - `server/static/index.html`: Web shell.
 - `server/static/app.js`: Web behavior.

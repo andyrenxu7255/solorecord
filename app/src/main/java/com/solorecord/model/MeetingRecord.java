@@ -20,6 +20,9 @@ public final class MeetingRecord {
     private final String roleNotes;
     private final String summary;
     private final List<ActionItem> actionItems;
+    private final String joinCode;
+    private final String sourceId;
+    private final String sourceLabel;
 
     public MeetingRecord(
             String id,
@@ -32,6 +35,24 @@ public final class MeetingRecord {
             String roleNotes,
             String summary,
             List<ActionItem> actionItems) {
+        this(id, title, createdAtMillis, audioPath, audioSegments, status, transcriptSegments,
+                roleNotes, summary, actionItems, "", "primary", "");
+    }
+
+    public MeetingRecord(
+            String id,
+            String title,
+            long createdAtMillis,
+            String audioPath,
+            List<AudioSegment> audioSegments,
+            String status,
+            List<TranscriptSegment> transcriptSegments,
+            String roleNotes,
+            String summary,
+            List<ActionItem> actionItems,
+            String joinCode,
+            String sourceId,
+            String sourceLabel) {
         this.id = safe(id).isEmpty() ? UUID.randomUUID().toString() : safe(id);
         this.title = safe(title).isEmpty() ? "未命名会议" : safe(title);
         this.createdAtMillis = createdAtMillis <= 0 ? System.currentTimeMillis() : createdAtMillis;
@@ -42,6 +63,9 @@ public final class MeetingRecord {
         this.roleNotes = safe(roleNotes);
         this.summary = safe(summary);
         this.actionItems = immutableActionItems(actionItems);
+        this.joinCode = safe(joinCode);
+        this.sourceId = safe(sourceId).isEmpty() ? "primary" : safe(sourceId);
+        this.sourceLabel = safe(sourceLabel);
     }
 
     public static MeetingRecord createDraft(String title, String audioPath) {
@@ -104,7 +128,10 @@ public final class MeetingRecord {
                 segments,
                 json.optString("roleNotes"),
                 json.optString("summary"),
-                items);
+                items,
+                json.optString("joinCode", json.optString("join_code")),
+                json.optString("sourceId", json.optString("source_id", "primary")),
+                json.optString("sourceLabel", json.optString("source_label")));
     }
 
     public JSONObject toJson() throws JSONException {
@@ -116,6 +143,9 @@ public final class MeetingRecord {
         json.put("status", status);
         json.put("roleNotes", roleNotes);
         json.put("summary", summary);
+        json.put("joinCode", joinCode);
+        json.put("sourceId", sourceId);
+        json.put("sourceLabel", sourceLabel);
 
         JSONArray transcriptJson = new JSONArray();
         for (TranscriptSegment segment : transcriptSegments) {
@@ -152,7 +182,10 @@ public final class MeetingRecord {
                 segments,
                 newRoleNotes,
                 newSummary,
-                items);
+                items,
+                joinCode,
+                sourceId,
+                sourceLabel);
     }
 
     public MeetingRecord withStatus(String newStatus) {
@@ -166,7 +199,10 @@ public final class MeetingRecord {
                 transcriptSegments,
                 roleNotes,
                 summary,
-                actionItems);
+                actionItems,
+                joinCode,
+                sourceId,
+                sourceLabel);
     }
 
     public String getId() {
@@ -209,9 +245,22 @@ public final class MeetingRecord {
         return actionItems;
     }
 
+    public String getJoinCode() {
+        return joinCode;
+    }
+
+    public String getSourceId() {
+        return sourceId;
+    }
+
+    public String getSourceLabel() {
+        return sourceLabel;
+    }
+
     public MeetingRecord withAudioSegments(List<AudioSegment> segments, String newStatus) {
-        String firstPath = segments == null || segments.isEmpty() ? audioPath : segments.get(0).getPath();
-        List<AudioSegment> merged = mergeUploadStatuses(segments);
+        List<AudioSegment> normalized = normalizeLocalAudioSegments(segments);
+        String firstPath = normalized.isEmpty() ? audioPath : normalized.get(0).getPath();
+        List<AudioSegment> merged = mergeUploadStatuses(normalized);
         return new MeetingRecord(
                 id,
                 title,
@@ -222,7 +271,10 @@ public final class MeetingRecord {
                 transcriptSegments,
                 roleNotes,
                 summary,
-                actionItems);
+                actionItems,
+                joinCode,
+                sourceId,
+                sourceLabel);
     }
 
     public MeetingRecord withId(String newId, String newStatus) {
@@ -236,7 +288,10 @@ public final class MeetingRecord {
                 transcriptSegments,
                 roleNotes,
                 summary,
-                actionItems);
+                actionItems,
+                joinCode,
+                sourceId,
+                sourceLabel);
     }
 
     public MeetingRecord withAudioFrom(MeetingRecord other) {
@@ -255,13 +310,24 @@ public final class MeetingRecord {
                 transcriptSegments,
                 roleNotes,
                 summary,
-                actionItems);
+                actionItems,
+                joinCode,
+                sourceId,
+                sourceLabel);
     }
 
     public MeetingRecord withSegmentUploadStatus(int segmentNo, String uploadStatus) {
+        return withSegmentUploadStatus(segmentNo, "", 0, uploadStatus);
+    }
+
+    public MeetingRecord withSegmentUploadStatus(
+            int segmentNo,
+            String uploadedSourceId,
+            int uploadedSourceSegmentNo,
+            String uploadStatus) {
         List<AudioSegment> updated = new ArrayList<>();
         for (AudioSegment segment : audioSegments) {
-            if (segment.getSegmentNo() == segmentNo) {
+            if (matchesAudioSegment(segment, segmentNo, uploadedSourceId, uploadedSourceSegmentNo)) {
                 updated.add(segment.withUploadStatus(uploadStatus));
             } else {
                 updated.add(segment);
@@ -277,7 +343,42 @@ public final class MeetingRecord {
                 transcriptSegments,
                 roleNotes,
                 summary,
-                actionItems);
+                actionItems,
+                joinCode,
+                sourceId,
+                sourceLabel);
+    }
+
+    public MeetingRecord withUploadedSegment(AudioSegment uploadedSegment, int serverSegmentNo) {
+        String uploadedSourceId = uploadedSegment == null ? "" : uploadedSegment.getSourceId();
+        int uploadedSourceSegmentNo = uploadedSegment == null ? 0 : uploadedSegment.getSourceSegmentNo();
+        List<AudioSegment> updated = new ArrayList<>();
+        boolean replaced = false;
+        for (AudioSegment segment : audioSegments) {
+            if (matchesAudioSegment(segment, serverSegmentNo, uploadedSourceId, uploadedSourceSegmentNo)) {
+                updated.add(segment.withServerSegmentNo(serverSegmentNo, "uploaded"));
+                replaced = true;
+            } else {
+                updated.add(segment);
+            }
+        }
+        if (!replaced && uploadedSegment != null) {
+            updated.add(uploadedSegment.withServerSegmentNo(serverSegmentNo, "uploaded"));
+        }
+        return new MeetingRecord(
+                id,
+                title,
+                createdAtMillis,
+                audioPath,
+                updated,
+                status,
+                transcriptSegments,
+                roleNotes,
+                summary,
+                actionItems,
+                joinCode,
+                sourceId,
+                sourceLabel);
     }
 
     public MeetingRecord withClosedOpenAudioSegments() {
@@ -300,7 +401,10 @@ public final class MeetingRecord {
                 transcriptSegments,
                 roleNotes,
                 summary,
-                actionItems);
+                actionItems,
+                joinCode,
+                sourceId,
+                sourceLabel);
     }
 
     public boolean hasPendingLocalAudio() {
@@ -361,7 +465,36 @@ public final class MeetingRecord {
                 renamed,
                 roleNotes,
                 summary,
-                actionItems);
+                actionItems,
+                joinCode,
+                sourceId,
+                sourceLabel);
+    }
+
+    public MeetingRecord withRecordingSource(String newJoinCode, String newSourceId, String newSourceLabel) {
+        List<AudioSegment> sourcedAudio = new ArrayList<>();
+        for (AudioSegment segment : audioSegments) {
+            String segmentSourceId = segment.getSourceId();
+            if (segmentSourceId.equals("primary") || segmentSourceId.isEmpty()) {
+                sourcedAudio.add(segment.withRecordingSource(newSourceId, newSourceLabel));
+            } else {
+                sourcedAudio.add(segment);
+            }
+        }
+        return new MeetingRecord(
+                id,
+                title,
+                createdAtMillis,
+                audioPath,
+                sourcedAudio,
+                status,
+                transcriptSegments,
+                roleNotes,
+                summary,
+                actionItems,
+                newJoinCode,
+                newSourceId,
+                newSourceLabel);
     }
 
     private static List<AudioSegment> immutableAudioSegments(List<AudioSegment> segments) {
@@ -391,9 +524,18 @@ public final class MeetingRecord {
         }
         List<AudioSegment> merged = new ArrayList<>();
         for (AudioSegment next : segments) {
-            AudioSegment previous = findAudioSegment(next.getSegmentNo());
+            AudioSegment previous = findAudioSegment(next);
             if (previous != null && previous.isUploaded()) {
-                merged.add(next.withUploadStatus(previous.getUploadStatus(), previous.getDownloadUrl()));
+                merged.add(new AudioSegment(
+                        previous.getSegmentNo(),
+                        next.getPath(),
+                        next.getStartMillis(),
+                        next.getEndMillis(),
+                        previous.getUploadStatus(),
+                        previous.getDownloadUrl(),
+                        next.getSourceId(),
+                        next.getSourceSegmentNo(),
+                        next.getSourceLabel()));
             } else {
                 merged.add(next);
             }
@@ -401,9 +543,26 @@ public final class MeetingRecord {
         return merged;
     }
 
-    private AudioSegment findAudioSegment(int segmentNo) {
+    private List<AudioSegment> normalizeLocalAudioSegments(List<AudioSegment> segments) {
+        if (segments == null) {
+            return Collections.emptyList();
+        }
+        List<AudioSegment> normalized = new ArrayList<>();
+        for (AudioSegment segment : segments) {
+            if (!sourceId.equals("primary") && segment.getSourceId().equals("primary")) {
+                normalized.add(segment.withRecordingSource(sourceId, sourceLabel));
+            } else if (!sourceLabel.isEmpty() && segment.getSourceLabel().isEmpty()) {
+                normalized.add(segment.withRecordingSource(segment.getSourceId(), sourceLabel));
+            } else {
+                normalized.add(segment);
+            }
+        }
+        return normalized;
+    }
+
+    private AudioSegment findAudioSegment(AudioSegment target) {
         for (AudioSegment segment : audioSegments) {
-            if (segment.getSegmentNo() == segmentNo) {
+            if (sameSourceSegment(segment, target)) {
                 return segment;
             }
         }
@@ -425,30 +584,51 @@ public final class MeetingRecord {
             return;
         }
         for (AudioSegment segment : source) {
-            if (findAudioSegment(target, segment.getSegmentNo()) == null) {
+            AudioSegment previous = findAudioSegment(target, segment);
+            if (previous == null) {
                 target.add(segment);
             } else if (segment.isUploaded()) {
-                replaceAudioSegment(target, segment);
+                replaceAudioSegment(target, previous, segment);
             }
         }
     }
 
-    private static AudioSegment findAudioSegment(List<AudioSegment> segments, int segmentNo) {
+    private static AudioSegment findAudioSegment(List<AudioSegment> segments, AudioSegment target) {
         for (AudioSegment segment : segments) {
-            if (segment.getSegmentNo() == segmentNo) {
+            if (sameSourceSegment(segment, target)) {
                 return segment;
             }
         }
         return null;
     }
 
-    private static void replaceAudioSegment(List<AudioSegment> segments, AudioSegment replacement) {
+    private static void replaceAudioSegment(List<AudioSegment> segments, AudioSegment original, AudioSegment replacement) {
         for (int i = 0; i < segments.size(); i++) {
-            if (segments.get(i).getSegmentNo() == replacement.getSegmentNo()) {
+            if (segments.get(i) == original || sameSourceSegment(segments.get(i), original)) {
                 segments.set(i, replacement);
                 return;
             }
         }
+    }
+
+    private static boolean sameSourceSegment(AudioSegment left, AudioSegment right) {
+        return left != null
+                && right != null
+                && left.getSourceId().equals(right.getSourceId())
+                && left.getSourceSegmentNo() == right.getSourceSegmentNo();
+    }
+
+    private static boolean matchesAudioSegment(
+            AudioSegment segment,
+            int segmentNo,
+            String uploadedSourceId,
+            int uploadedSourceSegmentNo) {
+        String normalizedSourceId = safe(uploadedSourceId);
+        if (!normalizedSourceId.isEmpty() && uploadedSourceSegmentNo > 0) {
+            return segment.getSourceId().equals(normalizedSourceId)
+                    && segment.getSourceSegmentNo() == uploadedSourceSegmentNo;
+        }
+        return segment.getSegmentNo() == segmentNo;
     }
 
     private static String safe(String value) {
