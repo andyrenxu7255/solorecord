@@ -504,20 +504,27 @@ def _merge_multisource_segments(segments: list[dict]) -> list[dict]:
             if other_index in consumed:
                 continue
             other = ordered[other_index]
-            if _segments_are_multisource_duplicates(segment, other):
+            if (
+                _segments_are_multisource_duplicates(segment, other)
+                and _segment_can_join_multisource_group(other, group)
+                and not _candidate_has_competing_multisource_conflict(
+                    segment,
+                    other,
+                    ordered,
+                )
+            ):
                 group.append(other)
                 consumed.add(other_index)
         if len(group) == 1:
             item = dict(segment)
             if _has_nearby_multisource_conflict(item, ordered):
-                flags = _flags(item)
-                for flag in ("multi_source_conflict", "speaker_review"):
-                    if flag not in flags:
-                        flags.append(flag)
-                item["flags"] = flags
+                _add_segment_flags(item, ("multi_source_conflict", "speaker_review"))
             merged.append(item)
             continue
-        merged.append(_merge_duplicate_source_group(group))
+        item = _merge_duplicate_source_group(group)
+        if _has_nearby_multisource_conflict(item, ordered):
+            _add_segment_flags(item, ("multi_source_conflict", "speaker_review"))
+        merged.append(item)
     return sorted(
         merged,
         key=lambda item: (
@@ -541,7 +548,10 @@ def _segments_are_multisource_duplicates(left: dict, right: dict) -> bool:
     if _segments_overlap_enough(left, right):
         if _segments_have_critical_fact_conflict(left, right):
             return False
-        return similarity >= 0.58
+        return similarity >= 0.58 or _segments_are_complementary_duplicates(
+            left,
+            right,
+        )
     if not _segments_are_offset_aligned_duplicate(left, right, similarity):
         return False
     return not _segments_have_critical_fact_conflict(left, right)
@@ -557,6 +567,36 @@ def _segments_overlap_enough(left: dict, right: dict) -> bool:
     if overlap / shortest >= 0.45:
         return True
     return abs(left_start - right_start) <= 2500
+
+
+def _segment_can_join_multisource_group(candidate: dict, group: list[dict]) -> bool:
+    return all(_segments_are_multisource_duplicates(candidate, item) for item in group)
+
+
+def _candidate_has_competing_multisource_conflict(
+    anchor: dict,
+    candidate: dict,
+    segments: list[dict],
+) -> bool:
+    for rival in segments:
+        if rival is anchor or rival is candidate:
+            continue
+        if str(rival.get("source_id") or "primary") == str(candidate.get("source_id") or "primary"):
+            continue
+        if not _segments_have_critical_fact_conflict(candidate, rival):
+            continue
+        if _segments_are_multisource_duplicates(anchor, rival):
+            return True
+    return False
+
+
+def _segments_are_complementary_duplicates(left: dict, right: dict) -> bool:
+    left_tokens = set(_merge_text_tokens(str(left.get("text") or "")))
+    right_tokens = set(_merge_text_tokens(str(right.get("text") or "")))
+    if len(left_tokens) < 18 or len(right_tokens) < 18:
+        return False
+    shared = len(left_tokens & right_tokens)
+    return shared >= 18 and shared / max(1, min(len(left_tokens), len(right_tokens))) >= 0.72
 
 
 def _text_similarity(left: str, right: str) -> float:
@@ -589,6 +629,10 @@ def _merge_duplicate_source_group(group: list[dict]) -> dict:
         ),
     )
     merged = dict(best)
+    complemented_text = _complement_multisource_text(str(best.get("text") or ""), group)
+    complemented = complemented_text != str(best.get("text") or "").strip()
+    if complemented:
+        merged["text"] = complemented_text
     source_ids = sorted({str(item.get("source_id") or "primary") for item in group})
     source_numbers = sorted(
         {
@@ -614,6 +658,8 @@ def _merge_duplicate_source_group(group: list[dict]) -> dict:
             flags.append(flag)
     if time_aligned and "multi_source_time_aligned" not in flags:
         flags.append("multi_source_time_aligned")
+    if complemented and "multi_source_complemented" not in flags:
+        flags.append("multi_source_complemented")
     merged["flags"] = flags
     try:
         confidences = [float(item.get("confidence") or 0) for item in group if item.get("confidence") is not None]
@@ -624,8 +670,88 @@ def _merge_duplicate_source_group(group: list[dict]) -> dict:
     return merged
 
 
+def _complement_multisource_text(base_text: str, group: list[dict]) -> str:
+    text = str(base_text or "").strip()
+    if not text:
+        return text
+    additions: list[str] = []
+    for item in sorted(
+        group,
+        key=lambda segment: (
+            -float(segment.get("confidence") or 0),
+            int(segment.get("start_ms") or 0),
+        ),
+    ):
+        source_text = str(item.get("text") or "").strip()
+        if not source_text or source_text == text:
+            continue
+        for clause in _complement_clauses(source_text):
+            if _clause_already_covered(clause, [text, *additions]):
+                continue
+            if _segments_have_critical_fact_conflict({"text": text}, {"text": clause}):
+                continue
+            additions.append(clause)
+            if len(additions) >= 3:
+                break
+        if len(additions) >= 3:
+            break
+    if not additions:
+        return text
+    return _join_complemented_text(text, additions)
+
+
+def _complement_clauses(text: str) -> list[str]:
+    clauses: list[str] = []
+    for raw in re.split(r"[，,。；;！？!?]\s*", str(text or "")):
+        clause = raw.strip()
+        compact = _compact_alignment_text(clause)
+        if len(compact) < 4 or len(compact) > 32:
+            continue
+        if _is_low_information_clause(compact):
+            continue
+        clauses.append(clause)
+    return list(dict.fromkeys(clauses))
+
+
+def _clause_already_covered(clause: str, texts: list[str]) -> bool:
+    clause_compact = _compact_alignment_text(clause)
+    if not clause_compact:
+        return True
+    for text in texts:
+        text_compact = _compact_alignment_text(text)
+        if clause_compact in text_compact:
+            return True
+        for existing in _complement_clauses(text):
+            if _text_similarity(clause, existing) >= 0.45:
+                return True
+    return False
+
+
+def _is_low_information_clause(compact: str) -> bool:
+    return compact in {
+        "好的",
+        "收到",
+        "可以",
+        "明白",
+        "对",
+        "嗯",
+        "是的",
+        "没问题",
+        "先这样",
+    }
+
+
+def _join_complemented_text(text: str, additions: list[str]) -> str:
+    base = text.rstrip("。；;，, ")
+    suffix = "，".join(item.strip("。；;，, ") for item in additions if item.strip())
+    if not suffix:
+        return text.strip()
+    return f"{base}，{suffix}。"
+
+
 def _has_nearby_multisource_conflict(segment: dict, segments: list[dict]) -> bool:
     source_id = str(segment.get("source_id") or "primary")
+    nearby_candidates: list[dict] = []
     for other in segments:
         if other is segment:
             continue
@@ -642,11 +768,26 @@ def _has_nearby_multisource_conflict(segment: dict, segments: list[dict]) -> boo
                 similarity,
             ):
                 continue
+        nearby_candidates.append(other)
         if _segments_have_critical_fact_conflict(segment, other):
             return True
         if _text_similarity(str(segment.get("text") or ""), str(other.get("text") or "")) < 0.28:
             return True
+    for index, left in enumerate(nearby_candidates):
+        for right in nearby_candidates[index + 1 :]:
+            if str(left.get("source_id") or "primary") == str(right.get("source_id") or "primary"):
+                continue
+            if _segments_have_critical_fact_conflict(left, right):
+                return True
     return False
+
+
+def _add_segment_flags(segment: dict, flags_to_add: tuple[str, ...]) -> None:
+    flags = _flags(segment)
+    for flag in flags_to_add:
+        if flag not in flags:
+            flags.append(flag)
+    segment["flags"] = flags
 
 
 def _group_has_offset_aligned_sources(group: list[dict]) -> bool:
@@ -729,7 +870,7 @@ def _segment_start_delta_ms(left: dict, right: dict) -> int:
 def _segments_have_critical_fact_conflict(left: dict, right: dict) -> bool:
     left_facts = _critical_fact_sets(str(left.get("text") or ""))
     right_facts = _critical_fact_sets(str(right.get("text") or ""))
-    for key in ("time", "amount", "owner"):
+    for key in ("date", "day_part", "amount", "owner"):
         left_values = left_facts.get(key, set())
         right_values = right_facts.get(key, set())
         if left_values and right_values and not left_values & right_values:
@@ -739,14 +880,15 @@ def _segments_have_critical_fact_conflict(left: dict, right: dict) -> bool:
 
 def _critical_fact_sets(text: str) -> dict[str, set[str]]:
     value = re.sub(r"\s+", "", str(text or ""))
-    time_values = set(
+    date_values = set(
         re.findall(
             r"(今天|明天|后天|下周[一二三四五六日天]?|本周[一二三四五六日天]?|"
-            r"周[一二三四五六日天]|月底|月初|上午|下午|晚上|"
+            r"周[一二三四五六日天]|月底|月初|"
             r"\d{1,2}月\d{1,2}[日号]?|\d{1,2}[日号])",
             value,
         )
     )
+    day_part_values = set(re.findall(r"(上午|下午|晚上|早上|中午)", value))
     amount_values = set(
         re.findall(
             r"([一二三四五六七八九十两\d]+(?:个|类|份|版|轮|次|条|项|点|页|张|人))",
@@ -763,7 +905,8 @@ def _critical_fact_sets(text: str) -> dict[str, set[str]]:
         if owner and not _is_rule_speaker_stopword(owner):
             owner_values.add(owner)
     return {
-        "time": time_values,
+        "date": date_values,
+        "day_part": day_part_values,
         "amount": amount_values,
         "owner": owner_values,
     }

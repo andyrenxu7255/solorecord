@@ -104,7 +104,7 @@ Windows 版本下载后解压，运行 `SoloRecord.exe`。iOS、macOS 和 Harmon
 
 Web 详情页的“整理质量”会提示候选人名、需要校对的段落、发言人证据风险、分段覆盖率和待办证据率。待办证据率不是最终评分，而是提醒你：待办是否能在转写原文里找到依据。分段覆盖率用于发现某个音频分段在最终转写里过短或缺失。若出现“发言人缺少原文证据”“音频分段待核对”或“待办缺少转写证据”，建议先回看对应转写或录音，再复制给 IM 或外部系统。
 
-如果开启了多源同录，“整理质量”还会显示“多源合并”和“多源冲突”。多源合并表示系统发现多个录音源在同一时间记录了相近内容，并保留了更完整的一条；多源冲突表示同一时间不同来源差异较大，或日期、数量、负责人等关键事实不一致，建议回听对应录音后再对外发送纪要。
+如果开启了多源同录，“整理质量”还会显示“多源合并”“多源互补”和“多源冲突”。多源合并表示系统发现多个录音源在同一时间记录了相近内容，并保留了更完整的一条；多源互补表示不同录音源各自漏掉了部分短语，系统把原始转写里能互相印证、且没有事实冲突的短语补到同一条记录中；多源冲突表示同一时间不同来源差异较大，或日期、数量、负责人等关键事实不一致，建议回听对应录音后再对外发送纪要。
 
 如果某台设备晚一点开始录音，整理质量里可能看到“错峰对齐”的多源合并标记。这表示系统认为它和另一台设备记录的是同一段话，并已去重；如果关键日期、数量或负责人不一致，系统不会自动合并，会保留多条冲突证据让你确认。
 
@@ -441,6 +441,8 @@ The Web detail page includes a quality panel with candidate names, rows needing 
 In multi-source meetings, Web transcript filters and “jump to transcript” links use both the recording source and that device's local segment number. If two devices both upload segment 1, SoloRecord keeps them separate in review and evidence navigation.
 
 If one device starts recording late, the quality panel may show a time-aligned multi-source merge. That means SoloRecord believes two sources captured the same speech and removed the duplicate. If key facts disagree, it keeps separate conflict evidence instead of merging automatically.
+
+The quality panel may also show a multi-source complementary merge. This means different recorders captured non-conflicting fragments of the same speech, and SoloRecord kept the original-source phrases together in one row. Review it like normal transcript evidence before sending the summary externally.
 
 What if the summary is inaccurate?
 
