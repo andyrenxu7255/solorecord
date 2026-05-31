@@ -777,6 +777,7 @@ function renderQualityReport(report) {
   const weakSpeakerEvidenceCount = Number(metrics.speaker_evidence_weak_count || 0);
   const weakActionOwnerCount = Number(metrics.weak_action_owner_count || 0);
   const summaryUnsupportedCount = Number(metrics.summary_unsupported_count || 0);
+  const summaryConflictCount = Number(metrics.summary_conflict_count || 0);
   const speakerReviewCount = Number(metrics.speaker_review_count || 0);
   const speakerAliasConflictCount = Number(metrics.speaker_alias_conflict_count || 0);
   const longSegmentCount = Number(metrics.long_segment_count || 0);
@@ -819,7 +820,7 @@ function renderQualityReport(report) {
       { label: "查看覆盖不足分段", filter: "risk:source_coverage", count: sourceWeakCount },
       { label: "查看多源冲突", filter: "risk:multi_source_conflict", count: multiSourceConflict },
       { label: "查看大模型分段", filter: "flag:semantic_llm", count: llmSegmentCount },
-      { label: "查看纪要风险", filter: "summary:evidence_weak", count: summaryUnsupportedCount },
+      { label: "查看纪要风险", filter: "summary:evidence_weak", count: summaryUnsupportedCount + summaryConflictCount },
     ])}
     <div class="quality-issues">
       ${issues.map(renderQualityIssue).join("") || "<span class='quality-ok'>暂无明显质量风险。</span>"}
@@ -876,8 +877,9 @@ function renderSummaryEvidence(summaryEvidence) {
   return `
     <div class="summary-risk-list">
       ${supported.slice(0, 4).map((item) => `
-        <div class="summary-evidence-item supported">
-          <b>纪要有依据：${escapeHtml(item.claim || "")}</b>
+        <div class="summary-evidence-item ${escapeAttr(summaryEvidenceStatusClass(item.status))}">
+          <b>${escapeHtml(summaryEvidenceStatusLabel(item.status))}：${escapeHtml(item.claim || "")}</b>
+          ${item.reason ? `<small>${escapeHtml(item.reason)}</small>` : ""}
           ${renderSummaryEvidenceRefs(item.evidence)}
         </div>
       `).join("")}
@@ -888,6 +890,18 @@ function renderSummaryEvidence(summaryEvidence) {
       `).join("")}
     </div>
   `;
+}
+
+function summaryEvidenceStatusClass(status) {
+  if (status === "conflict") return "conflict";
+  if (status === "majority") return "majority";
+  return "supported";
+}
+
+function summaryEvidenceStatusLabel(status) {
+  if (status === "conflict") return "纪要多源冲突待核对";
+  if (status === "majority") return "纪要多数源确认";
+  return "纪要有依据";
 }
 
 function renderSummaryEvidenceRefs(evidence) {

@@ -2953,6 +2953,58 @@ def test_quality_report_marks_conflicting_multisource_actions_for_review(tmp_pat
     assert external_action["requiresReview"] is True
 
 
+def test_quality_report_marks_conflicting_multisource_summary_for_review(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post(
+        "/api/web/meetings",
+        json={"title": "多源冲突纪要", "recording_mode": "multi_source", "max_sources": 2},
+        headers=headers,
+    )
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            UPDATE meetings
+            SET summary = '会议确认错误样例周三前补三类。'
+            WHERE id = ?
+            """,
+            (meeting_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_conflict_summary_front', ?, 1, 'front', 1, 'MANUAL_yitian', '翼天',
+             0, 60000, '错误样例周三前补三类，自动测试同步补完。',
+             0.82, '["semantic_final","multi_source_conflict","speaker_review"]', 'now'),
+            ('seg_conflict_summary_back', ?, 1, 'back', 1, 'MANUAL_yitian', '翼天',
+             200, 60200, '错误样例周五前补五类，自动测试同步补完。',
+             0.82, '["semantic_final","multi_source_conflict","speaker_review"]', 'now')
+            """,
+            (meeting_id, meeting_id),
+        )
+
+    detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
+    summary_evidence = detail["qualityReport"]["summaryEvidence"]
+    supported = summary_evidence["supportedClaims"][0]
+
+    assert supported["status"] == "conflict"
+    assert "多源冲突" in supported["reason"]
+    assert summary_evidence["conflict_count"] == 1
+    assert summary_evidence["unqualified_conflict_count"] == 1
+    assert detail["qualityReport"]["metrics"]["summary_conflict_count"] == 1
+    assert detail["qualityReport"]["metrics"]["summary_unqualified_conflict_count"] == 1
+    assert "summary_multisource_conflict" in {
+        item["type"] for item in detail["qualityReport"]["issues"]
+    }
+    assert "summary_multisource_conflict" in detail["knowledgeReadiness"]["reviewWarnings"]
+
+
 def test_quality_report_allows_majority_multisource_actions_with_review(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)
@@ -3007,6 +3059,53 @@ def test_quality_report_allows_majority_multisource_actions_with_review(tmp_path
     assert external_action["evidenceStatus"] == "majority"
     assert external_action["knowledgeSafe"] is True
     assert external_action["requiresReview"] is True
+
+
+def test_quality_report_marks_majority_multisource_summary_with_review(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post(
+        "/api/web/meetings",
+        json={"title": "多数源纪要", "recording_mode": "multi_source", "max_sources": 3},
+        headers=headers,
+    )
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            UPDATE meetings
+            SET summary = '会议确认错误样例周三前补三类，自动测试同步补完。'
+            WHERE id = ?
+            """,
+            (meeting_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_majority_summary', ?, 1, 'front+middle', 1, 'MANUAL_yitian', '翼天',
+             0, 60000, '错误样例周三前补三类，自动测试同步补完。',
+             0.9, '["semantic_final","multi_source_merged","multi_source_majority","multi_source_refs:front:1,middle:1"]', 'now'),
+            ('seg_minority_summary_conflict', ?, 1, 'back', 1, 'MANUAL_yitian', '翼天',
+             200, 60200, '错误样例周五前补五类，自动测试同步补完。',
+             0.82, '["semantic_final","multi_source_conflict","speaker_review"]', 'now')
+            """,
+            (meeting_id, meeting_id),
+        )
+
+    detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
+    summary_evidence = detail["qualityReport"]["summaryEvidence"]
+    supported = summary_evidence["supportedClaims"][0]
+
+    assert supported["status"] == "majority"
+    assert "多数录音源" in supported["reason"]
+    assert summary_evidence["majority_count"] == 1
+    assert summary_evidence["conflict_count"] == 0
+    assert detail["qualityReport"]["metrics"]["summary_majority_count"] == 1
 
 
 def test_quality_report_treats_pronoun_owner_as_generic(tmp_path: Path) -> None:
@@ -3681,6 +3780,11 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "supportedClaims" in app_js
     assert "renderSummaryEvidenceRefs" in app_js
     assert "纪要有依据" in app_js
+    assert "纪要多数源确认" in app_js
+    assert "纪要多源冲突待核对" in app_js
+    assert "summaryEvidenceStatusLabel" in app_js
+    assert ".summary-evidence-item.majority" in styles
+    assert ".summary-evidence-item.conflict" in styles
     assert "detailRoleNotes" in app_js
     assert "分角色整理" in app_js
     assert "role_notes" in app_js

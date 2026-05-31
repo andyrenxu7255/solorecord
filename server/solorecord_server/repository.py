@@ -455,6 +455,19 @@ def build_quality_report(
                 f"{summary_evidence['unsupported_count']} 个纪要要点与转写文本关联较弱，建议复核纪要是否由模型补写。",
             )
         )
+    if summary_evidence.get("conflict_count"):
+        severity = "medium" if summary_evidence.get("unqualified_conflict_count") else "low"
+        issues.append(
+            _quality_issue(
+                severity,
+                "summary_multisource_conflict",
+                "纪要引用了多源冲突证据",
+                (
+                    f"{summary_evidence['conflict_count']} 个纪要要点只由冲突录音源片段支撑，"
+                    "请确认纪要是否已经保留复核语气。"
+                ),
+            )
+        )
     score = _quality_score(issues, segments, actions)
     return {
         "score": score,
@@ -473,6 +486,12 @@ def build_quality_report(
             "action_evidence_coverage": round(evidence_coverage, 4),
             "summary_evidence_coverage": summary_evidence["coverage"],
             "summary_unsupported_count": summary_evidence["unsupported_count"],
+            "summary_majority_count": summary_evidence.get("majority_count", 0),
+            "summary_conflict_count": summary_evidence.get("conflict_count", 0),
+            "summary_unqualified_conflict_count": summary_evidence.get(
+                "unqualified_conflict_count",
+                0,
+            ),
             "source_segment_coverage": source_coverage["coverage"],
             "source_segment_weak_count": source_coverage["weak_count"],
             "owner_distribution": owner_distribution,
@@ -555,6 +574,7 @@ def _quality_recommendations(issues: list[dict]) -> list[str]:
         "unsupported_action_evidence": "对缺少证据的待办回看转写或录音，确认不是模型补写。",
         "weak_action_owner_evidence": "优先核对负责人和任务是否在同一议题上下文中被明确关联。",
         "summary_evidence_weak": "逐条核对纪要要点，删除或改写转写原文无法支撑的内容。",
+        "summary_multisource_conflict": "多源冲突支撑的纪要要保留待确认语气，必要时回听对应来源。",
         "source_segment_coverage_weak": "优先检查对应音频分段，必要时重新转写或回退到 ASR 原始结果。",
         "owner_over_concentrated": "如果待办高度集中到主持人或单一人员，请按候选人名逐条复核负责人。",
         "candidate_people_not_speakers": "候选人名可以作为检查清单，逐个确认是否需要成为发言人或负责人。",
@@ -736,6 +756,7 @@ def build_knowledge_readiness(quality_report: dict) -> dict:
         "speaker_alias_conflict",
         "weak_action_owner_evidence",
         "multi_source_conflict",
+        "summary_multisource_conflict",
         "owner_over_concentrated",
         "candidate_people_not_speakers",
         "long_segment",
@@ -763,6 +784,11 @@ def build_knowledge_readiness(quality_report: dict) -> dict:
             "multiSourceMajorityCount": int(metrics.get("multi_source_majority_count") or 0),
             "multiSourceComplementedCount": int(metrics.get("multi_source_complemented_count") or 0),
             "multiSourceConflictCount": int(metrics.get("multi_source_conflict_count") or 0),
+            "summaryMajorityCount": int(metrics.get("summary_majority_count") or 0),
+            "summaryConflictCount": int(metrics.get("summary_conflict_count") or 0),
+            "summaryUnqualifiedConflictCount": int(
+                metrics.get("summary_unqualified_conflict_count") or 0
+            ),
             "actionEvidenceCoverage": float(metrics.get("action_evidence_coverage") or 0),
             "summaryEvidenceCoverage": float(metrics.get("summary_evidence_coverage") or 0),
             "sourceSegmentCoverage": float(metrics.get("source_segment_coverage") or 0),
@@ -783,6 +809,8 @@ def _knowledge_readiness_notes(blockers: list[str], review_warnings: list[str]) 
         notes.append("待办缺少转写证据，知识平台不要直接生成督办记录。")
     if "summary_evidence_weak" in blockers:
         notes.append("纪要存在缺证据要点，知识平台应以转写为准重建摘要。")
+    if "summary_multisource_conflict" in review_warnings:
+        notes.append("纪要包含多源冲突证据，知识平台应保留待确认语气或等待人工回听。")
     if "source_segment_coverage_weak" in blockers:
         notes.append("当前转写没有覆盖全部音频分段，知识平台不要把该会议视为完整证据。")
     if "speaker_evidence_weak" in review_warnings or "speaker_review" in review_warnings:
@@ -1200,6 +1228,9 @@ def _summary_evidence_report(summary: str, role_notes: str, segments: list[dict]
             "coverage": 1,
             "claim_count": 0,
             "unsupported_count": 0,
+            "majority_count": 0,
+            "conflict_count": 0,
+            "unqualified_conflict_count": 0,
             "supportedClaims": [],
             "unsupportedClaims": [],
         }
@@ -1208,17 +1239,55 @@ def _summary_evidence_report(summary: str, role_notes: str, segments: list[dict]
     for claim in claims:
         evidence = _claim_reference_evidence(claim, segments)
         if evidence:
-            supported.append({"claim": claim[:160], "evidence": evidence})
+            status, reason = _summary_claim_status(claim, evidence, segments)
+            supported.append(
+                {
+                    "claim": claim[:160],
+                    "status": status,
+                    "reason": reason,
+                    "evidence": evidence,
+                }
+            )
             continue
         unsupported.append({"claim": claim[:160], "evidence": []})
     coverage = 1 - len(unsupported) / max(1, len(claims))
+    conflict_count = sum(1 for item in supported if item.get("status") == "conflict")
     return {
         "coverage": round(coverage, 4),
         "claim_count": len(claims),
         "unsupported_count": len(unsupported),
+        "majority_count": sum(1 for item in supported if item.get("status") == "majority"),
+        "conflict_count": conflict_count,
+        "unqualified_conflict_count": sum(
+            1
+            for item in supported
+            if item.get("status") == "conflict"
+            and not _claim_has_review_language(str(item.get("claim") or ""))
+        ),
         "supportedClaims": supported[:8],
         "unsupportedClaims": unsupported[:8],
     }
+
+
+def _summary_claim_status(
+    claim: str,
+    evidence: list[dict],
+    segments: list[dict],
+) -> tuple[str, str]:
+    if _evidence_has_majority_with_conflict(evidence, segments):
+        return "majority", "该纪要要点由多数录音源一致片段支撑，但附近仍有少数冲突来源。"
+    if _evidence_has_multisource_conflict(evidence, segments):
+        return "conflict", "该纪要要点只由多源冲突片段支撑，应保留不确定性或人工复核提示。"
+    return "supported", "该纪要要点可在转写原文中找到依据。"
+
+
+def _claim_has_review_language(claim: str) -> bool:
+    return bool(
+        re.search(
+            r"(待核对|待确认|需确认|需复核|建议回听|回听确认|不确定|可能|少数冲突|冲突)",
+            str(claim or ""),
+        )
+    )
 
 
 def _source_coverage_report(segments: list[dict], audio_segments: list[dict]) -> dict:

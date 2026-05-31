@@ -293,7 +293,7 @@ SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
 - 如果 `speaker_alias_conflict_count` 大于 0，说明同一个姓名被多个 `speaker_id` 表示。Web 会提示“同名多标签”，知识图谱会合并展示同一人员节点并保留原始标签，验收时应确认是否需要在人物校对里统一。
 - `knowledgeGraph` 会包含主题节点，把“人员讨论主题”“主题产生待办”“待办截止时间”串起来。主题来自转写和待办的轻量抽取，只用于辅助查阅和知识平台整理，最终事实仍以转写证据为准。
 - LLM 纪要不是无条件保存。服务端会先检查纪要/分角色整理是否能被转写支撑；如果证据率过低，会自动改成“基于转写原文的保守整理”，并按更强转写证据修正明显错误的待办负责人。验收时如果看到这个标题，说明系统选择了保守兜底，而不是模型自由发挥。
-- `qualityReport.summaryEvidence.supportedClaims` 会给出纪要和分角色整理中已匹配到的转写引用；`unsupportedClaims` 是缺证据结论。上线验收时应抽查两类内容：有依据的引用是否真的支撑结论，缺依据的结论是否需要删除或改写。
+- `qualityReport.summaryEvidence.supportedClaims` 会给出纪要和分角色整理中已匹配到的转写引用，并带 `status=supported|majority|conflict`。`majority` 表示多数录音源支撑但仍建议抽查，`conflict` 表示纪要只由冲突片段支撑，必须保留待确认语气并回听确认；`unsupportedClaims` 是缺证据结论。上线验收时应抽查三类内容：有依据的引用是否真的支撑结论，多源冲突结论是否写成了确定事实，缺依据的结论是否需要删除或改写。
 
 ## 多源同录验收
 

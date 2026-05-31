@@ -863,9 +863,23 @@ textarea.input {
   border-color: #b8e3d2;
 }
 
+.summary-evidence-item.majority {
+  background: #eef6ff;
+  border-color: #b7d7ff;
+}
+
+.summary-evidence-item.conflict {
+  background: #fff1f2;
+  border-color: #fecdd3;
+}
+
 .summary-evidence-item.unsupported {
   background: #fff8e6;
   border-color: #f0c36a;
+}
+
+.summary-evidence-item small {
+  color: var(--muted);
 }
 
 .summary-evidence-refs {
