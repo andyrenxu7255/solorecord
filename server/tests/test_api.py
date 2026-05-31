@@ -3505,6 +3505,50 @@ def test_llm_summary_falls_back_when_not_grounded() -> None:
     assert report["metrics"]["summary_unsupported_count"] == 0
 
 
+def test_grounded_summary_prefers_suggested_action_owner_without_fallback() -> None:
+    import solorecord_server.processing as processing
+
+    segments = [
+        {
+            "speaker_id": "MANUAL_host",
+            "display_name": "傲寒",
+            "source_segment_no": 1,
+            "start_ms": 0,
+            "end_ms": 18000,
+            "text": "今天先过整体节奏。翼天你先说错误样例和自动测试。",
+            "confidence": 0.86,
+            "flags": ["semantic_final", "source_prefix_before_callout"],
+        },
+        {
+            "speaker_id": "MANUAL_yitian",
+            "display_name": "翼天",
+            "source_segment_no": 1,
+            "start_ms": 18000,
+            "end_ms": 42000,
+            "text": "错误样例今天补三类，自动测试明天补完。",
+            "confidence": 0.86,
+            "flags": ["semantic_final", "contextual_speaker_inference", "speaker_review"],
+        },
+    ]
+
+    summary, _, actions = processing._grounded_summary_result(
+        "翼天负责补充错误样例和自动测试。",
+        "",
+        [
+            {
+                "owner": "傲寒",
+                "task": "补充错误样例和自动测试",
+                "due": "明天",
+                "status": "open",
+            }
+        ],
+        segments,
+    )
+
+    assert summary == "翼天负责补充错误样例和自动测试。"
+    assert actions[0]["owner"] == "翼天"
+
+
 def test_llm_summary_falls_back_when_multisource_conflict_is_definite() -> None:
     import solorecord_server.processing as processing
 

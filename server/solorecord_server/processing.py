@@ -2238,11 +2238,11 @@ def _grounded_summary_result(
     segments: list[dict],
 ) -> tuple[str, str, list[dict]]:
     normalized_actions = _normalize_action_owners(actions, segments)
-    if _summary_is_grounded(summary, role_notes, normalized_actions, segments):
-        return summary, role_notes, normalized_actions
+    grounded_actions = _prefer_suggested_action_owners(normalized_actions, segments)
+    if _summary_is_grounded(summary, role_notes, grounded_actions, segments):
+        return summary, role_notes, grounded_actions
     fallback_summary, fallback_role_notes = _grounded_summary_from_segments(segments)
-    fallback_actions = _prefer_suggested_action_owners(normalized_actions, segments)
-    return fallback_summary, fallback_role_notes, fallback_actions
+    return fallback_summary, fallback_role_notes, grounded_actions
 
 
 def _summary_is_grounded(
