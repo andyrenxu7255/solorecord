@@ -12,6 +12,7 @@ from .llm_adapters import (
     refine_segments_with_llm,
     summarize_with_llm,
 )
+from .owner_terms import ORG_OWNER_TERMS
 from .publisher import publish_meeting
 from .repository import build_quality_report
 from .search_index import index_meeting
@@ -2383,6 +2384,8 @@ def _owner_alias_candidates(segments: list[dict], speaker_names: list[str]) -> d
         if not name or _is_generic_owner(name):
             continue
         text = str(segment.get("text") or "")
+        for owner in _org_owners_in_text(text):
+            aliases.setdefault(owner, owner)
         for alias, keywords in keyword_map.items():
             if alias not in aliases and any(keyword in text for keyword in keywords):
                 aliases[alias] = name
@@ -2408,6 +2411,9 @@ def _owner_context_candidates(segments: list[dict]) -> dict[str, dict]:
     for name in speaker_names:
         if not _is_generic_owner(name):
             candidates.setdefault(name, {"score": 1, "keywords": set(), "mentions": []})
+    for segment in segments:
+        for owner in _org_owners_in_text(str(segment.get("text") or "")):
+            candidates.setdefault(owner, {"score": 1, "keywords": set(), "mentions": []})
     for index, segment in enumerate(segments):
         text = str(segment.get("text") or "")
         speaker = str(segment.get("display_name") or "").strip()
@@ -2469,10 +2475,22 @@ def _has_owner_assignment(text: str, name: str) -> bool:
     escaped = re.escape(name)
     patterns = [
         rf"{escaped}(?:你|您)?(?:负责|跟进|处理|确认|补充|准备|整理|输出|完成|推进|看|改|发|做|搞)",
+        rf"{escaped}(?:这边|那边|团队|部门|组)[^。！？!?；;\n\r]{{0,16}}"
+        rf"(?:负责|跟进|处理|确认|补充|准备|整理|输出|完成|推进|看|改|发|做|搞)",
         rf"(?:交给|让|找|通知|安排){escaped}(?:来|去)?(?:负责|跟进|处理|确认|补充|准备|整理|输出|完成|推进|看|改|发|做|搞)",
         rf"{escaped}(?:的)?(?:部分|那块|这块|那边|这边|那个部分|这个部分)",
     ]
     return any(re.search(pattern, text) for pattern in patterns)
+
+
+def _org_owners_in_text(text: str) -> set[str]:
+    owners: set[str] = set()
+    value = str(text or "")
+    for owner in ORG_OWNER_TERMS:
+        escaped = re.escape(owner)
+        if re.search(rf"{escaped}(?:这边|那边|团队|部门|组)", value):
+            owners.add(owner)
+    return owners
 
 
 def _infer_owner_from_context(
@@ -2639,6 +2657,8 @@ def _is_context_stopword(token: str) -> bool:
 def _is_generic_owner(owner: str) -> bool:
     if not owner:
         return True
+    if owner in ORG_OWNER_TERMS:
+        return False
     generic_words = {
         "负责人",
         "相关负责人",

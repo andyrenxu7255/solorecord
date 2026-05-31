@@ -1767,6 +1767,28 @@ def test_action_owner_normalization_replaces_pronoun_owner_from_context() -> Non
     assert normalized[1]["owner"] == "待确认"
 
 
+def test_action_owner_normalization_uses_department_owner_context() -> None:
+    import solorecord_server.processing as processing
+
+    actions = [
+        {"owner": "待确认", "task": "周五前跟进客户名单并同步销售工作区", "due": "周五", "status": "open"},
+    ]
+    segments = [
+        {
+            "display_name": "任旭",
+            "text": "销售这边周五前跟进客户名单，同步到销售工作区，后续由客户经理接着处理。",
+        },
+        {
+            "display_name": "李娜",
+            "text": "物料清单我这边今天定版。",
+        },
+    ]
+
+    normalized = processing._normalize_action_owners(actions, segments)
+
+    assert normalized[0]["owner"] == "销售"
+
+
 def test_action_normalization_dedupes_tasks_and_statuses() -> None:
     import solorecord_server.processing as processing
 
@@ -2348,6 +2370,45 @@ def test_quality_report_flags_action_owner_without_context_evidence(tmp_path: Pa
     issue_types = {item["type"] for item in report["issues"]}
     assert "weak_action_owner_evidence" in issue_types
     assert any("负责人和任务" in item for item in report["recommendations"])
+
+
+def test_quality_report_accepts_department_owner_with_assignment_evidence(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "部门负责人证据"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_dept_owner_1', ?, 1, 1, 'MANUAL_renxu', '任旭', 0, 60000,
+             '销售这边周五前跟进客户名单，同步到销售工作区，后续由客户经理接着处理。',
+             0.82, '["semantic_llm","scenario:task_ownership"]', 'now')
+            """,
+            (meeting_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO action_items (id, meeting_id, owner, task, due, status, created_at, updated_at)
+            VALUES
+            ('act_dept_owner_ok', ?, '销售', '周五前跟进客户名单并同步销售工作区', '周五', 'open', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    report = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()["qualityReport"]
+
+    assert report["metrics"]["generic_owner_count"] == 0
+    assert report["metrics"]["weak_action_owner_count"] == 0
+    assert report["metrics"]["unsupported_action_count"] == 0
+    evidence_by_id = {item["id"]: item for item in report["actionEvidence"]}
+    assert evidence_by_id["act_dept_owner_ok"]["status"] == "supported"
+    assert evidence_by_id["act_dept_owner_ok"]["evidence"]
 
 
 def test_quality_report_flags_summary_without_transcript_evidence(tmp_path: Path) -> None:

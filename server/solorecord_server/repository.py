@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .db import get_db
 from .llm_adapters import mentioned_people_candidates
+from .owner_terms import ORG_OWNER_TERMS
 from .utils import row_to_dict
 
 
@@ -833,6 +834,8 @@ def _is_generic_owner(owner: str) -> bool:
     owner = str(owner or "").strip()
     if not owner:
         return True
+    if owner in ORG_OWNER_TERMS:
+        return False
     generic_words = {
         "负责人",
         "相关负责人",
@@ -965,7 +968,7 @@ def _weak_action_owner_evidence(
         for item in segments
         if str(item.get("display_name") or item.get("speaker_id") or "").strip()
     }
-    known_people = set(candidate_people) | speaker_names
+    known_people = set(candidate_people) | speaker_names | _org_owners_in_segments(segments)
     for item in actions:
         owner = str(item.get("owner") or "").strip()
         task = str(item.get("task") or "").strip()
@@ -1400,10 +1403,36 @@ def _owner_assignment_phrase(text: str, owner: str) -> bool:
     escaped = re.escape(owner)
     patterns = [
         rf"{escaped}(?:你|您)?(?:负责|跟进|处理|确认|补充|准备|整理|输出|完成|推进|看|改|发|做|搞)",
+        rf"{escaped}(?:这边|那边|团队|部门|组)[^。！？!?；;\n\r]{{0,16}}"
+        rf"(?:负责|跟进|处理|确认|补充|准备|整理|输出|完成|推进|看|改|发|做|搞)",
         rf"(?:交给|让|找|通知|安排){escaped}(?:来|去)?(?:负责|跟进|处理|确认|补充|准备|整理|输出|完成|推进|看|改|发|做|搞)",
         rf"{escaped}(?:的)?(?:部分|那块|这块|那边|这边|那个部分|这个部分)",
     ]
     return any(re.search(pattern, text) for pattern in patterns)
+
+
+def _org_owners_in_segments(segments: list[dict]) -> set[str]:
+    owners: set[str] = set()
+    for segment in segments:
+        text = str(segment.get("text") or "")
+        speaker = str(segment.get("display_name") or segment.get("speaker_id") or "").strip()
+        for owner in ORG_OWNER_TERMS:
+            if owner == speaker or _org_owner_mentioned_as_owner(text, owner):
+                owners.add(owner)
+    return owners
+
+
+def _org_owner_mentioned_as_owner(text: str, owner: str) -> bool:
+    value = str(text or "")
+    escaped = re.escape(owner)
+    return bool(
+        re.search(rf"{escaped}(?:这边|那边|团队|部门|组)", value)
+        or re.search(
+            rf"{escaped}[^。！？!?；;\n\r]{{0,16}}"
+            rf"(?:负责|跟进|处理|确认|补充|准备|整理|输出|完成|推进|看|改|发|做|搞)",
+            value,
+        )
+    )
 
 
 def _action_has_transcript_evidence(
