@@ -264,7 +264,7 @@ SoloRecord 会把说话人拆分分成三层处理：
 1. 优先使用 ASR 返回的原生说话人字段，例如 `speaker_id`、`speaker`、`spk`、`spk_id`、`speakerLabel`。
 2. 如果 ASR 只返回整段文本、单一发言人，或虽有多个原生 speaker 但出现“某某你先说”“某某你那个部分”“我这边负责”“某某负责/确认/后面看”等上下文线索，服务端会调用已配置的 LLM，对转写做语义重分段，并根据上下文、姓名前缀、冒号、任务归属、议题延续和指代关系推断发言人。
 3. 如果 LLM 返回后仍残留明显的多人点名长段，例如“某某说/某某：/某某你先说/某某后面看”，服务端会再做一次规则细拆，并给这些段落保留 `speaker_review`。
-4. 如果 LLM 不可用，服务端会用轻量规则识别“张三说”“李四：”这类明确标记，也会对“被点名后下一段以我这边/我负责回应”，以及“没有我字但继续同一议题、交付物、时间节点”的场景做保守归属，至少把明显多人段拆开。
+4. 如果 LLM 不可用，服务端会用轻量规则识别“张三说”“李四：”这类明确标记，也会对“被点名后下一段以我这边/我负责回应”、“同一 ASR 段里没有标点地连着某某你先说和我这边回应”，以及“没有我字但继续同一议题、交付物、时间节点”的场景做保守归属，至少把明显多人段拆开。
 
 配置开关：
 
@@ -277,6 +277,7 @@ SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
 - 该能力依赖 LLM Provider；LLM 未配置时不会阻塞转写，会自动回退规则分段。
 - FunASR/OpenAI-compatible 请求会带上 `diarization=true`、`speaker_diarization=true`、`spk_model=cam++` 等参数；如果 ASR 服务实际返回 `sentence_info` 或 `segments` 里的说话人字段，系统会直接使用。
 - 当前联调过的部分 FunASR 兼容服务只返回 `text`，不返回说话人字段；这时大模型语义分段就是主要补偿手段。即使 ASR 返回多个原始 speaker，只要文本里存在点名、承接回应或被点名议题延续，系统也会尝试做上下文归属，并在前端提示人工校对。
+- 多源同录最终整理会合并不同录音源的重复证据，但如果不同来源在日期、数量或负责人等关键事实上冲突，会保留为 `multi_source_conflict`，不要直接交给知识平台自动入库；上线验收时要回听对应来源。
 - Web 转写时间线会标记“需确认”“大模型分段”或“规则分段”。“需确认”代表模型推断可信度不足，建议会后人工校对。
 - 每个分段上传后会先做分段级后处理并标记 `semantic_partial`；点击结束会议后，服务端会用整场上下文再整理一次最终时间线、纪要和待办，并标记 `semantic_final`。
 - 语义重分段输出会保留 `source_index`/`source_segment_no`，方便从 Web 时间线、导出 JSON 或外部知识平台追溯到原始音频分段。通过上下文或任务归属推断的人名会保留 `speaker_review` 和 `reason:*`，上线验收时要把它当作“建议归属”，而不是声纹确认。
@@ -842,6 +843,7 @@ Operations notes:
 - This feature benefits from an LLM provider. If the LLM is not configured, transcription still succeeds and falls back to rule-based splitting.
 - FunASR/OpenAI-compatible requests include `diarization=true`, `speaker_diarization=true`, and `spk_model=cam++`. If the ASR service returns speaker fields inside `sentence_info` or `segments`, SoloRecord uses them directly.
 - Some FunASR-compatible services tested during integration returned only `text` without speaker fields. In that case, LLM semantic segmentation is the main compensation layer. Even with native speaker IDs, named call-outs and same-topic continuations can still trigger context-based review hints.
+- Multi-source final processing merges duplicate evidence across sources, but source rows that disagree on dates, amounts, or owners are kept as `multi_source_conflict`. During acceptance, replay those sources before knowledge-platform ingestion.
 - The Web transcript timeline marks rows as “needs review”, “LLM segmented”, or “rule segmented”. “Needs review” means the inferred speaker should be checked after the meeting.
 - Each uploaded segment gets partial post-processing first and is marked with `semantic_partial`. When the meeting is finished, the server uses full-meeting context to rewrite the final timeline, summary, and action items with `semantic_final`.
 - If a user has already corrected a `speaker_id` to a concrete name, final processing preserves that correction. Generic old names such as `Speaker 1/2/3` do not block new model-inferred names.

@@ -533,6 +533,71 @@ def test_multi_source_final_processing_merges_duplicate_evidence(tmp_path: Path)
     assert detail["qualityReport"]["sourceCoverage"]["weakSegments"] == []
 
 
+def test_multi_source_final_processing_flags_critical_fact_conflicts(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post(
+        "/api/web/meetings",
+        json={"title": "多源事实冲突", "recording_mode": "multi_source", "max_sources": 3},
+        headers=headers,
+    )
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+    import solorecord_server.processing as processing
+    import solorecord_server.repository as repository
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO audio_segments
+            (id, meeting_id, source_id, source_segment_no, segment_no, file_name,
+             storage_path, mime_type, size_bytes, sha256, duration_ms, start_ms,
+             end_ms, upload_status, created_at)
+            VALUES
+            ('aud_conflict_front', ?, 'front', 1, 1, 'front.m4a',
+             'front.m4a', 'audio/mp4', 1, 'sha-front', 120000, 0, 120000, 'uploaded', 'now'),
+            ('aud_conflict_back', ?, 'back', 1, 2, 'back.m4a',
+             'back.m4a', 'audio/mp4', 1, 'sha-back', 120000, 0, 120000, 'uploaded', 'now')
+            """,
+            (meeting_id, meeting_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id,
+             display_name, start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_conflict_front', ?, 1, 'front', 1, 'SPEAKER_01', '翼天',
+             0, 60000, '错误样例周三前补三类，自动测试同步补完。',
+             0.84, '["semantic_partial"]', 'now'),
+            ('seg_conflict_back', ?, 1, 'back', 1, 'SPEAKER_02', '翼天',
+             0, 60000, '错误样例周五前补五类，自动测试同步补完。',
+             0.84, '["semantic_partial"]', 'now')
+            """,
+            (meeting_id, meeting_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO processing_jobs
+            (id, meeting_id, type, status, current_stage, progress, asr_provider, created_at, updated_at)
+            VALUES ('job_multisource_conflict', ?, 'transcribe', 'queued', 'queued', 0, 'mock', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    processing.process_transcription_job("job_multisource_conflict")
+    transcript = repository.transcript_document(meeting_id)
+    segments = transcript["transcript"]["segments"]
+
+    assert len(segments) == 2
+    assert all("multi_source_conflict" in item["flags"] for item in segments)
+    assert all("speaker_review" in item["flags"] for item in segments)
+    assert {item["source_id"] for item in segments} == {"front", "back"}
+    report = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()["qualityReport"]
+    assert report["metrics"]["multi_source_conflict_count"] == 2
+    assert "multi_source_conflict" in {item["type"] for item in report["issues"]}
+
+
 def test_transcript_update_preserves_source_id_for_multisource_rows(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)
@@ -778,6 +843,38 @@ def test_semantic_segmentation_splits_inline_addressed_response(tmp_path: Path) 
     assert "speaker_review" in refined[1]["flags"]
     assert refined[1]["source_segment_no"] == 1
     assert "错误样例" in refined[1]["text"]
+
+
+def test_semantic_segmentation_splits_inline_addressed_response_without_punctuation(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "无标点点名回应"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.processing as processing
+
+    segments = [
+        {
+            "speaker_id": "SPEAKER_01",
+            "display_name": "主持人",
+            "source_segment_no": 1,
+            "start_ms": 0,
+            "end_ms": 18000,
+            "text": (
+                "翼天你先说一下错误样例和自动测试"
+                "我这边准备了三个错误样例自动测试明天能补完"
+            ),
+            "confidence": 0.86,
+            "flags": ["asr_speaker"],
+        }
+    ]
+
+    refined = processing._refine_segments(meeting_id, segments)
+
+    assert [item["display_name"] for item in refined] == ["主持人", "翼天"]
+    assert refined[0]["text"] == "说一下错误样例和自动测试"
+    assert refined[1]["text"] == "我这边准备了三个错误样例自动测试明天能补完"
+    assert "inline_addressed_response" in refined[1]["flags"]
+    assert "speaker_review" in refined[1]["flags"]
 
 
 def test_contextual_speaker_inference_links_topic_continuation(tmp_path: Path) -> None:

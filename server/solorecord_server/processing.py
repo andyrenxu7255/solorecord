@@ -535,6 +535,8 @@ def _segments_are_multisource_duplicates(left: dict, right: dict) -> bool:
         return False
     if not _segments_overlap_enough(left, right):
         return False
+    if _segments_have_critical_fact_conflict(left, right):
+        return False
     left_text = str(left.get("text") or "")
     right_text = str(right.get("text") or "")
     if not left_text or not right_text:
@@ -621,9 +623,54 @@ def _has_nearby_multisource_conflict(segment: dict, segments: list[dict]) -> boo
             continue
         if not _segments_overlap_enough(segment, other):
             continue
+        if _segments_have_critical_fact_conflict(segment, other):
+            return True
         if _text_similarity(str(segment.get("text") or ""), str(other.get("text") or "")) < 0.28:
             return True
     return False
+
+
+def _segments_have_critical_fact_conflict(left: dict, right: dict) -> bool:
+    left_facts = _critical_fact_sets(str(left.get("text") or ""))
+    right_facts = _critical_fact_sets(str(right.get("text") or ""))
+    for key in ("time", "amount", "owner"):
+        left_values = left_facts.get(key, set())
+        right_values = right_facts.get(key, set())
+        if left_values and right_values and not left_values & right_values:
+            return True
+    return False
+
+
+def _critical_fact_sets(text: str) -> dict[str, set[str]]:
+    value = re.sub(r"\s+", "", str(text or ""))
+    time_values = set(
+        re.findall(
+            r"(今天|明天|后天|下周[一二三四五六日天]?|本周[一二三四五六日天]?|"
+            r"周[一二三四五六日天]|月底|月初|上午|下午|晚上|"
+            r"\d{1,2}月\d{1,2}[日号]?|\d{1,2}[日号])",
+            value,
+        )
+    )
+    amount_values = set(
+        re.findall(
+            r"([一二三四五六七八九十两\d]+(?:个|类|份|版|轮|次|条|项|点|页|张|人))",
+            value,
+        )
+    )
+    owner_values = set()
+    for match in re.finditer(
+        r"([\u4e00-\u9fa5A-Za-z][\u4e00-\u9fa5A-Za-z0-9·]{1,5})"
+        r"(?:负责|跟进|处理|确认|补充|准备|整理|输出|完成|推进|看|改|发|做|搞)",
+        value,
+    ):
+        owner = _clean_addressed_speaker(match.group(1))
+        if owner and not _is_rule_speaker_stopword(owner):
+            owner_values.add(owner)
+    return {
+        "time": time_values,
+        "amount": amount_values,
+        "owner": owner_values,
+    }
 
 
 def _needs_semantic_segmentation(segments: list[dict]) -> bool:
@@ -1207,7 +1254,7 @@ def _split_inline_addressed_response(segment: dict) -> list[dict]:
         return []
 
     marker_start = int(candidate.get("marker_start") or 0)
-    sentence_end = _sentence_end_after(text, marker_start)
+    sentence_end = _inline_response_boundary(text, marker_start)
     if sentence_end <= marker_start or sentence_end >= len(text):
         return []
     prefix = text[:marker_start].strip()
@@ -1254,6 +1301,26 @@ def _sentence_end_after(text: str, start: int) -> int:
     if not match:
         return -1
     return max(0, start) + match.end()
+
+
+def _inline_response_boundary(text: str, start: int) -> int:
+    sentence_end = _sentence_end_after(text, start)
+    search_from = max(0, start)
+    match = _INLINE_RESPONSE_CUE_PATTERN.search(text[search_from:])
+    cue_boundary = search_from + match.start() if match else -1
+    boundaries = [
+        value
+        for value in (sentence_end, cue_boundary)
+        if value > start
+    ]
+    return min(boundaries) if boundaries else -1
+
+
+_INLINE_RESPONSE_CUE_PATTERN = re.compile(
+    r"(?:好的?|可以|行|没问题)?[\s，,、]*"
+    r"(?:我这边|我们这边|我来|我负责|我们负责|我准备|我已经|我们已经|"
+    r"我先|我们先|我会|我们会|这块我|这边我|这部分我|这部分我们)"
+)
 
 
 def _looks_like_inline_response(text: str) -> bool:

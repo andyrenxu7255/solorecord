@@ -104,7 +104,7 @@ Windows 版本下载后解压，运行 `SoloRecord.exe`。iOS、macOS 和 Harmon
 
 Web 详情页的“整理质量”会提示候选人名、需要校对的段落、发言人证据风险、分段覆盖率和待办证据率。待办证据率不是最终评分，而是提醒你：待办是否能在转写原文里找到依据。分段覆盖率用于发现某个音频分段在最终转写里过短或缺失。若出现“发言人缺少原文证据”“音频分段待核对”或“待办缺少转写证据”，建议先回看对应转写或录音，再复制给 IM 或外部系统。
 
-如果开启了多源同录，“整理质量”还会显示“多源合并”和“多源冲突”。多源合并表示系统发现多个录音源在同一时间记录了相近内容，并保留了更完整的一条；多源冲突表示同一时间不同来源差异较大，建议回听对应录音后再对外发送纪要。
+如果开启了多源同录，“整理质量”还会显示“多源合并”和“多源冲突”。多源合并表示系统发现多个录音源在同一时间记录了相近内容，并保留了更完整的一条；多源冲突表示同一时间不同来源差异较大，或日期、数量、负责人等关键事实不一致，建议回听对应录音后再对外发送纪要。
 
 多源同录下，Web 的转写筛选和“定位转写”会按“录音源 + 该设备自己的分段号”定位。两台设备都上传“第 1 段”时，系统会分别显示到对应录音源，不会把不同设备的第 1 段混在一起。
 
@@ -292,7 +292,7 @@ Open the Recording tab:
 2. Allow microphone permission on first use.
 3. Tap End Recording when the meeting is over.
 
-For multi-source recording, every recorder should enter the same meeting code, for example `0601A`. Use a recognizable source name such as "Renxu phone", "back of meeting room", or "customer laptop". The server groups 1-8 recording sources into one meeting. Each source uploads and transcribes independently, then the final processing merges duplicate evidence and flags conflicts.
+For multi-source recording, every recorder should enter the same meeting code, for example `0601A`. Use a recognizable source name such as "Renxu phone", "back of meeting room", or "customer laptop". The server groups 1-8 recording sources into one meeting. Each source uploads and transcribes independently, then final processing merges duplicate evidence and flags conflicts, including disagreements on dates, amounts, or owners.
 
 The app saves audio in rolling segments while recording. The default is about five minutes per segment, controlled by the server. Adjacent segments keep about two seconds of overlap to reduce boundary word loss. Long meetings are split into smaller files to reduce loss risk. If the app is closed, recording stops and the current segment is preserved as far as possible.
 

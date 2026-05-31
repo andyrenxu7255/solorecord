@@ -231,7 +231,7 @@ Android 录音和上传采用连续录音、重叠分段、分段级断点续传
 - `audio_segments.source_id` + `source_segment_no` 表示某个设备自己的分段编号。多台设备都可以上传自己的第 1 段，服务端会分配不同的全局 `segment_no`，但保留各自的 `source_segment_no=1`。
 - `transcript_segments.source_id` + `source_segment_no` 是证据追溯键。分段重传只替换同一来源、同一本地分段的转写行；`primary` 兼容旧数据里的空 `source_id`。
 - `/api/mobile/meetings/join` 和 `/api/web/meetings/join` 支持按会议编号或标题加入。上传接口也会校验 `max_sources`，不能绕过来源上限。
-- `processing._merge_multisource_segments()` 在整场 finish 前做保守多源校对：同一时间窗、不同来源、文本高度相近的段落合并为一条，并写入 `multi_source_merged`、`multi_source_count:*` 和 `multi_source_refs:*` flags；同一时间差异较大的多源片段标记 `multi_source_conflict` 和 `speaker_review`，交给人工回听。
+- `processing._merge_multisource_segments()` 在整场 finish 前做保守多源校对：同一时间窗、不同来源、文本高度相近且关键事实一致的段落合并为一条，并写入 `multi_source_merged`、`multi_source_count:*` 和 `multi_source_refs:*` flags；同一时间差异较大，或日期、数量、负责人等关键事实冲突的多源片段标记 `multi_source_conflict` 和 `speaker_review`，交给人工回听。
 - `qualityReport.metrics.recording_source_count`、`multi_source_merged_count`、`multi_source_conflict_count` 和按 `(source_id, source_segment_no)` 计算的 `sourceCoverage` 用于 Web 和外部 Agent 判断证据质量。
 - Web 时间线筛选、证据跳转和保存转写都必须保留 `source_id`。前端筛选值使用 `source_id::source_segment_no`，不能退回只按 `source_segment_no` 匹配；合并后的多源段落通过 `multi_source_refs:*` 继续计入各原始来源覆盖率。
 
@@ -296,7 +296,7 @@ server/solorecord_server/llm_adapters.py
 2. `processing._needs_semantic_segmentation()` 判断是否需要 LLM 重分段：如果 ASR 已经给出多个可靠 speaker id 且没有“某某你先说/某某你那个部分/我这边负责”等上下文线索，可以跳过重分段；只要出现点名、承接回应、被点名议题的后续延续、长文本单一发言人、多个“某某说/某某：”标记，或“某某负责/某某确认/某某后面看”这类未解析到人物的任务归属线索，仍会进入后处理。
 3. `llm_adapters.refine_segments_with_llm()` 要求模型只返回 `{"segments":[...]}`，每段包含 `source_index`、`source_id`、`source_segment_no`、`speaker`、`speaker_id`、`start_ms`、`end_ms`、`text`、`confidence`、`scenario`、`reason`。`source_index`、`source_id` 和 `source_segment_no` 用于把模型输出追溯到原始 ASR/音频分段。
 4. LLM 返回后，`processing._rule_refine_residual_mixed_segments()` 会再检查是否还残留明显的“某某说/某某：/某某你先说/某某后面看”混合段；如果有，会保守二次拆分并写入 `llm_residual_rule_refined` 和 `speaker_review`。
-5. LLM 不可用或返回非法 JSON 时，`processing._rule_refine_segments()` 用规则兜底拆明显人名标记；`_apply_contextual_speaker_inference()` 会继续处理“被点名后下一段以我这边/我负责回应”以及“没有我字但继续同一议题、交付物、时间节点”的归属，但会写入 `speaker_review` 和 `reason:*`，让用户确认。
+5. LLM 不可用或返回非法 JSON 时，`processing._rule_refine_segments()` 用规则兜底拆明显人名标记；`_split_inline_addressed_response()` 会处理 ASR 没有在“某某你先说”和“我这边/我负责”回应之间加标点的单段文本；`_apply_contextual_speaker_inference()` 会继续处理“被点名后下一段以我这边/我负责回应”以及“没有我字但继续同一议题、交付物、时间节点”的归属，但会写入 `speaker_review` 和 `reason:*`，让用户确认。
 6. 分段上传会写入 `semantic_partial`，让用户在会议中先看到阶段草稿；结束会议后的 `/finish` 总是基于整场上下文再跑一次语义后处理，并写入 `semantic_final`。
 7. `_insert_transcript_segments()` 持久化 `flags` 和 `source_segment_no`，供 Web 标记“需确认”“大模型分段”“规则分段”“上下文推断”，也供外部知识平台追踪来源。已人工保存为具体人名的 `speaker_id` 会优先覆盖后续同 ID 的泛化 ASR 名称；`发言人 1/2/3` 这类泛化旧名不会压住模型新识别的人名。
 
@@ -781,7 +781,7 @@ Key rules:
 - `audio_segments.source_id` plus `source_segment_no` records the device-local segment number. Multiple devices may upload local segment 1; the server allocates distinct global segment numbers while preserving `source_segment_no=1` for each source.
 - `transcript_segments.source_id` plus `source_segment_no` is the evidence key. Segment re-upload replaces only rows for the same source and local segment. `primary` is compatible with older empty `source_id` rows.
 - `/api/mobile/meetings/join` and `/api/web/meetings/join` join by code or title. Upload endpoints also enforce `max_sources`, so clients cannot bypass the source limit.
-- `processing._merge_multisource_segments()` runs before final semantic refinement. Near-overlapping, similar text from different sources is merged and marked with `multi_source_merged`, `multi_source_count:*`, and `multi_source_refs:*`. Near-overlapping but divergent text is marked `multi_source_conflict` and `speaker_review`.
+- `processing._merge_multisource_segments()` runs before final semantic refinement. Near-overlapping, similar text from different sources is merged and marked with `multi_source_merged`, `multi_source_count:*`, and `multi_source_refs:*` only when key facts agree. Divergent text, or conflicts in dates, amounts, or owners, is marked `multi_source_conflict` and `speaker_review`.
 - `qualityReport.metrics.recording_source_count`, `multi_source_merged_count`, `multi_source_conflict_count`, and source coverage by `(source_id, source_segment_no)` support Web review and external agent gating.
 - Web timeline filters, evidence jumps, and transcript save payloads must preserve `source_id`. The frontend filter key is `source_id::source_segment_no`; do not match by `source_segment_no` alone. Merged multi-source rows still count toward original source coverage through `multi_source_refs:*`.
 
@@ -854,11 +854,11 @@ Processing order:
 
 1. `asr_adapters.py` preserves native ASR `sentence_info`, `segments`, `speaker_id`, `spk`, and related fields when present, and marks native speaker output with `asr_speaker`.
 2. `processing._needs_semantic_segmentation()` decides whether LLM refinement is needed. Multiple reliable native speaker IDs skip refinement only when there are no contextual call-outs. Long single-speaker text, multiple “name said/name:” markers, named call-outs, first-person replies, or same-topic continuations after a call-out enter refinement.
-3. `llm_adapters.refine_segments_with_llm()` asks the model to return only `{"segments":[...]}`, with `speaker`, `speaker_id`, `start_ms`, `end_ms`, `text`, `confidence`, and `reason`.
+3. `llm_adapters.refine_segments_with_llm()` asks the model to return only `{"segments":[...]}`, with `source_index`, `source_id`, `source_segment_no`, `speaker`, `speaker_id`, `start_ms`, `end_ms`, `text`, `confidence`, `scenario`, and `reason`.
 4. After the LLM returns, `processing._rule_refine_residual_mixed_segments()` checks whether clear mixed-person markers remain, such as “name said/name:/name please cover/name handle later”. If so, it applies a conservative second-pass split and writes `llm_residual_rule_refined` plus `speaker_review`.
-4. If the LLM is unavailable or returns invalid JSON, `processing._rule_refine_segments()` falls back to clear speaker-marker splitting, and `_apply_contextual_speaker_inference()` can conservatively link first-person or same-topic continuation replies to the previously called person. It always keeps `speaker_review` and `reason:*` flags for human review.
-5. Segment uploads write `semantic_partial` so users can see an in-meeting draft. The final `/finish` flow always runs full-meeting semantic post-processing and writes `semantic_final`.
-6. `_insert_transcript_segments()` persists `flags`, `source_id`, and `source_segment_no`, letting Web show “needs review”, “LLM segmented”, and “rule segmented”, and letting external knowledge agents trace evidence back to source segments. Concrete manually saved names for a `speaker_id` take precedence over later generic ASR names; generic names such as `Speaker 1` do not block new model-inferred names.
+5. If the LLM is unavailable or returns invalid JSON, `processing._rule_refine_segments()` falls back to clear speaker-marker splitting. `_split_inline_addressed_response()` also handles ASR text that omits punctuation between a named call-out and a reply such as “I will handle it”. `_apply_contextual_speaker_inference()` can conservatively link first-person or same-topic continuation replies to the previously called person. It always keeps `speaker_review` and `reason:*` flags for human review.
+6. Segment uploads write `semantic_partial` so users can see an in-meeting draft. The final `/finish` flow always runs full-meeting semantic post-processing and writes `semantic_final`.
+7. `_insert_transcript_segments()` persists `flags`, `source_id`, and `source_segment_no`, letting Web show “needs review”, “LLM segmented”, and “rule segmented”, and letting external knowledge agents trace evidence back to source segments. Concrete manually saved names for a `speaker_id` take precedence over later generic ASR names; generic names such as `Speaker 1` do not block new model-inferred names.
 
 Quality checks:
 
