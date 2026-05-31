@@ -2979,15 +2979,21 @@ def test_quality_probe_postprocess_simulates_residual_splits_read_only(tmp_path:
     assert post["quality_report"]["metrics"]["long_segment_count"] == 0
     assert post["quality_report"]["metrics"]["mixed_marker_segment_count"] == 0
     assert post["quality_report"]["metrics"]["speaker_review_count"] == 5
+    assert post["quality_report"]["metrics"]["generic_owner_count"] == 0
+    assert post["quality_report"]["actionEvidence"][0]["owner"] == "翼天"
+    assert post["quality_report"]["actionEvidence"][0]["status"] == "supported"
     delta = post["delta"]
     assert delta["segment_count_delta"] == 4
     assert delta["speaker_count_delta"] == 4
     assert delta["metrics"]["mixed_marker_segment_count"]["delta"] == -1
+    assert delta["metrics"]["generic_owner_count"]["delta"] == -1
     assert "mixed_marker_segment_count" in delta["improved_metrics"]
+    assert "generic_owner_count" in delta["improved_metrics"]
     assert "翼天" in delta["speaker_names_added"]
-    assert delta["suggested_owner_changed_count"] == 1
-    assert delta["suggested_owner_changes"][0]["from"] == "傲寒"
-    assert delta["suggested_owner_changes"][0]["to"] == "翼天"
+    assert delta["suggested_owner_changed_count"] == 0
+    assert delta["action_owner_changed_count"] == 1
+    assert delta["action_owner_changes"][0]["from"] == "待确认"
+    assert delta["action_owner_changes"][0]["to"] == "翼天"
 
     with db.get_db() as conn:
         after = conn.execute(

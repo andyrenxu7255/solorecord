@@ -589,7 +589,7 @@ docker compose exec -T solorecord python -m solorecord_server.quality_probe --me
 docker compose exec -T solorecord python -m solorecord_server.quality_probe --meeting-id <meeting_id> --run-llm
 ```
 
-第一条只读当前持久化结果；`--postprocess` 只跑服务器本地后处理模拟；`--run-llm` 会调用已配置的大模型做模拟重分段和纪要探测。三种模式都不会写回数据库。上线前重点看 `qualityReport.status`、候选人名、`speaker_review_count`、`timeline_repaired_count`、`generic_owner_count` 和待办负责人是否可接受；如果使用 `--postprocess` 或 `--run-llm`，还要看 `delta.improved_metrics`、`delta.regressed_metrics`、`delta.speaker_names_added` 和 `delta.suggested_owner_changes`，确认混合段减少、发言人更完整、待办负责人建议更接近真实上下文。
+第一条只读当前持久化结果；`--postprocess` 只跑服务器本地后处理模拟，并用模拟后的分段重新归一化待办负责人；`--run-llm` 会调用已配置的大模型做模拟重分段和纪要探测。三种模式都不会写回数据库。上线前重点看 `qualityReport.status`、候选人名、`speaker_review_count`、`timeline_repaired_count`、`generic_owner_count` 和待办负责人是否可接受；如果使用 `--postprocess` 或 `--run-llm`，还要看 `delta.improved_metrics`、`delta.regressed_metrics`、`delta.speaker_names_added`、`delta.action_owner_changes` 和 `delta.suggested_owner_changes`，确认混合段减少、发言人更完整、待办负责人已被直接修正，或只剩需要人工应用的建议。
 - `scripts\smoke-e2e.ps1` 已通过。
 - `pip-audit -r server/requirements.txt` 无已知漏洞。
 
@@ -1061,7 +1061,7 @@ docker compose exec -T solorecord python -m solorecord_server.quality_probe --me
 docker compose exec -T solorecord python -m solorecord_server.quality_probe --meeting-id <meeting_id> --run-llm
 ```
 
-All three modes are read-only. Check `qualityReport.status`, candidate people, `speaker_review_count`, timeline repair count, generic owners, action owner evidence, and `summary_contradiction_count`. Any `summary_evidence_contradiction` blocker means the summary reversed transcript evidence and must not be indexed until rewritten from the transcript. In simulation modes, also inspect `delta.improved_metrics`, `delta.regressed_metrics`, `delta.speaker_names_added`, and `delta.suggested_owner_changes` to confirm mixed turns decrease, speakers become more complete, and action owner suggestions match the meeting context.
+All three modes are read-only. Check `qualityReport.status`, candidate people, `speaker_review_count`, timeline repair count, generic owners, action owner evidence, and `summary_contradiction_count`. Any `summary_evidence_contradiction` blocker means the summary reversed transcript evidence and must not be indexed until rewritten from the transcript. In simulation modes, also inspect `delta.improved_metrics`, `delta.regressed_metrics`, `delta.speaker_names_added`, `delta.action_owner_changes`, and `delta.suggested_owner_changes` to confirm mixed turns decrease, speakers become more complete, action owners are directly corrected when evidence is strong, and only uncertain suggestions remain for human review.
 
 Transcription failures usually point to `SOLO_ASR_PROVIDER`, `SOLO_ASR_COMMAND`, `SOLO_ASR_ENDPOINT`, `SOLO_ASR_MODEL`, command execution permission, invalid JSON stdout, upstream STT HTTP errors, or `processing_jobs.error_message`.
 

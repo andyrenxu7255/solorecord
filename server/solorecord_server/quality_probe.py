@@ -22,6 +22,7 @@ from .processing import (
 )
 from .repository import build_quality_report, meeting_document
 from .repository import build_knowledge_readiness
+from .utils import row_to_dict
 
 
 def probe_meeting(
@@ -90,9 +91,13 @@ def probe_meeting(
     }
     if run_postprocess:
         post_segments = _postprocess_segments_without_llm(segments)
+        post_actions = _normalize_action_owners(
+            [_action_row_like(item) for item in action_rows],
+            post_segments,
+        )
         result["postprocess"] = _quality_snapshot(
             post_segments,
-            action_rows,
+            post_actions,
             audio_rows,
             meeting["summary"] if meeting else "",
             meeting["role_notes"] if meeting else "",
@@ -185,14 +190,14 @@ def _postprocess_segments_without_llm(segments: list[dict]) -> list[dict]:
 
 def _quality_snapshot(
     segments: list[dict],
-    action_rows,
+    actions,
     audio_rows,
     summary: str,
     role_notes: str,
 ) -> dict:
     report = build_quality_report(
         [_segment_row_like(item) for item in segments],
-        action_rows,
+        [_action_row_like(item) for item in actions],
         audio_rows,
         summary,
         role_notes,
@@ -289,6 +294,10 @@ def _quality_delta(source: dict, target: dict) -> dict:
             target_report,
         ),
         "suggested_owner_examples": _suggested_owner_examples(target_report),
+        "action_owner_changed_count": len(
+            _action_owner_changes(source_report, target_report)
+        ),
+        "action_owner_changes": _action_owner_changes(source_report, target_report),
         "issue_types_removed": sorted(
             _issue_types(source_report) - _issue_types(target_report)
         ),
@@ -343,7 +352,7 @@ def _suggested_owner_changes(source_report: dict, target_report: dict) -> list[d
         source = source_map.get(key, {})
         before = str(source.get("suggested_owner") or "").strip()
         after = str(target.get("suggested_owner") or "").strip()
-        if before == after:
+        if before == after or not after:
             continue
         changes.append(
             {
@@ -359,7 +368,39 @@ def _suggested_owner_changes(source_report: dict, target_report: dict) -> list[d
     return changes
 
 
+def _action_owner_changes(source_report: dict, target_report: dict) -> list[dict]:
+    source_map = _action_evidence_map(source_report)
+    target_map = _action_evidence_map(target_report)
+    changes = []
+    for key, target in target_map.items():
+        source = source_map.get(key, {})
+        before = str(source.get("owner") or "").strip()
+        after = str(target.get("owner") or "").strip()
+        if before == after or not after:
+            continue
+        changes.append(
+            {
+                "id": target.get("id") or source.get("id") or "",
+                "task": target.get("task") or source.get("task") or "",
+                "from": before,
+                "to": after,
+                "status": target.get("status") or "",
+            }
+        )
+        if len(changes) >= 8:
+            break
+    return changes
+
+
 def _suggested_owner_map(report: dict) -> dict[str, dict]:
+    return {
+        key: item
+        for key, item in _action_evidence_map(report).items()
+        if str(item.get("suggested_owner") or "").strip()
+    }
+
+
+def _action_evidence_map(report: dict) -> dict[str, dict]:
     mapped = {}
     for item in report.get("actionEvidence") or []:
         key = str(item.get("id") or "").strip()
@@ -465,6 +506,8 @@ def _segment_row_like(segment: dict) -> dict:
 
 
 def _action_row_like(action: dict) -> dict:
+    if not isinstance(action, dict):
+        action = row_to_dict(action)
     return {
         "id": action.get("id", ""),
         "meeting_id": action.get("meeting_id", ""),

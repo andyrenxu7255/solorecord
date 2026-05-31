@@ -337,7 +337,7 @@ python -m solorecord_server.quality_probe --meeting-id <meeting_id> --postproces
 python -m solorecord_server.quality_probe --meeting-id <meeting_id> --run-llm
 ```
 
-`quality_probe` 用于真实会议效果复验。默认只读取当前数据库结果；`--postprocess` 会只跑本地规则后处理模拟，`--run-llm` 会调用当前 LLM 配置做语义重分段、纪要和负责人归因的模拟评估，但都不会替换 `transcript_segments`、`action_items` 或会议纪要。`postprocess.delta` 或 `llm.delta` 会对比当前结果和模拟结果，重点看 `mixed_marker_segment_count` 是否下降、`speaker_count` 是否上升、`suggested_owner_changes` 是否把待办负责人从主持人/待确认纠偏到真实被点名人。输出包含 `quality_report` 和 `knowledge_readiness`，用于判断是否可进入知识库、是否应先人工复核。新增大模型逻辑时，请保证这个命令仍然只读，并补充测试覆盖质量报告中的关键指标。
+`quality_probe` 用于真实会议效果复验。默认只读取当前数据库结果；`--postprocess` 会只跑本地规则后处理模拟，并用模拟后的分段重新归一化待办负责人；`--run-llm` 会调用当前 LLM 配置做语义重分段、纪要和负责人归因的模拟评估，但都不会替换 `transcript_segments`、`action_items` 或会议纪要。`postprocess.delta` 或 `llm.delta` 会对比当前结果和模拟结果，重点看 `mixed_marker_segment_count` 是否下降、`speaker_count` 是否上升、`action_owner_changes` 是否把待办负责人从主持人/待确认纠偏到真实被点名人，以及 `suggested_owner_changes` 是否只剩需要人工应用的建议。输出包含 `quality_report` 和 `knowledge_readiness`，用于判断是否可进入知识库、是否应先人工复核。新增大模型逻辑时，请保证这个命令仍然只读，并补充测试覆盖质量报告中的关键指标。
 
 注意事项：
 
@@ -902,7 +902,7 @@ Quality checks:
 - `processing._grounded_summary_result()` checks the LLM summary against transcript evidence before saving it and applies stronger `qualityReport.actionEvidence[].suggested_owner` values to clearly weak generated owners. If summary evidence coverage is too low, a multi-source conflict is written as a definite conclusion without review language, or the summary reverses transcript completion/negation evidence, the server replaces it with a conservative transcript-grounded summary. Default saved output should be plain but grounded, not polished but hallucinated.
 - `summaryEvidence.supportedClaims` lists grounded summary or role-note claims with transcript references. Each supported claim carries `status`: `supported` for ordinary transcript evidence, `majority` for a majority-source primary row with a replay-review hint, `conflict` when the claim is only supported by multi-source conflict rows and must keep review language, and `contradiction` when same-topic evidence reverses completion/negation. `contradictedClaims` lists those hard-blocked claims separately, and `unsupportedClaims` lists unsupported claims only.
 - When changing LLM action extraction, keep tests for supported, weak-owner, suggested-owner, unsupported, contradictory, and review-question action evidence.
-- Use `python -m solorecord_server.quality_probe --meeting-id <meeting_id> --postprocess` before calling a paid or remote LLM. The `postprocess.delta` block compares persisted quality with simulated local post-processing, including mixed-marker reduction, speaker-count changes, issue changes, and suggested-owner changes. `--run-llm` adds the same delta under `llm.delta` after simulated LLM refinement and summary extraction. Both modes are read-only.
+- Use `python -m solorecord_server.quality_probe --meeting-id <meeting_id> --postprocess` before calling a paid or remote LLM. The `postprocess.delta` block compares persisted quality with simulated local post-processing, including mixed-marker reduction, speaker-count changes, issue changes, concrete `action_owner_changes`, and remaining `suggested_owner_changes`. `--run-llm` adds the same delta under `llm.delta` after simulated LLM refinement and summary extraction. Both modes are read-only.
 
 Notes:
 
