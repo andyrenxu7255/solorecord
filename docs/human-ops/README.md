@@ -307,7 +307,7 @@ SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
 4. 账号 B 用同一设备名和同一录音源名称重复加入一次，应返回同一个 `source_id`，录音源数量不应增加。
 5. 两台设备都上传自己的第 1 段。服务端应生成两个 `audio_segments`，全局 `segment_no` 不同，但 `source_segment_no` 都是 `1`，`source_id` 分别不同。
 6. Web 会议详情应显示多个录音源、多个录音分段，且两个来源的音频都可按权限下载/播放。
-7. 结束会议后，重复拾音内容应出现 `multi_source_merged_count`；如果两个来源同一时间内容差异较大，应出现 `multi_source_conflict_count` 和质量提示。
+7. 结束会议后，重复拾音内容应出现 `multi_source_merged_count`；如果两个来源同一时间在日期、数量或负责人等关键事实上冲突，应出现 `multi_source_conflict_count` 和质量提示。不同设备只拾到不同人的并行发言时，应保留为普通单源证据，不应误报冲突。
 8. 外部知识平台拉取 `/api/external/meetings/{meetingId}/transcript?include_history=true` 时，应能看到 `source_id`、`source_segment_no`、`qualityReport` 和 `knowledgeReadiness`。
 
 运维排障要点：
@@ -872,7 +872,7 @@ Acceptance steps:
 3. Use account B on another device with the same meeting code and source label `back phone`.
 4. Upload local segment 1 from both devices. The server should create two `audio_segments` with different global `segment_no` values, while both keep `source_segment_no=1` and different `source_id` values.
 5. Web meeting detail should show multiple recording sources and multiple audio segments. Both audio files should be downloadable/playable by authorized users.
-6. After finish, duplicated captured speech should increase `multi_source_merged_count`. Divergent text at the same time should increase `multi_source_conflict_count` and appear in quality review hints.
+6. After finish, duplicated captured speech should increase `multi_source_merged_count`. Divergent key facts, such as dates, amounts, or owners, should increase `multi_source_conflict_count` and appear in quality review hints. Parallel turns captured by different devices should remain ordinary single-source evidence, not false conflicts.
 7. `/api/external/meetings/{meetingId}/transcript?include_history=true` should expose `source_id`, `source_segment_no`, `qualityReport`, and `knowledgeReadiness`.
 
 Troubleshooting notes:

@@ -1096,6 +1096,68 @@ def test_multi_source_final_processing_flags_critical_fact_conflicts(tmp_path: P
     assert "multi_source_conflict" in {item["type"] for item in report["issues"]}
 
 
+def test_multi_source_final_processing_keeps_parallel_turns_not_conflicts(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post(
+        "/api/web/meetings",
+        json={"title": "多源并行发言", "recording_mode": "multi_source", "max_sources": 3},
+        headers=headers,
+    )
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+    import solorecord_server.processing as processing
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO audio_segments
+            (id, meeting_id, source_id, source_segment_no, segment_no, file_name,
+             storage_path, mime_type, size_bytes, sha256, duration_ms, start_ms,
+             end_ms, upload_status, created_at)
+            VALUES
+            ('aud_parallel_front', ?, 'front', 1, 1, 'front.m4a',
+             'front.m4a', 'audio/mp4', 1, 'sha-parallel-front', 60000, 0, 60000, 'uploaded', 'now'),
+            ('aud_parallel_back', ?, 'back', 1, 2, 'back.m4a',
+             'back.m4a', 'audio/mp4', 1, 'sha-parallel-back', 60000, 0, 60000, 'uploaded', 'now')
+            """,
+            (meeting_id, meeting_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id,
+             display_name, start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_parallel_front', ?, 1, 'front', 1, 'SPEAKER_01', '傲寒',
+             0, 60000, '今天先过整体节奏，客户名单和现场动线都要补齐。',
+             0.84, '["semantic_partial"]', 'now'),
+            ('seg_parallel_back', ?, 1, 'back', 1, 'SPEAKER_02', '翼天',
+             500, 60500, '错误样例今天补三类，自动测试明天补完。',
+             0.86, '["semantic_partial"]', 'now')
+            """,
+            (meeting_id, meeting_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO processing_jobs
+            (id, meeting_id, type, status, current_stage, progress, asr_provider, created_at, updated_at)
+            VALUES ('job_multisource_parallel', ?, 'transcribe', 'queued', 'queued', 0, 'mock', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    processing.process_transcription_job("job_multisource_parallel")
+
+    transcript = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers).json()
+    assert len(transcript["segments"]) == 2
+    assert all("multi_source_conflict" not in item["flags"] for item in transcript["segments"])
+    assert all("multi_source_merged" not in item["flags"] for item in transcript["segments"])
+    report = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()["qualityReport"]
+    assert report["metrics"]["multi_source_conflict_count"] == 0
+    assert report["metrics"]["source_segment_coverage"] == 1
+
+
 def test_multi_source_final_processing_preserves_third_source_fact_conflicts(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)

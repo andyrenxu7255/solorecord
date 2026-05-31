@@ -793,7 +793,7 @@ def _nearby_multisource_conflict_sources(
         nearby_candidates.append(other)
         if _segments_have_critical_fact_conflict(segment, other):
             conflict_sources.add(other_source_id)
-        if _text_similarity(str(segment.get("text") or ""), str(other.get("text") or "")) < 0.28:
+        if _segments_are_divergent_same_turn(segment, other):
             conflict_sources.add(other_source_id)
     for index, left in enumerate(nearby_candidates):
         for right in nearby_candidates[index + 1 :]:
@@ -804,6 +804,32 @@ def _nearby_multisource_conflict_sources(
             if _segments_have_critical_fact_conflict(left, right):
                 conflict_sources.update((left_source_id, right_source_id))
     return conflict_sources
+
+
+def _segments_are_divergent_same_turn(left: dict, right: dict) -> bool:
+    similarity = _text_similarity(str(left.get("text") or ""), str(right.get("text") or ""))
+    if similarity >= 0.28:
+        return False
+    left_speaker = str(left.get("display_name") or left.get("speaker_id") or "").strip()
+    right_speaker = str(right.get("display_name") or right.get("speaker_id") or "").strip()
+    if (
+        left_speaker
+        and right_speaker
+        and left_speaker == right_speaker
+        and not _is_generic_speaker_name(left_speaker)
+    ):
+        return True
+    return _text_similarity(_topic_signature(left), _topic_signature(right)) >= 0.2
+
+
+def _topic_signature(segment: dict) -> str:
+    text = str(segment.get("text") or "")
+    tokens = [
+        token
+        for token in _merge_text_tokens(text)
+        if len(token) >= 3 and not _is_rule_speaker_stopword(token)
+    ]
+    return "".join(tokens[:16])
 
 
 def _group_has_majority_over_conflicts(
