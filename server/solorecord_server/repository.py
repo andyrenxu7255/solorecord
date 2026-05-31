@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -216,7 +217,7 @@ def build_quality_report(
     summary: str = "",
     role_notes: str = "",
 ) -> dict:
-    segments = [row_to_dict(row) for row in transcript_segments]
+    segments = _segments_with_stable_ids([row_to_dict(row) for row in transcript_segments])
     actions = [row_to_dict(row) for row in action_items]
     audio_segments = [row_to_dict(row) for row in audio_rows]
     flags_by_segment = [_flags(item.get("flags")) for item in segments]
@@ -1387,10 +1388,38 @@ def _evidence_item_matches_segments(
     source_keys: set[tuple[str, str]],
 ) -> bool:
     segment_id = str(item.get("segment_id") or "")
-    if segment_id and segment_id in segment_ids:
-        return True
+    if segment_id:
+        return segment_id in segment_ids
     source_key = _source_segment_key(item)
     return source_key is not None and source_key in source_keys
+
+
+def _segments_with_stable_ids(segments: list[dict]) -> list[dict]:
+    return [_segment_with_stable_id(item, index) for index, item in enumerate(segments)]
+
+
+def _segment_with_stable_id(segment: dict, index: int) -> dict:
+    if str(segment.get("id") or "").strip():
+        return segment
+    item = dict(segment)
+    item["id"] = _stable_segment_id(item, index)
+    return item
+
+
+def _stable_segment_id(segment: dict, index: int) -> str:
+    parts = [
+        str(segment.get("meeting_id") or ""),
+        str(segment.get("source_id") or ""),
+        str(segment.get("source_segment_no") or ""),
+        str(segment.get("speaker_id") or ""),
+        str(segment.get("display_name") or ""),
+        str(int(segment.get("start_ms") or 0)),
+        str(int(segment.get("end_ms") or 0)),
+        str(segment.get("text") or ""),
+        str(index),
+    ]
+    digest = hashlib.sha1("\x1f".join(parts).encode("utf-8")).hexdigest()[:16]
+    return f"probe_seg_{digest}"
 
 
 def _source_segment_key(item: dict) -> tuple[str, str] | None:

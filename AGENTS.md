@@ -98,6 +98,7 @@ Android 上传可靠性：
 - 1-8 个录音源通过同一 `join_code` 归入同一会议。
 - `/api/mobile/meetings/discover` 和 `/api/web/meetings/discover` 只返回近期可加入会议元数据，加入前不得返回转写、纪要、音频、待办或成员详情。
 - 证据键始终是 `(source_id, source_segment_no)`，不能只按本地分段号判断覆盖、替换或跳转。
+- 待办、纪要和知识入库风险判断如果已有 `segment_id`，必须按转写行精确匹配 `multi_source_conflict` 或 `multi_source_majority`；只有缺少 `segment_id` 的旧式/模拟证据才退回 `(source_id, source_segment_no)`，避免同一 5 分钟来源分段里的安全内容被误标为冲突。
 - 最终处理会合并关键事实一致的重复多源片段并标记 `multi_source_merged`。
 - 设备错峰起录但来源分段相邻、时间差和文本相似度满足保守阈值时，合并片段还会标记 `multi_source_time_aligned`。
 - 日期、数量或负责人等关键事实冲突时必须保留多条 `multi_source_conflict` 证据，不得为了去重覆盖冲突。
@@ -347,6 +348,7 @@ Multi-source recording reliability:
 - 1-8 recording sources join the same meeting through one `join_code`.
 - `/api/mobile/meetings/discover` and `/api/web/meetings/discover` return recent joinable meeting metadata only; they must not expose transcripts, summaries, audio, action items, or member details before the user joins.
 - The evidence key is always `(source_id, source_segment_no)`; never use the local segment number alone for coverage, replacement, or navigation.
+- For action, summary, and knowledge-ingestion risk checks, `segment_id` takes precedence when present. Match `multi_source_conflict` or `multi_source_majority` to the exact transcript row; fall back to `(source_id, source_segment_no)` only for legacy or simulated evidence without `segment_id`, so safe text in the same five-minute source segment is not mislabeled as conflicting.
 - Final processing merges duplicate multi-source rows only when key facts agree and marks them with `multi_source_merged`.
 - If devices start at different times but neighboring source-local segment numbers, start-time delta, and text similarity pass conservative checks, merged rows also carry `multi_source_time_aligned`.
 - If sources conflict on dates, amounts, or owners, keep separate `multi_source_conflict` evidence rows instead of deduplicating away the disagreement.

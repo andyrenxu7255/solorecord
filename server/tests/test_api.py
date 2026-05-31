@@ -3059,6 +3059,67 @@ def test_quality_probe_postprocess_preserves_multisource_coverage_keys(tmp_path:
     } == {("front", 1, "covered"), ("back", 1, "covered")}
 
 
+def test_quality_probe_postprocess_does_not_spread_same_source_conflict(
+    tmp_path: Path,
+) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post(
+        "/api/web/meetings",
+        headers=headers,
+        json={"title": "探针同段冲突隔离", "recording_mode": "multi_source", "max_sources": 2},
+    )
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+    import solorecord_server.quality_probe as quality_probe
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id,
+             display_name, start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_probe_conflict_front_same_source', ?, 1, 'front', 1, 'MANUAL_yitian', '翼天',
+             0, 30000, '错误样例周三前补三类。',
+             0.82, '["semantic_final","multi_source_conflict","speaker_review"]', 'now'),
+            ('seg_probe_conflict_back_same_source', ?, 1, 'back', 1, 'MANUAL_yitian', '翼天',
+             200, 30200, '错误样例周五前补五类。',
+             0.82, '["semantic_final","multi_source_conflict","speaker_review"]', 'now'),
+            ('seg_probe_safe_front_same_source', ?, 1, 'front', 1, 'MANUAL_lina', '李娜',
+             40000, 60000, '客户名单今天定版，销售工作区后续同步。',
+             0.88, '["semantic_final"]', 'now')
+            """,
+            (meeting_id, meeting_id, meeting_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO action_items (id, meeting_id, owner, task, due, status, created_at, updated_at)
+            VALUES
+            ('act_probe_safe_same_source_segment', ?, '李娜', '同步客户名单到销售工作区', '今天', 'open', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    result = quality_probe.probe_meeting(
+        meeting_id,
+        run_llm=False,
+        run_postprocess=True,
+    )
+    evidence = {
+        item["id"]: item
+        for item in result["postprocess"]["quality_report"]["actionEvidence"]
+    }
+    item = evidence["act_probe_safe_same_source_segment"]
+
+    assert item["status"] == "supported"
+    assert item["evidence"][0]["segment_id"]
+    assert item["evidence"][0]["source_id"] == "front"
+    assert item["evidence"][0]["source_segment_no"] == 1
+    assert result["postprocess"]["knowledge_readiness"]["status"] == "review_first"
+    assert result["postprocess"]["quality_report"]["metrics"]["multi_source_conflict_count"] == 2
+
+
 def test_quality_report_flags_action_owner_over_concentration(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)
@@ -3269,6 +3330,59 @@ def test_quality_report_marks_conflicting_multisource_actions_for_review(tmp_pat
     assert external_action["requiresReview"] is True
     assert len(external["qualityReport"]["multiSourceConflicts"]) == 2
     assert len(external["knowledgeReadiness"]["reviewEvidence"]["multiSourceConflicts"]) == 2
+
+
+def test_quality_report_does_not_spread_conflict_to_same_source_segment_actions(
+    tmp_path: Path,
+) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post(
+        "/api/web/meetings",
+        json={"title": "同段冲突隔离", "recording_mode": "multi_source", "max_sources": 2},
+        headers=headers,
+    )
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_conflict_front_same_source', ?, 1, 'front', 1, 'MANUAL_yitian', '翼天',
+             0, 30000, '错误样例周三前补三类。',
+             0.82, '["semantic_final","multi_source_conflict","speaker_review"]', 'now'),
+            ('seg_conflict_back_same_source', ?, 1, 'back', 1, 'MANUAL_yitian', '翼天',
+             200, 30200, '错误样例周五前补五类。',
+             0.82, '["semantic_final","multi_source_conflict","speaker_review"]', 'now'),
+            ('seg_safe_front_same_source', ?, 1, 'front', 1, 'MANUAL_lina', '李娜',
+             40000, 60000, '客户名单今天定版，销售工作区后续同步。',
+             0.88, '["semantic_final"]', 'now')
+            """,
+            (meeting_id, meeting_id, meeting_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO action_items (id, meeting_id, owner, task, due, status, created_at, updated_at)
+            VALUES
+            ('act_safe_same_source_segment', ?, '李娜', '同步客户名单到销售工作区', '今天', 'open', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
+    evidence = {item["id"]: item for item in detail["qualityReport"]["actionEvidence"]}
+    item = evidence["act_safe_same_source_segment"]
+
+    assert item["status"] == "supported"
+    assert item["evidence"][0]["segment_id"] == "seg_safe_front_same_source"
+    assert detail["actionItems"][0]["evidenceStatus"] == "supported"
+    assert detail["actionItems"][0]["knowledgeSafe"] is True
+    assert detail["qualityReport"]["metrics"]["multi_source_conflict_count"] == 2
+    assert "multi_source_conflict" in detail["knowledgeReadiness"]["reviewWarnings"]
 
 
 def test_quality_report_blocks_action_that_contradicts_transcript(tmp_path: Path) -> None:
@@ -4202,6 +4316,82 @@ def test_llm_summary_drops_unsupported_action_items_before_saving() -> None:
     )
     assert report["metrics"]["unsupported_action_count"] == 0
     assert report["metrics"]["summary_unsupported_count"] == 0
+
+
+def test_llm_summary_keeps_safe_action_in_same_source_segment_conflict() -> None:
+    import solorecord_server.processing as processing
+    import solorecord_server.repository as repository
+
+    segments = [
+        {
+            "speaker_id": "MANUAL_yitian",
+            "display_name": "翼天",
+            "source_id": "front",
+            "source_segment_no": 1,
+            "start_ms": 0,
+            "end_ms": 30000,
+            "text": "错误样例周三前补三类。",
+            "confidence": 0.82,
+            "flags": ["semantic_final", "multi_source_conflict", "speaker_review"],
+        },
+        {
+            "speaker_id": "MANUAL_yitian",
+            "display_name": "翼天",
+            "source_id": "back",
+            "source_segment_no": 1,
+            "start_ms": 200,
+            "end_ms": 30200,
+            "text": "错误样例周五前补五类。",
+            "confidence": 0.82,
+            "flags": ["semantic_final", "multi_source_conflict", "speaker_review"],
+        },
+        {
+            "speaker_id": "MANUAL_lina",
+            "display_name": "李娜",
+            "source_id": "front",
+            "source_segment_no": 1,
+            "start_ms": 40000,
+            "end_ms": 60000,
+            "text": "客户名单今天定版，销售工作区后续同步。",
+            "confidence": 0.88,
+            "flags": ["semantic_final"],
+        },
+    ]
+
+    summary, role_notes, actions = processing._grounded_summary_result(
+        "客户名单今天定版，销售工作区后续同步。",
+        "李娜：客户名单今天定版，销售工作区后续同步。",
+        [
+            {
+                "owner": "李娜",
+                "task": "同步客户名单到销售工作区",
+                "due": "今天",
+                "status": "open",
+            }
+        ],
+        segments,
+    )
+
+    assert actions == [
+        {
+            "owner": "李娜",
+            "task": "同步客户名单到销售工作区",
+            "due": "今天",
+            "status": "open",
+        }
+    ]
+    report = repository.build_quality_report(
+        [processing._segment_row_like(item) for item in segments],
+        [processing._action_row_like(item) for item in actions],
+        [],
+        summary,
+        role_notes,
+    )
+    action_evidence = report["actionEvidence"][0]
+    assert action_evidence["status"] == "supported"
+    assert action_evidence["evidence"][0]["source_id"] == "front"
+    assert action_evidence["evidence"][0]["source_segment_no"] == 1
+    assert action_evidence["evidence"][0]["segment_id"]
 
 
 def test_llm_summary_keeps_review_fallback_when_all_actions_unsupported() -> None:
