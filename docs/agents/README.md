@@ -249,7 +249,7 @@ Agent 验收时必须检查：
 - 被点名句里的议题词可作为待办主责线索。例如“翼天你先说自动测试”后面出现匿名片段“覆盖脚本明天补完”时，可以把主责建议为翼天；但主持人本人不应仅因说出点名句而获得该任务。
 - 销售、法务、前端、测试等组织角色可以作为待办 owner，但必须有同一短语窗口内的责任或动作证据，例如“销售这边周五前跟进客户名单”“前端周三前改页面”。不要把“自动测试、测试覆盖、数据源”等任务词本身当成组织负责人。
 - 如果 `processing._normalize_action_owners()` 给 task 追加 `协同：姓名`，外部督办 Agent 应保留该字段含义：owner 是主责人，协同人是配合人，不要把协同人改成新的主责人。
-- `qualityReport.actionEvidence` 应逐条覆盖全部待办，并提供 `supported`、`majority`、`conflict`、`weak_owner` 或 `unsupported` 状态和证据片段。证据片段应包含 `segment_id`、`source_id`、`source_segment_no`、`start_ms`、`speaker` 和 `text`。`majority` 表示待办由 `multi_source_majority` 主结果支撑，`actionItems[].knowledgeSafe=true` 且 `requiresReview=true`，外部督办 Agent 可作为主证据使用但要保留抽查回听提示；`conflict` 表示待办只由 `multi_source_conflict` 片段支撑，外部督办 Agent 必须将 `knowledgeSafe=false`、`requiresReview=true` 作为硬门禁，不能自动发送提醒。外部督办 Agent 可先读 `actionItems[].evidenceStatus`、`knowledgeSafe` 和 `requiresReview` 判断是否可以自动发送提醒；需要完整审计时再消费 `qualityReport.actionEvidence` 并保留证据追溯链接。
+- `qualityReport.actionEvidence` 应逐条覆盖全部待办，并提供 `supported`、`majority`、`conflict`、`weak_owner` 或 `unsupported` 状态和证据片段。证据片段应包含 `segment_id`、`source_id`、`source_segment_no`、`start_ms`、`speaker` 和 `text`。`majority` 表示待办由 `multi_source_majority` 主结果支撑，且负责人不是泛化/待确认，`actionItems[].knowledgeSafe=true` 且 `requiresReview=true`，外部督办 Agent 可作为主证据使用但要保留抽查回听提示；`conflict` 表示待办只由 `multi_source_conflict` 片段支撑，外部督办 Agent 必须将 `knowledgeSafe=false`、`requiresReview=true` 作为硬门禁，不能自动发送提醒。如果 owner 是 `待确认`、代词、时间短语或泛化角色，`weak_owner` 优先级高于 `majority`，即使任务文本由多数源支撑也不得自动督办。外部督办 Agent 可先读 `actionItems[].evidenceStatus`、`knowledgeSafe` 和 `requiresReview` 判断是否可以自动发送提醒；需要完整审计时再消费 `qualityReport.actionEvidence` 并保留证据追溯链接。
 
 LLM：
 
@@ -379,7 +379,7 @@ macOS/iOS/HarmonyOS 发布：
 - 不要绕过 `_assert_access` 暴露会议数据。
 - 转写是知识平台的原始证据层。外部知识整理 Agent 只能通过 `/api/external/meetings/{meetingId}/transcript?include_history=true` 拉取，不能直接读 SQLite、`var/` 或音频文件路径。
 - 外部响应里的 `knowledgeReadiness` 是入库门禁摘要。`status=hold` 时不要自动沉淀纪要或督办；`status=review_first` 时可以入库但必须保留风险标记；`status=ready` 才适合无人工介入地进入知识库。`knowledgeReadiness.reviewEvidence` 会把多源冲突、覆盖不足分段、发言人风险、纪要风险和待办风险汇总成复核清单，Agent 应把它作为人工复核入口，而不是当成新的事实来源。Web 会议详情的“整理质量”会同步展示“知识入库复核”，便于人工验收；覆盖不足分段可能没有可跳转转写，此时应回听音频或触发重转写。
-- 外部响应里的 `actionItems` 已直接携带 `evidenceStatus`、`evidenceReason`、`evidence`、`suggestedOwner`、`suggestedOwnerEvidence`、`knowledgeSafe` 和 `requiresReview`。`evidenceStatus=majority` 表示多数源主结果支撑，`knowledgeSafe=true` 且 `requiresReview=true`，可以作为主证据使用但要保留抽查回听提示；`evidenceStatus=conflict` 表示只由冲突片段支撑，必须阻断自动督办和确定知识入库。只做督办的 Agent 可以先读这些字段；需要完整证据审计时再读 `qualityReport.actionEvidence`。
+- 外部响应里的 `actionItems` 已直接携带 `evidenceStatus`、`evidenceReason`、`evidence`、`suggestedOwner`、`suggestedOwnerEvidence`、`knowledgeSafe` 和 `requiresReview`。`evidenceStatus=majority` 表示多数源主结果支撑且负责人不是泛化/待确认，`knowledgeSafe=true` 且 `requiresReview=true`，可以作为主证据使用但要保留抽查回听提示；`evidenceStatus=weak_owner` 表示任务文本可能有证据但当前负责人不可直接督办，即使任务文本由多数源支撑也要保持 `knowledgeSafe=false`；`evidenceStatus=conflict` 表示只由冲突片段支撑，必须阻断自动督办和确定知识入库。只做督办的 Agent 可以先读这些字段；需要完整证据审计时再读 `qualityReport.actionEvidence`。
 - 非 admin 不允许删除转写段；转写重处理、分段重传或人工替换前必须保留 `transcript_segment_history`。
 - 不要在 Web 使用未转义的动态 HTML。
 - 不要让 Android 端承担重 ASR/降噪/说话人分离。
@@ -839,11 +839,14 @@ The repository can be public only if no real secrets, runtime data, databases, c
   `evidenceReason`, `evidence`, `suggestedOwner`,
   `suggestedOwnerEvidence`, `knowledgeSafe`, and `requiresReview`.
   `evidenceStatus=majority` means the action is backed by a
-  `multi_source_majority` primary row, so reminder agents may use it while
-  keeping the replay-review hint. `evidenceStatus=conflict` means the action is
-  only backed by `multi_source_conflict` transcript rows; reminder agents must
-  treat `knowledgeSafe=false` and `requiresReview=true` as a hard gate and must
-  not auto-send it. Use `qualityReport.actionEvidence` for complete evidence
+  `multi_source_majority` primary row and the owner is not generic or unknown,
+  so reminder agents may use it while keeping the replay-review hint. If the
+  owner is unknown, a pronoun, a time phrase, or a generic role, `weak_owner`
+  takes precedence over `majority` and `knowledgeSafe` stays false.
+  `evidenceStatus=conflict` means the action is only backed by
+  `multi_source_conflict` transcript rows; reminder agents must treat
+  `knowledgeSafe=false` and `requiresReview=true` as a hard gate and must not
+  auto-send it. Use `qualityReport.actionEvidence` for complete evidence
   audits.
 - External `knowledgeReadiness` is the ingestion gate summary. `status=hold`
   means do not automatically store summaries or actions; `status=review_first`

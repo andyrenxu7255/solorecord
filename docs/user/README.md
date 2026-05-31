@@ -221,7 +221,7 @@ Web 详情页的“整理质量”会提示候选人名、需要校对的段落�
 
 ### 待办负责人不准怎么办？
 
-先看待办下面的证据提示。“负责人证据弱”表示任务内容能在转写里找到，但负责人可能不对；可以点击证据旁边的“定位转写”跳到原文。如果出现“建议负责人”，可以点击单条“应用建议”，也可以点击“应用全部建议负责人”批量填入，再保存待办。建议负责人只是辅助判断，重要会议仍建议结合转写或录音确认。
+先看待办下面的证据提示。“负责人证据弱”表示任务内容能在转写里找到，但负责人可能不对；即使该任务被多数录音源确认，也不能直接拿去督办。可以点击证据旁边的“定位转写”跳到原文。如果出现“建议负责人”，可以点击单条“应用建议”，也可以点击“应用全部建议负责人”批量填入，再保存待办。建议负责人只是辅助判断，重要会议仍建议结合转写或录音确认。
 
 ### 找不到某场会议怎么办？
 
@@ -440,7 +440,7 @@ Rename the role in record details and apply the change to all segments with the 
 
 If a row is marked “needs review”, the speaker was inferred from context and should be checked against the text or audio. Rows can also be marked “LLM segmented” or “rule segmented”, meaning SoloRecord reorganized the ASR text into dialogue turns after transcription.
 
-The Web detail page includes a quality panel with candidate names, rows needing review, speaker-evidence risk, and action evidence coverage. This is a review aid: if a speaker lacks source evidence or an action item lacks transcript evidence, check the transcript or audio before sending it to IM or another system.
+The Web detail page includes a quality panel with candidate names, rows needing review, speaker-evidence risk, and action evidence coverage. This is a review aid: if a speaker lacks source evidence, an action item lacks transcript evidence, or an action owner is marked weak, check the transcript or audio before sending it to IM or another system. A majority-source task still needs owner confirmation when it is marked weak.
 
 In multi-source meetings, Web transcript filters and “jump to transcript” links use both the recording source and that device's local segment number. If two devices both upload segment 1, SoloRecord keeps them separate in review and evidence navigation.
 

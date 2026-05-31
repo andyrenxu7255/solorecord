@@ -1253,13 +1253,7 @@ def _action_evidence_items(
         suggestion = _suggest_action_owner(task, owner, segments)
         status = "supported"
         reason = "该待办可在转写中找到相关任务或负责人线索。"
-        if evidence and _evidence_has_majority_with_conflict(evidence, segments):
-            status = "majority"
-            reason = "该待办由多数录音源一致片段支撑，但同时间仍有少数冲突来源，建议督办前抽查回听。"
-        elif evidence and _evidence_has_multisource_conflict(evidence, segments):
-            status = "conflict"
-            reason = "该待办依据来自多源同录冲突片段，请回听确认日期、数量或负责人后再督办。"
-        elif key in unsupported_keys:
+        if key in unsupported_keys:
             status = "unsupported"
             reason = "待办事项和转写原文关联较弱，请回看转写或录音。"
         elif _is_generic_owner(owner):
@@ -1268,6 +1262,12 @@ def _action_evidence_items(
         elif key in weak_owner_keys:
             status = "weak_owner"
             reason = "任务内容有转写依据，但负责人和任务之间缺少明确上下文关联。"
+        elif evidence and _evidence_has_majority_with_conflict(evidence, segments):
+            status = "majority"
+            reason = "该待办由多数录音源一致片段支撑，但同时间仍有少数冲突来源，建议督办前抽查回听。"
+        elif evidence and _evidence_has_multisource_conflict(evidence, segments):
+            status = "conflict"
+            reason = "该待办依据来自多源同录冲突片段，请回听确认日期、数量或负责人后再督办。"
         items.append(
             {
                 "id": action.get("id", ""),

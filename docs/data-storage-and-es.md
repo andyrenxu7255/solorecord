@@ -84,7 +84,7 @@ GET /api/external/meetings/{meetingId}/transcript?include_history=true
 Authorization: Bearer replace-with-long-random-token
 ```
 
-响应包含当前转写版本、结构化段落、纯文本 `plain_text`、说话人映射、音频分段证据、待办、`searchText`、`qualityReport`、`knowledgeReadiness`、`knowledgeGraph`，以及可选历史归档 `history`。知识平台可以用当前段落生成知识条目，用历史归档做审计和冲突追溯。`actionItems` 会为每条待办附带 `evidenceStatus`、`evidenceReason`、`evidence`、`suggestedOwner`、`suggestedOwnerEvidence`、`knowledgeSafe` 和 `requiresReview`，方便只消费待办列表的督办 Agent 直接判断是否可自动发送提醒；证据明细仍以完整的 `qualityReport.actionEvidence` 为准。当 `evidenceStatus=majority` 时，待办由多数录音源一致的主结果支撑，`knowledgeSafe=true`，但仍带 `requiresReview=true` 作为抽查回听提示；知识平台可以作为主证据使用，并保留复核标记。当 `evidenceStatus=conflict` 时，待办虽然有转写依据，但只由多源冲突片段支撑，知识平台必须保留人工复核状态，不得自动督办或沉淀为确定知识。
+响应包含当前转写版本、结构化段落、纯文本 `plain_text`、说话人映射、音频分段证据、待办、`searchText`、`qualityReport`、`knowledgeReadiness`、`knowledgeGraph`，以及可选历史归档 `history`。知识平台可以用当前段落生成知识条目，用历史归档做审计和冲突追溯。`actionItems` 会为每条待办附带 `evidenceStatus`、`evidenceReason`、`evidence`、`suggestedOwner`、`suggestedOwnerEvidence`、`knowledgeSafe` 和 `requiresReview`，方便只消费待办列表的督办 Agent 直接判断是否可自动发送提醒；证据明细仍以完整的 `qualityReport.actionEvidence` 为准。当 `evidenceStatus=majority` 时，待办由多数录音源一致的主结果支撑，`knowledgeSafe=true`，但仍带 `requiresReview=true` 作为抽查回听提示；知识平台可以作为主证据使用，并保留复核标记。多数源只代表任务文本证据更强，不能覆盖负责人不明确的风险；如果 owner 是 `待确认`、代词或泛化角色，`evidenceStatus` 必须保持 `weak_owner`、`knowledgeSafe=false`，可使用 `suggestedOwner` 做人工确认。当 `evidenceStatus=conflict` 时，待办虽然有转写依据，但只由多源冲突片段支撑，知识平台必须保留人工复核状态，不得自动督办或沉淀为确定知识。
 
 `knowledgeGraph` 是给人和外部 Agent 的辅助关系图，包含 meeting、speaker、topic、action、time 节点。topic 节点来自转写和待办文本的轻量抽取，用来连接“谁讨论了什么”“什么主题产生了哪些待办”“待办何时截止”。topic 节点的 `evidence` 会保留 `segment_id`、`source_id`、`source_segment_no`、`start_ms`、`end_ms` 和原文片段。它只能辅助上下文衔接和可视化查阅，不能替代 `transcript.segments`、`qualityReport.speakerEvidence`、`qualityReport.actionEvidence` 这些证据层字段。
 
@@ -95,7 +95,8 @@ Authorization: Bearer replace-with-long-random-token
 - `status=hold`：存在阻塞风险，建议暂缓自动入库。
 - `blockers`：阻塞入库的问题类型，例如缺少转写证据的待办或缺证据纪要。
 - `reviewWarnings`：建议人工复核的问题类型，例如发言人证据弱、负责人归属弱。
-- `actionItems[].evidenceStatus=majority`：待办由 `multi_source_majority` 主结果支撑；此时 `knowledgeSafe=true`、`requiresReview=true`，可以进入主证据链，但应保留抽查回听提示。
+- `actionItems[].evidenceStatus=majority`：待办由 `multi_source_majority` 主结果支撑，且负责人不是泛化/待确认；此时 `knowledgeSafe=true`、`requiresReview=true`，可以进入主证据链，但应保留抽查回听提示。
+- `actionItems[].evidenceStatus=weak_owner`：任务文本可能有多数源或普通转写证据，但负责人是 `待确认`、代词、时间短语或缺少负责人-任务上下文；此时 `knowledgeSafe=false`，应先人工应用或确认 `suggestedOwner`。
 - `actionItems[].evidenceStatus=conflict`：待办由 `multi_source_conflict` 片段支撑，通常表示不同录音源在日期、数量或负责人上不一致；此时 `knowledgeSafe=false`、`requiresReview=true`。
 
 ## ES/OpenSearch
@@ -263,12 +264,16 @@ also carries `evidenceStatus`, `evidenceReason`, `evidence`,
 still decide whether a reminder is grounded enough to send. The full evidence
 table remains `qualityReport.actionEvidence`. If an action has
 `evidenceStatus=majority`, it is backed by the `multi_source_majority` primary
-row; downstream systems may use it as primary evidence while preserving the
-replay-review marker because `knowledgeSafe=true` and `requiresReview=true`. If
-an action has `evidenceStatus=conflict`, it is only backed by transcript
-evidence from `multi_source_conflict` rows; downstream systems must keep it
-under human review and must not auto-send or store it as confirmed knowledge
-while `knowledgeSafe=false` and `requiresReview=true`.
+row and has a non-generic owner; downstream systems may use it as primary
+evidence while preserving the replay-review marker because `knowledgeSafe=true`
+and `requiresReview=true`. Majority evidence strengthens the task text only; if
+the owner is unknown, a pronoun, a time phrase, or otherwise weakly linked to
+the task, the action must stay `weak_owner` with `knowledgeSafe=false`, and
+`suggestedOwner` is only a human-review aid. If an action has
+`evidenceStatus=conflict`, it is only backed by transcript evidence from
+`multi_source_conflict` rows; downstream systems must keep it under human review
+and must not auto-send or store it as confirmed knowledge while
+`knowledgeSafe=false` and `requiresReview=true`.
 
 `knowledgeGraph` is an auxiliary relationship graph for people and agents. It
 contains meeting, speaker, topic, action, and time nodes. Topic nodes are

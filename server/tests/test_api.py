@@ -3339,6 +3339,66 @@ def test_quality_report_allows_majority_multisource_actions_with_review(tmp_path
     assert external_action["requiresReview"] is True
 
 
+def test_quality_report_keeps_generic_owner_weak_even_with_majority_evidence(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post(
+        "/api/web/meetings",
+        json={"title": "多数源但负责人待确认", "recording_mode": "multi_source", "max_sources": 3},
+        headers=headers,
+    )
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_majority_action_generic_owner', ?, 1, 'front+middle', 1, 'MANUAL_yitian', '翼天',
+             0, 60000, '错误样例周三前补三类，自动测试同步补完。',
+             0.9, '["semantic_final","multi_source_merged","multi_source_majority","multi_source_refs:front:1,middle:1"]', 'now'),
+            ('seg_minority_generic_owner_conflict', ?, 1, 'back', 1, 'MANUAL_yitian', '翼天',
+             200, 60200, '错误样例周五前补五类，自动测试同步补完。',
+             0.82, '["semantic_final","multi_source_conflict","speaker_review"]', 'now')
+            """,
+            (meeting_id, meeting_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO action_items (id, meeting_id, owner, task, due, status, created_at, updated_at)
+            VALUES
+            ('act_majority_generic_owner', ?, '待确认', '补充错误样例和自动测试', '周三', 'open', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
+    evidence = {item["id"]: item for item in detail["qualityReport"]["actionEvidence"]}
+    item = evidence["act_majority_generic_owner"]
+
+    assert item["status"] == "weak_owner"
+    assert item["suggested_owner"] == "翼天"
+    assert item["suggested_owner_evidence"]
+    assert detail["actionItems"][0]["evidenceStatus"] == "weak_owner"
+    assert detail["actionItems"][0]["knowledgeSafe"] is False
+    assert detail["actionItems"][0]["requiresReview"] is True
+    assert detail["qualityReport"]["metrics"]["generic_owner_count"] == 1
+    assert detail["qualityReport"]["metrics"]["weak_action_owner_count"] == 0
+
+    external = client.get(
+        f"/api/external/meetings/{meeting_id}",
+        headers={"Authorization": "Bearer test-token"},
+    ).json()
+    external_action = external["actionItems"][0]
+    assert external_action["evidenceStatus"] == "weak_owner"
+    assert external_action["knowledgeSafe"] is False
+    assert external_action["requiresReview"] is True
+    assert external_action["suggestedOwner"] == "翼天"
+
+
 def test_quality_report_marks_majority_multisource_summary_with_review(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)
