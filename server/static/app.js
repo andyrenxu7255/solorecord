@@ -877,7 +877,7 @@ function renderQualityReport(report, knowledgeReadiness = null) {
       { label: "查看证据弱段落", filter: "flag:speaker_evidence_weak", count: weakSpeakerEvidenceCount },
       { label: "查看长段落", filter: "risk:long_segment", count: longSegmentCount },
       { label: "查看覆盖不足分段", filter: "risk:source_coverage", count: sourceWeakCount },
-      { label: "查看占位转写", filter: "flag:mock_asr", count: placeholderTranscriptCount },
+      { label: "查看复核占位", filter: "risk:placeholder_transcript", count: placeholderTranscriptCount },
       { label: "查看多源冲突", filter: "risk:multi_source_conflict", count: multiSourceConflict },
       { label: "查看大模型分段", filter: "flag:semantic_llm", count: llmSegmentCount },
       { label: "查看纪要风险", filter: "summary:evidence_weak", count: summaryUnsupportedCount + summaryContradictionCount + summaryConflictCount },
@@ -994,7 +994,7 @@ function knowledgeReviewEvidenceText(type, item) {
   if (type === "source_coverage") {
     return {
       title: `音频覆盖不足：${sourceConflictLabel(item)}`,
-      detail: item.sample || "该录音分段当前缺少足够转写文本，建议回听或重转写。",
+      detail: item.sample || "该录音分段当前缺少足够转写文本。若有系统复核行，它只是可定位入口，不是有效转写。",
       className: "blocker",
     };
   }
@@ -1110,9 +1110,9 @@ function renderSourceCoverage(sourceCoverage) {
       ${weak.slice(0, 6).map((item) => `
         <div class="summary-evidence-item unsupported">
           <b>音频分段待核对：分段 ${escapeHtml(item.segment_no || "")}</b>
-          <p>${escapeHtml(item.sample || "该音频分段当前缺少足够转写文本，建议重新转写或回听确认。")}</p>
+          <p>${escapeHtml(item.sample || "该音频分段当前缺少足够转写文本。若有系统复核行，它只是可定位入口，不是有效转写。")}</p>
           <div class="summary-evidence-refs">
-            <span>${escapeHtml(formatTime(item.start_ms || 0))} - ${escapeHtml(formatTime(item.end_ms || 0))} · 有效转写 ${Number(item.substantive_transcript_segment_count || 0)} 段 / 复核行 ${Number(item.transcript_segment_count || 0)}</span>
+            <span>${escapeHtml(formatTime(item.start_ms || 0))} - ${escapeHtml(formatTime(item.end_ms || 0))} · 有效转写 ${Number(item.substantive_transcript_segment_count || 0)} 段 / 可定位复核行 ${Number(item.transcript_segment_count || 0)}</span>
             ${renderEvidenceJumpButton(item)}
           </div>
         </div>
@@ -1264,8 +1264,9 @@ function renderTranscriptRow(segment, speakerEvidenceMap = new Map()) {
     ? `${sourceDisplayLabel(segment)} · 分段 ${segment.source_segment_no}`
     : "最终整理";
   const flags = parseFlags(segment.flags);
-  const needsReview = flags.includes("speaker_review");
-  const weakSpeakerEvidence = flags.includes("speaker_evidence_weak");
+  const reviewPlaceholder = isPlaceholderTranscriptFlags(flags);
+  const needsReview = flags.includes("speaker_review") && !reviewPlaceholder;
+  const weakSpeakerEvidence = flags.includes("speaker_evidence_weak") && !reviewPlaceholder;
   const refinedByModel = flags.includes("llm_refined") || flags.includes("semantic_llm");
   const refinedByRule = flags.includes("semantic_rule");
   const scenario = transcriptScenarioLabel(flags);
@@ -1281,7 +1282,8 @@ function renderTranscriptRow(segment, speakerEvidenceMap = new Map()) {
     <div class="transcript-row"
       data-id="${escapeAttr(segment.id || "")}"
       data-source-id="${escapeAttr(segment.source_id || "")}"
-      data-source-segment="${escapeAttr(segment.source_segment_no || "")}">
+      data-source-segment="${escapeAttr(segment.source_segment_no || "")}"
+      data-review-placeholder="${reviewPlaceholder ? "true" : "false"}">
       <div>
         <b>${formatTime(segment.start_ms)}</b>
         <span class="hint">${source}</span>
@@ -2418,7 +2420,8 @@ function meetingStatusHint(status, audioSegments, transcriptSegments) {
 
 function buildSpeakerStats(segments, actions = []) {
   const stats = new Map();
-  segments.forEach((segment) => {
+  const substantiveSegments = segments.filter((segment) => !isPlaceholderTranscriptFlags(parseFlags(segment.flags)));
+  substantiveSegments.forEach((segment) => {
     const id = segment.speaker_id || segment.display_name || "speaker";
     const name = segment.display_name || segment.speaker_id || "发言人";
     const item = stats.get(id) || { id, name, count: 0, durationMs: 0, actionCount: 0, aliases: [] };
@@ -2445,8 +2448,10 @@ function buildSpeakerStats(segments, actions = []) {
 
 function buildSegmentInsights(segments, actions, audioSegments) {
   const groups = new Map();
-  const speakerTotals = buildSpeakerStats(segments);
+  const substantiveSegments = segments.filter((segment) => !isPlaceholderTranscriptFlags(parseFlags(segment.flags)));
+  const speakerTotals = buildSpeakerStats(substantiveSegments);
   segments.forEach((segment) => {
+    const isPlaceholder = isPlaceholderTranscriptFlags(parseFlags(segment.flags));
     const key = segment.source_segment_no
       ? sourceKey(segment.source_id, segment.source_segment_no)
       : inferAudioSegmentNo(segment, audioSegments) || "final";
@@ -2466,8 +2471,10 @@ function buildSegmentInsights(segments, actions, audioSegments) {
     item.startMs = Math.min(item.startMs, Number(segment.start_ms || 0));
     item.endMs = Math.max(item.endMs, Number(segment.end_ms || item.startMs));
     const speakerName = segment.display_name || segment.speaker_id || "发言人";
-    item.speakers.add(speakerName);
-    item.speakerCounts.set(speakerName, (item.speakerCounts.get(speakerName) || 0) + 1);
+    if (!isPlaceholder) {
+      item.speakers.add(speakerName);
+      item.speakerCounts.set(speakerName, (item.speakerCounts.get(speakerName) || 0) + 1);
+    }
     if (segment.text) item.texts.push(segment.text);
     groups.set(key, item);
   });
@@ -2485,7 +2492,7 @@ function buildSegmentInsights(segments, actions, audioSegments) {
   return items.map((item) => ({
     ...item,
     speakers: Array.from(item.speakers),
-    speakerHint: buildSpeakerHint(Array.from(item.speakers), speakerTotals, segments.length),
+    speakerHint: buildSpeakerHint(Array.from(item.speakers), speakerTotals, substantiveSegments.length),
     owners: Array.from(item.owners),
     topic: summarizeSegmentText(item.texts.join("")),
   }));
@@ -2503,14 +2510,15 @@ function buildSpeakerHint(speakers, speakerTotals, totalSegments) {
 }
 
 function buildClientQualityReport(segments, actions) {
+  const substantiveSegments = segments.filter((segment) => !isPlaceholderTranscriptFlags(parseFlags(segment.flags)));
   const speakerReviewCount = segments.filter((segment) => {
     const flags = parseFlags(segment.flags);
-    return flags.includes("speaker_review");
+    return flags.includes("speaker_review") && !isPlaceholderTranscriptFlags(flags);
   }).length;
-  const speakerCount = new Set(segments.map((segment) => segment.display_name || segment.speaker_id).filter(Boolean)).size;
+  const speakerCount = new Set(substantiveSegments.map((segment) => segment.display_name || segment.speaker_id).filter(Boolean)).size;
   const placeholderTranscriptCount = segments.filter((segment) => {
     const flags = parseFlags(segment.flags);
-    return flags.includes("mock_asr") || flags.includes("empty_asr") || flags.includes("missing_audio");
+    return isPlaceholderTranscriptFlags(flags);
   }).length;
   const actionableActions = actions.filter((action) => !isReviewOnlyAction(action));
   const systemReviewActionCount = actions.length - actionableActions.length;
@@ -2522,7 +2530,7 @@ function buildClientQualityReport(segments, actions) {
   if (placeholderTranscriptCount) {
     issues.push({ severity: "high", title: "存在占位转写", detail: `${placeholderTranscriptCount} 个段落需要重新转写或人工复核。` });
   }
-  if (speakerCount <= 1 && segments.length >= 2) {
+  if (speakerCount <= 1 && substantiveSegments.length >= 2) {
     issues.push({ severity: "medium", title: "整场只有一个发言人标签", detail: "多人会议建议检查长段并拆分发言人。" });
   }
   if (speakerReviewCount) {
@@ -2607,6 +2615,7 @@ function buildTranscriptFilters(segments) {
   const riskFilters = [
     { value: "flag:speaker_review", label: "需确认段落" },
     { value: "flag:speaker_evidence_weak", label: "发言人证据弱" },
+    { value: "risk:placeholder_transcript", label: "复核占位" },
     { value: "risk:long_segment", label: "长段落" },
     { value: "risk:multi_source_conflict", label: "多源冲突" },
     { value: "flag:multi_source_majority", label: "多数源确认" },
@@ -2656,10 +2665,16 @@ function matchesTranscriptFilter(segment, filter) {
   if (filter.startsWith("flag:")) {
     const wanted = filter.slice("flag:".length);
     const flags = parseFlags(segment.flags);
+    if (wanted === "speaker_review" && isPlaceholderTranscriptFlags(flags)) {
+      return false;
+    }
     if (wanted === "semantic_llm") {
       return flags.includes("semantic_llm") || flags.includes("llm_refined");
     }
     return flags.includes(wanted);
+  }
+  if (filter === "risk:placeholder_transcript") {
+    return isPlaceholderTranscriptFlags(parseFlags(segment.flags));
   }
   if (filter === "risk:long_segment") {
     return (
@@ -2676,6 +2691,10 @@ function matchesTranscriptFilter(segment, filter) {
     return parseFlags(segment.flags).includes("multi_source_conflict");
   }
   return true;
+}
+
+function isPlaceholderTranscriptFlags(flags) {
+  return ["mock_asr", "empty_asr", "missing_audio", "source_coverage_gap"].some((flag) => flags.includes(flag));
 }
 
 function actionStatusLabel(status) {

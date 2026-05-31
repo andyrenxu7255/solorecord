@@ -2317,6 +2317,8 @@ def test_final_processing_preserves_uncovered_audio_segment_for_review(
     assert report["metrics"]["placeholder_transcript_count"] == 1
     assert report["metrics"]["speaker_count"] == 1
     assert report["metrics"]["speaker_review_count"] == 0
+    assert report["metrics"]["llm_segment_count"] == 0
+    assert report["speakerEvidence"] == []
     assert report["metrics"]["long_segment_count"] == 0
     assert report["metrics"]["source_segment_coverage"] == 0.5
     assert report["metrics"]["source_segment_weak_count"] == 1
@@ -2430,9 +2432,109 @@ def test_quality_probe_postprocess_simulates_source_gap_review_rows(
     report = result["postprocess"]["quality_report"]
     assert report["metrics"]["source_segment_coverage"] == 0.5
     assert report["metrics"]["placeholder_transcript_count"] == 1
+    assert report["metrics"]["speaker_review_count"] == 0
+    assert result["postprocess"]["speaker_counts"] == [("任旭", 1)]
     weak_segment = report["sourceCoverage"]["weakSegments"][0]
     assert weak_segment["segment_no"] == 2
     assert weak_segment["has_review_placeholder"] is True
+
+
+def test_system_review_placeholder_is_not_meeting_fact_evidence() -> None:
+    import solorecord_server.processing as processing
+    import solorecord_server.repository as repository
+
+    segments = [
+        {
+            "speaker_id": "MANUAL_renxu",
+            "display_name": "任旭",
+            "source_id": "front",
+            "source_segment_no": 1,
+            "start_ms": 0,
+            "end_ms": 60000,
+            "text": "客户名单今天定版，销售工作区后续同步。",
+            "confidence": 0.9,
+            "flags": ["semantic_final"],
+        },
+        {
+            "speaker_id": "SYSTEM_REVIEW",
+            "display_name": "系统复核",
+            "source_id": "front",
+            "source_segment_no": 2,
+            "start_ms": 60000,
+            "end_ms": 120000,
+            "text": "音频分段 2（part2.m4a）已上传，但最终转写没有覆盖该来源分段。请回听音频或重新转写后再入库。",
+            "confidence": 0,
+            "flags": ["missing_audio", "source_coverage_gap", "speaker_review", "semantic_final", "system_review"],
+        },
+    ]
+    actions = [
+        {
+            "owner": "系统复核",
+            "task": "重新转写后再入库",
+            "due": "",
+            "status": "open",
+        }
+    ]
+
+    report = repository.build_quality_report(
+        [processing._segment_row_like(item) for item in segments],
+        [processing._action_row_like(item) for item in actions],
+        [],
+        "需要重新转写后再入库。",
+        "",
+    )
+
+    assert report["metrics"]["placeholder_transcript_count"] == 1
+    assert report["metrics"]["speaker_count"] == 1
+    assert report["metrics"]["speaker_review_count"] == 0
+    assert report["speakerEvidence"] == []
+    assert report["candidatePeople"] == ["任旭"]
+    assert report["metrics"]["unsupported_action_count"] == 1
+    assert report["summaryEvidence"]["unsupported_count"] == 1
+
+
+def test_knowledge_graph_excludes_system_review_placeholder_topics() -> None:
+    import solorecord_server.processing as processing
+    import solorecord_server.repository as repository
+
+    meeting = {"id": "mtg_graph_placeholder", "title": "占位图谱检查"}
+    segments = [
+        processing._segment_row_like(
+            {
+                "speaker_id": "MANUAL_renxu",
+                "display_name": "任旭",
+                "source_id": "front",
+                "source_segment_no": 1,
+                "start_ms": 0,
+                "end_ms": 60000,
+                "text": "客户名单今天定版。",
+                "confidence": 0.9,
+                "flags": ["semantic_final"],
+            }
+        ),
+        processing._segment_row_like(
+            {
+                "speaker_id": "SYSTEM_REVIEW",
+                "display_name": "系统复核",
+                "source_id": "front",
+                "source_segment_no": 2,
+                "start_ms": 60000,
+                "end_ms": 120000,
+                "text": "音频分段 2 已上传，但最终转写没有覆盖该来源分段。请回听音频或重新转写后再入库。",
+                "confidence": 0,
+                "flags": ["missing_audio", "source_coverage_gap", "speaker_review", "system_review"],
+            }
+        ),
+    ]
+
+    graph = repository.build_meeting_graph(meeting, [], [], segments)
+    labels = {node["label"] for node in graph["nodes"]}
+
+    assert "任旭" in labels
+    assert "客户名单" in labels
+    assert "系统复核" not in labels
+    assert "覆盖" not in labels
+    assert "重新转写" not in labels
 
 
 def test_final_processing_keeps_called_person_followup_commitments(tmp_path: Path) -> None:

@@ -27,6 +27,13 @@ from .repository import build_quality_report, meeting_document
 from .repository import build_knowledge_readiness
 from .utils import row_to_dict
 
+NON_SUBSTANTIVE_TRANSCRIPT_FLAGS = {
+    "mock_asr",
+    "empty_asr",
+    "missing_audio",
+    "source_coverage_gap",
+}
+
 
 def probe_meeting(
     meeting_id: str,
@@ -84,10 +91,12 @@ def probe_meeting(
             "segment_count": len(segments),
             "speaker_counts": Counter(
                 item.get("display_name") or item.get("speaker_id") or "待确认"
-                for item in segments
+                for item in _substantive_segments(segments)
             ).most_common(),
             "char_count": sum(len(str(item.get("text") or "")) for item in segments),
-            "candidate_people": list(mentioned_people_candidates(segments, limit=24).keys()),
+            "candidate_people": list(
+                mentioned_people_candidates(_substantive_segments(segments), limit=24).keys()
+            ),
             "quality_report": current_report,
             "knowledge_readiness": build_knowledge_readiness(current_report),
         },
@@ -152,7 +161,7 @@ def probe_meeting(
                 "final_start_end": _start_end(refined),
                 "final_speaker_counts": Counter(
                     item.get("display_name") or item.get("speaker_id") or "待确认"
-                    for item in refined
+                    for item in _substantive_segments(refined)
                 ).most_common(),
                 "timeline_repaired_count": sum(
                     1
@@ -164,6 +173,7 @@ def probe_meeting(
                     1
                     for item in refined
                     if "speaker_review" in (item.get("flags") or [])
+                    and not _is_non_substantive_segment(item)
                 ),
                 "action_count": len(actions),
                 "actions": actions[:20],
@@ -175,7 +185,7 @@ def probe_meeting(
                 "summary_preview": summary[:500],
                 "role_notes_preview": role_notes[:500],
                 "candidate_people": list(
-                    mentioned_people_candidates(refined, limit=24).keys()
+                    mentioned_people_candidates(_substantive_segments(refined), limit=24).keys()
                 ),
                 "quality_report": build_quality_report(
                     [_segment_row_like(item) for item in refined],
@@ -237,10 +247,12 @@ def _quality_snapshot(
         "segment_count": len(segments),
         "speaker_counts": Counter(
             item.get("display_name") or item.get("speaker_id") or "待确认"
-            for item in segments
+            for item in _substantive_segments(segments)
         ).most_common(),
         "char_count": sum(len(str(item.get("text") or "")) for item in segments),
-        "candidate_people": list(mentioned_people_candidates(segments, limit=24).keys()),
+        "candidate_people": list(
+            mentioned_people_candidates(_substantive_segments(segments), limit=24).keys()
+        ),
         "summary_preview": summary[:500],
         "role_notes_preview": role_notes[:500],
         "source_gap_review_segment_count": source_gap_count,
@@ -257,6 +269,14 @@ def _llm_delta_snapshot(llm_result: dict) -> dict:
         "quality_report": llm_result.get("quality_report") or {},
         "knowledge_readiness": llm_result.get("knowledge_readiness") or {},
     }
+
+
+def _substantive_segments(segments: list[dict]) -> list[dict]:
+    return [item for item in segments if not _is_non_substantive_segment(item)]
+
+
+def _is_non_substantive_segment(segment: dict) -> bool:
+    return bool(NON_SUBSTANTIVE_TRANSCRIPT_FLAGS & set(segment.get("flags") or []))
 
 
 def _quality_delta(source: dict, target: dict) -> dict:

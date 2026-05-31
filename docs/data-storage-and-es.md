@@ -86,6 +86,8 @@ Authorization: Bearer replace-with-long-random-token
 
 响应包含当前转写版本、结构化段落、纯文本 `plain_text`、说话人映射、音频分段证据、待办、`searchText`、`qualityReport`、`knowledgeReadiness`、`knowledgeGraph`，以及可选历史归档 `history`。知识平台可以用当前段落生成知识条目，用历史归档做审计和冲突追溯。`actionItems` 会为每条待办附带 `evidenceStatus`、`evidenceReason`、`evidence`、`suggestedOwner`、`suggestedOwnerEvidence`、`actionKind`、`autoActionable`、`reminderSafe`、`knowledgeSafe` 和 `requiresReview`，方便只消费待办列表的督办 Agent 直接判断是否可自动发送提醒；证据明细仍以完整的 `qualityReport.actionEvidence` 为准。当 `evidenceStatus=majority` 时，待办由多数录音源一致的主结果支撑，`knowledgeSafe=true`，但仍带 `requiresReview=true` 作为抽查回听提示；知识平台可以作为主证据使用，并保留复核标记。多数源只代表任务文本证据更强，不能覆盖负责人不明确的风险；如果 owner 是 `待确认`、代词或泛化角色，`evidenceStatus` 必须保持 `weak_owner`、`knowledgeSafe=false`，可使用 `suggestedOwner` 做人工确认。`evidenceStatus=system_review` 表示该行只是系统复核入口，例如占位转写提醒或“按转写原文复核待办”，此时 `actionKind=system_review`、`autoActionable=false`、`reminderSafe=false`、`knowledgeSafe=false`，不得进入自动督办队列。`evidenceStatus=unsupported` 表示待办本身缺转写证据，不应再额外出现在 `weakActionOwners`，知识平台应按缺证据风险处理。当 `evidenceStatus=conflict` 时，待办虽然有转写依据，但只由多源冲突片段支撑，知识平台必须保留人工复核状态，不得自动督办或沉淀为确定知识。当 `evidenceStatus=contradiction` 时，待办与同主题转写证据表达相反，例如把“先不要发客户通知”写成“发送客户通知”；知识平台必须阻断自动督办，按原文改写或删除后再入库。
 
+`mock_asr`、`empty_asr`、`missing_audio` 和 `source_coverage_gap` 转写行只是复核占位。它们可以出现在 `transcript.segments` 和 `qualityReport.sourceCoverage` 里，帮助用户定位要回听或重转写的音频分段；但不应作为会议事实参与纪要证据、待办证据、说话人统计、候选人名、图谱主题或外部知识入库。
+
 证据追溯有两层粒度：音频覆盖、分段重传和录音跳转按 `(source_id, source_segment_no)` 工作；待办、纪要和知识入库风险如果引用里有 `segment_id`，必须按该转写行精确判断 `multi_source_conflict` 或 `multi_source_majority`。只有缺少 `segment_id` 的旧式或探针模拟证据才退回来源分段键，避免同一 5 分钟来源分段里的其它正常议题被冲突片段误伤。
 
 `knowledgeGraph` 是给人和外部 Agent 的辅助关系图，包含 meeting、speaker、topic、action、time 节点。topic 节点来自转写和待办文本的轻量抽取，用来连接“谁讨论了什么”“什么主题产生了哪些待办”“待办何时截止”。topic 节点的 `evidence` 会保留 `segment_id`、`source_id`、`source_segment_no`、`start_ms`、`end_ms` 和原文片段。它只能辅助上下文衔接和可视化查阅，不能替代 `transcript.segments`、`qualityReport.speakerEvidence`、`qualityReport.actionEvidence` 这些证据层字段。
@@ -297,6 +299,11 @@ If no LLM is configured but ASR produced real transcript text, the server saves
 the conservative transcript-grounded summary without creating a synthetic
 "check transcript result" action. That reminder is reserved for placeholder
 rows such as `mock_asr`, `empty_asr`, or `missing_audio`.
+Transcript rows flagged with `mock_asr`, `empty_asr`, `missing_audio`, or
+`source_coverage_gap` are review placeholders only. They may be used to locate
+audio that needs replay or re-transcription, but they must not become summary
+evidence, action evidence, speaker facts, graph topics, or enterprise knowledge
+facts.
 `qualityReport.summaryEvidence.contradictedClaims` lists summary or role-note
 claims that match transcript evidence on the same topic but reverse completion,
 sending, confirmation, or launch status. This produces the

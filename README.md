@@ -164,6 +164,8 @@ ASR 返回原生说话人字段时，服务端会优先使用；如果只返回�
 
 系统复核提醒不是会议待办。Web 复制待办、Android 离线记录页和 Markdown/Word/PDF/JSON 导出都会保留“系统复核提醒”标记；外部督办系统必须同时检查 `actionKind=system_review`、`autoActionable=false` 和 `reminderSafe=false`，并跳过自动提醒。
 
+复核占位转写不是会议事实。`mock_asr`、`empty_asr`、`missing_audio` 和 `source_coverage_gap` 行只用于定位需要回听或重转写的音频分段，并阻断自动入库；它们不会进入发言人统计、人物校对证据、纪要证据、待办证据或知识图谱主题。
+
 语义重分段会把每个模型输出段继续关联回 `source_index`/`source_segment_no`，所以 UI、导出和外部知识平台都能追溯到原始音频分段。如果 LLM 只是把同一个 ASR 原生 speaker 的长段拆成多段，并且仍使用同一个 `speaker_id` 与 `native_speaker` 场景，最终段会保留 `asr_speaker`，表示它仍来自 ASR 原生说话人证据。通过上下文、任务归属或议题延续推断出的发言人会保留 `speaker_review`、`scenario:*` 和 `reason:*` 标记，但不会伪装成 `asr_speaker`；这表示“可用的会议上下文推断”，不是声纹确认。若 ASR 已经返回多个原生 speaker，但仍存在“李波后面看登录界面”“围城负责外接数据源”等未落到具体人物的线索，服务端也会触发语义后处理，而不是简单相信 ASR 粗分段。
 
 多源同录会在最终整理前做保守校对：不同录音源同一时间窗里文本高度相近且关键事实一致时合并并标记 `multi_source_merged`；两个及以上来源一致且没有被附近冲突压过时，同时标记 `multi_source_majority`，在 Web 质量区和外部 API 中显示为多数源确认。历史会议中已经存在 `multi_source_merged` 和 `multi_source_count:*` 但缺少 `multi_source_majority` 的旧行，服务端会在返回层派生这个可信标记，不需要重处理音频或改写数据库审计历史。如果某台设备晚几十秒开始录音，服务端还会结合该设备自己的分段号、时间差和文本相似度做错峰对齐，合并后额外标记 `multi_source_time_aligned`，避免把同一段发言重复展示。若多个来源各自漏掉不同短语，服务端可把来自原始转写的短语补到同一条证据里，并标记 `multi_source_complemented`；这不是模型编写新内容，而是多源证据互补。若时间、数量或负责人等关键事实冲突，例如一个源听成“周三三类”、另一个源听成“周五五类”，系统会保留两条证据并标记 `multi_source_conflict` 和 `speaker_review`，交给用户回听确认，不会为了去重抹掉冲突。

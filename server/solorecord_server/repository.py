@@ -287,7 +287,7 @@ def build_quality_report(
     ]
     unique_speakers = sorted(set(speaker_names))
     speaker_alias_conflicts = _speaker_alias_conflicts(substantive_segments)
-    candidate_people = mentioned_people_candidates(segments, limit=24)
+    candidate_people = mentioned_people_candidates(substantive_segments, limit=24)
     generic_actions = [
         item
         for item in actionable_actions
@@ -295,26 +295,26 @@ def build_quality_report(
     ]
     duplicate_actions = _duplicate_action_items(actionable_actions)
     owner_distribution = _owner_distribution(actionable_actions)
-    unsupported_actions = _unsupported_action_evidence(actionable_actions, segments)
+    unsupported_actions = _unsupported_action_evidence(actionable_actions, substantive_segments)
     unsupported_action_keys = {
         _action_quality_key(item) for item in unsupported_actions
     }
     weak_action_owners = _weak_action_owner_evidence(
         actionable_actions,
-        segments,
+        substantive_segments,
         candidate_people,
         unsupported_action_keys,
     )
     action_evidence = _action_evidence_items(
         actions,
-        segments,
+        substantive_segments,
         unsupported_actions,
         weak_action_owners,
     )
     contradictory_actions = [
         item for item in action_evidence if item.get("status") == "contradiction"
     ]
-    summary_evidence = _summary_evidence_report(summary, role_notes, segments)
+    summary_evidence = _summary_evidence_report(summary, role_notes, substantive_segments)
     source_coverage = _source_coverage_report(segments, audio_segments)
     recording_source_ids = sorted(
         {
@@ -349,22 +349,31 @@ def build_quality_report(
         if not _is_non_substantive_transcript_flags(_flags(item.get("flags")))
         and _looks_like_unresolved_mixed_segment(str(item.get("text") or ""))
     ]
+    substantive_flags = [
+        flags
+        for flags in flags_by_segment
+        if not _is_non_substantive_transcript_flags(flags)
+    ]
     llm_segments = sum(
         1
-        for flags in flags_by_segment
+        for flags in substantive_flags
         if "llm_refined" in flags or "semantic_llm" in flags
     )
-    rule_segments = sum(1 for flags in flags_by_segment if "semantic_rule" in flags)
-    timeline_repaired = sum(1 for flags in flags_by_segment if "timeline_repaired" in flags)
-    multi_source_merged = sum(1 for flags in flags_by_segment if "multi_source_merged" in flags)
-    multi_source_majority = sum(1 for flags in flags_by_segment if "multi_source_majority" in flags)
-    multi_source_complemented = sum(
-        1 for flags in flags_by_segment if "multi_source_complemented" in flags
+    rule_segments = sum(1 for flags in substantive_flags if "semantic_rule" in flags)
+    timeline_repaired = sum(1 for flags in substantive_flags if "timeline_repaired" in flags)
+    multi_source_merged = sum(1 for flags in substantive_flags if "multi_source_merged" in flags)
+    multi_source_majority = sum(
+        1 for flags in substantive_flags if "multi_source_majority" in flags
     )
-    multi_source_conflicts = sum(1 for flags in flags_by_segment if "multi_source_conflict" in flags)
+    multi_source_complemented = sum(
+        1 for flags in substantive_flags if "multi_source_complemented" in flags
+    )
+    multi_source_conflicts = sum(
+        1 for flags in substantive_flags if "multi_source_conflict" in flags
+    )
     multi_source_conflict_items = _multi_source_conflict_items(segments, flags_by_segment)
     scenario_counts: dict[str, int] = {}
-    for flags in flags_by_segment:
+    for flags in substantive_flags:
         for flag in flags:
             if str(flag).startswith("scenario:"):
                 scenario = str(flag).split(":", 1)[1] or "unknown"
@@ -784,6 +793,8 @@ def _is_generic_speaker_label(name: str) -> bool:
 def _speaker_evidence_items(segments: list[dict], flags_by_segment: list[list[str]]) -> list[dict]:
     items: list[dict] = []
     for index, (segment, flags) in enumerate(zip(segments, flags_by_segment, strict=False)):
+        if _is_non_substantive_transcript_flags(flags):
+            continue
         if "speaker_review" not in flags and "speaker_evidence_weak" not in flags:
             continue
         speaker = str(segment.get("display_name") or segment.get("speaker_id") or "").strip()
@@ -1117,7 +1128,7 @@ def _placeholder_transcript_segments(
     return [
         item
         for item, flags in zip(segments, flags_by_segment, strict=False)
-        if PLACEHOLDER_ASR_FLAGS & set(flags)
+        if NON_SUBSTANTIVE_TRANSCRIPT_FLAGS & set(flags)
     ]
 
 
@@ -2933,6 +2944,8 @@ def _graph_topic_mentions(transcript_segments, action_items) -> dict[str, dict]:
 
     for row in transcript_segments:
         segment = row_to_dict(row)
+        if _is_non_substantive_transcript_flags(_flags(segment.get("flags"))):
+            continue
         speaker_id = str(segment.get("speaker_id") or "")
         for topic in _graph_topics_for_text(str(segment.get("text") or "")):
             add_topic(
@@ -3039,6 +3052,8 @@ def _canonical_speaker_map(speakers, transcript_segments) -> dict[str, str]:
             mapping[speaker_id] = display_name or speaker_id
     for row in transcript_segments:
         item = row_to_dict(row)
+        if _is_non_substantive_transcript_flags(_flags(item.get("flags"))):
+            continue
         speaker_id = str(item.get("speaker_id") or "").strip()
         display_name = str(item.get("display_name") or speaker_id).strip()
         if speaker_id:
