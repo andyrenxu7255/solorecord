@@ -232,7 +232,7 @@ Agent 验收时必须检查：
 - `qualityReport.speakerEvidence` 应包含需校对段落的 `segment_id`、`scenario_label`、`reason` 和相邻上下文；如果 Web 时间线没有显示这些信息，先修前端再做真实会议验收。
 - `qualityReport.metrics.speaker_alias_conflict_count` 应反映同一 `display_name` 是否对应多个 `speaker_id`。外部知识 Agent 应按 `knowledgeGraph.nodes[].speaker_ids` 保留追溯，不要把同名多标签当成多个人。
 - `knowledgeGraph.nodes` 应包含 `topic` 节点，`edges` 应包含“讨论主题”“讨论”“产生待办”“截止”等关系。topic 节点的 `evidence` 必须携带 `segment_id`、`source_id`、`source_segment_no`、`start_ms`、`end_ms` 和原文片段，外部知识 Agent 可以用 topic 连接上下文，但必须保留转写引用作为证据层。
-- `qualityReport.metrics.action_evidence_coverage` 应反映待办是否有转写证据；`unsupported_action_count` 大于 0 时，前端应提示“待办缺少转写证据”，便于人工复核模型是否补写。LLM 新生成的待办如果是 `unsupported`，保存前应被移除；如果全部生成待办都缺证据，应保留一条带原文片段的“按转写原文复核待办”。LLM 未配置但 ASR 已生成真实转写时，不应凭空创建“检查转写结果”系统待办；只有 `mock_asr`、`empty_asr`、`missing_audio` 这类占位转写才保留复核提醒。外部督办 Agent 不得把这类复核待办当作可自动提醒事项。已判定 `unsupported` 的待办不应再列入 `weakActionOwners`，否则下游会把一个缺证据问题误读成缺证据加负责人弱证据两个独立风险。
+- `qualityReport.metrics.action_evidence_coverage` 应反映待办是否有转写证据；`unsupported_action_count` 大于 0 时，前端应提示“待办缺少转写证据”，便于人工复核模型是否补写。LLM 新生成的待办如果是 `unsupported`，保存前应被移除；如果全部生成待办都缺证据，应保留一条带原文片段的“按转写原文复核待办”。LLM 未配置但 ASR 已生成真实转写时，不应凭空创建“检查转写结果”系统待办；只有 `mock_asr`、`empty_asr`、`missing_audio` 这类占位转写才保留复核提醒。外部督办 Agent 不得把这类复核待办当作可自动提醒事项；它们必须显示为 `evidenceStatus=system_review`、`actionKind=system_review`、`autoActionable=false`、`reminderSafe=false`，且不计入泛化负责人或缺证据待办风险。已判定 `unsupported` 的待办不应再列入 `weakActionOwners`，否则下游会把一个缺证据问题误读成缺证据加负责人弱证据两个独立风险。
 - `qualityReport.metrics.source_segment_coverage` 和 `qualityReport.sourceCoverage.weakSegments` 应按 `(source_id, source_segment_no)` 反映每个上传音频分段是否被最终转写覆盖。`source_segment_coverage_weak` 是知识入库阻塞项，外部知识 Agent 不得把该会议视为完整证据。`multi_source_conflict_count` 大于 0 时也应保留人工复核状态。
 - `qualityReport.multiSourceConflicts` 是多源冲突的结构化回听清单，条目包含 `segment_id`、`source_id`、`source_segment_no`、发言人、时间、文本、flags 和附近其它冲突来源。外部知识 Agent 应直接消费该字段做证据复核，不要只根据 `multi_source_conflict_count` 写入确定知识。
 - `qualityReport.metrics.summary_contradiction_count` 大于 0 或出现 `summary_evidence_contradiction` 时，说明纪要/分角色整理把同主题转写证据写反了，例如原文是“还没定版/先不要发”，纪要却写成“已定版/已发送”。这是知识入库阻塞项，Agent 必须以转写原文为准，不能把该纪要沉淀为确定知识。LLM 新生成纪要只要存在缺证据要点，也应在保存前降级为“基于转写原文的保守整理”。
@@ -251,7 +251,7 @@ Agent 验收时必须检查：
 - 被点名句里的议题词可作为待办主责线索。例如“翼天你先说自动测试”后面出现匿名片段“覆盖脚本明天补完”时，可以把主责建议为翼天；但主持人本人不应仅因说出点名句而获得该任务。质量报告也要在粗分段时给出同样建议：当前行 speaker 仍是主持人或 `发言人 1` 时，点名窗口仍可产出 `suggested_owner`；“舞台音响、自动测试、测试覆盖、数据源”等任务名词仍必须过滤，不能成为 owner。
 - 销售、法务、前端、测试等组织角色可以作为待办 owner，但必须有同一短语窗口内的责任或动作证据，例如“销售这边周五前跟进客户名单”“前端周三前改页面”。不要把“自动测试、测试覆盖、数据源”等任务词本身当成组织负责人。
 - 如果 `processing._normalize_action_owners()` 给 task 追加 `协同：姓名`，外部督办 Agent 应保留该字段含义：owner 是主责人，协同人是配合人，不要把协同人改成新的主责人。
-- `qualityReport.actionEvidence` 应逐条覆盖全部待办，并提供 `supported`、`majority`、`conflict`、`contradiction`、`weak_owner` 或 `unsupported` 状态和证据片段。证据片段应包含 `segment_id`、`source_id`、`source_segment_no`、`start_ms`、`speaker` 和 `text`。`majority` 表示待办由 `multi_source_majority` 主结果支撑，且负责人不是泛化/待确认，`actionItems[].knowledgeSafe=true` 且 `requiresReview=true`，外部督办 Agent 可作为主证据使用但要保留抽查回听提示；`conflict` 表示待办只由 `multi_source_conflict` 片段支撑，外部督办 Agent 必须将 `knowledgeSafe=false`、`requiresReview=true` 作为硬门禁，不能自动发送提醒；`contradiction` 表示同主题转写证据阻止执行该动作，外部督办 Agent 必须同样阻断自动提醒和确定知识入库；`unsupported` 的 LLM 新生成待办应在保存前删除。如果 owner 是 `待确认`、代词、时间短语或泛化角色，`weak_owner` 优先级高于 `majority`，即使任务文本由多数源支撑也不得自动督办。外部督办 Agent 可先读 `actionItems[].evidenceStatus`、`knowledgeSafe` 和 `requiresReview` 判断是否可以自动发送提醒；需要完整审计时再消费 `qualityReport.actionEvidence` 并保留证据追溯链接。
+- `qualityReport.actionEvidence` 应逐条覆盖全部待办，并提供 `supported`、`majority`、`system_review`、`conflict`、`contradiction`、`weak_owner` 或 `unsupported` 状态和证据片段。证据片段应包含 `segment_id`、`source_id`、`source_segment_no`、`start_ms`、`speaker` 和 `text`。`majority` 表示待办由 `multi_source_majority` 主结果支撑，且负责人不是泛化/待确认，`actionItems[].knowledgeSafe=true` 且 `requiresReview=true`，外部督办 Agent 可作为主证据使用但要保留抽查回听提示；`system_review` 表示系统复核入口，不是会议待办，外部督办 Agent 必须将 `autoActionable=false`、`reminderSafe=false` 作为硬门禁并跳过；`conflict` 表示待办只由 `multi_source_conflict` 片段支撑，外部督办 Agent 必须将 `knowledgeSafe=false`、`requiresReview=true` 作为硬门禁，不能自动发送提醒；`contradiction` 表示同主题转写证据阻止执行该动作，外部督办 Agent 必须同样阻断自动提醒和确定知识入库；`unsupported` 的 LLM 新生成待办应在保存前删除。如果 owner 是 `待确认`、代词、时间短语或泛化角色，`weak_owner` 优先级高于 `majority`，即使任务文本由多数源支撑也不得自动督办。外部督办 Agent 可先读 `actionItems[].evidenceStatus`、`actionKind`、`autoActionable`、`reminderSafe`、`knowledgeSafe` 和 `requiresReview` 判断是否可以自动发送提醒；需要完整审计时再消费 `qualityReport.actionEvidence` 并保留证据追溯链接。
 
 LLM：
 
@@ -381,7 +381,7 @@ macOS/iOS/HarmonyOS 发布：
 - 不要绕过 `_assert_access` 暴露会议数据。
 - 转写是知识平台的原始证据层。外部知识整理 Agent 只能通过 `/api/external/meetings/{meetingId}/transcript?include_history=true` 拉取，不能直接读 SQLite、`var/` 或音频文件路径。
 - 外部响应里的 `knowledgeReadiness` 是入库门禁摘要。`status=hold` 时不要自动沉淀纪要或督办；`status=review_first` 时可以入库但必须保留风险标记；`status=ready` 才适合无人工介入地进入知识库。`summary_evidence_contradiction` 属于 `hold` 阻塞项，表示纪要与转写原文相反，外部 Agent 必须回到转写证据重建摘要。`knowledgeReadiness.reviewEvidence` 会把多源冲突、覆盖不足分段、发言人风险、纪要风险和待办风险汇总成复核清单，Agent 应把它作为人工复核入口，而不是当成新的事实来源。Web 会议详情的“整理质量”会同步展示“知识入库复核”，便于人工验收；覆盖不足分段可能没有可跳转转写，此时应回听音频或触发重转写。
-- 外部响应里的 `actionItems` 已直接携带 `evidenceStatus`、`evidenceReason`、`evidence`、`suggestedOwner`、`suggestedOwnerEvidence`、`knowledgeSafe` 和 `requiresReview`。`evidenceStatus=majority` 表示多数源主结果支撑且负责人不是泛化/待确认，`knowledgeSafe=true` 且 `requiresReview=true`，可以作为主证据使用但要保留抽查回听提示；`evidenceStatus=weak_owner` 表示任务文本可能有证据但当前负责人不可直接督办，即使任务文本由多数源支撑也要保持 `knowledgeSafe=false`；`evidenceStatus=conflict` 表示只由冲突片段支撑，必须阻断自动督办和确定知识入库。只做督办的 Agent 可以先读这些字段；需要完整证据审计时再读 `qualityReport.actionEvidence`。
+- 外部响应里的 `actionItems` 已直接携带 `evidenceStatus`、`evidenceReason`、`evidence`、`suggestedOwner`、`suggestedOwnerEvidence`、`actionKind`、`autoActionable`、`reminderSafe`、`knowledgeSafe` 和 `requiresReview`。`evidenceStatus=majority` 表示多数源主结果支撑且负责人不是泛化/待确认，`knowledgeSafe=true` 且 `requiresReview=true`，可以作为主证据使用但要保留抽查回听提示；`evidenceStatus=system_review` 表示系统复核入口，不是会议待办，必须跳过自动督办；`evidenceStatus=weak_owner` 表示任务文本可能有证据但当前负责人不可直接督办，即使任务文本由多数源支撑也要保持 `knowledgeSafe=false`；`evidenceStatus=conflict` 表示只由冲突片段支撑，必须阻断自动督办和确定知识入库。只做督办的 Agent 可以先读这些字段；需要完整证据审计时再读 `qualityReport.actionEvidence`。
 - 非 admin 不允许删除转写段；转写重处理、分段重传或人工替换前必须保留 `transcript_segment_history`。
 - 不要在 Web 使用未转义的动态 HTML。
 - 不要让 Android 端承担重 ASR/降噪/说话人分离。
@@ -842,12 +842,16 @@ The repository can be public only if no real secrets, runtime data, databases, c
   and must not read SQLite, `var/`, or raw audio paths directly.
 - External `actionItems` entries directly include `evidenceStatus`,
   `evidenceReason`, `evidence`, `suggestedOwner`,
-  `suggestedOwnerEvidence`, `knowledgeSafe`, and `requiresReview`.
+  `suggestedOwnerEvidence`, `actionKind`, `autoActionable`, `reminderSafe`,
+  `knowledgeSafe`, and `requiresReview`.
   `evidenceStatus=majority` means the action is backed by a
   `multi_source_majority` primary row and the owner is not generic or unknown,
   so reminder agents may use it while keeping the replay-review hint. If the
   owner is unknown, a pronoun, a time phrase, or a generic role, `weak_owner`
   takes precedence over `majority` and `knowledgeSafe` stays false.
+  `evidenceStatus=system_review` means the row is a system review entry, not a
+  meeting action; reminder agents must skip it because `autoActionable=false`
+  and `reminderSafe=false`.
   `evidenceStatus=conflict` means the action is only backed by
   `multi_source_conflict` transcript rows; reminder agents must treat
   `knowledgeSafe=false` and `requiresReview=true` as a hard gate and must not

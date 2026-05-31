@@ -8,6 +8,12 @@ from .llm_adapters import mentioned_people_candidates
 from .owner_terms import ORG_OWNER_TERMS
 from .utils import row_to_dict
 
+PLACEHOLDER_ASR_FLAGS = {"mock_asr", "empty_asr", "missing_audio"}
+SYSTEM_REVIEW_TASK_PREFIXES = (
+    "检查转写结果并补充真实会议纪要",
+    "按转写原文复核待办",
+)
+
 
 def meeting_document(meeting_id: str) -> dict:
     with get_db() as db:
@@ -261,6 +267,13 @@ def build_quality_report(
     actions = [row_to_dict(row) for row in action_items]
     audio_segments = [row_to_dict(row) for row in audio_rows]
     flags_by_segment = [_flags(item.get("flags")) for item in segments]
+    placeholder_segments = _placeholder_transcript_segments(segments, flags_by_segment)
+    system_review_actions = [
+        item for item in actions if _is_system_review_action(item)
+    ]
+    actionable_actions = [
+        item for item in actions if not _is_system_review_action(item)
+    ]
     speaker_names = [
         str(item.get("display_name") or item.get("speaker_id") or "").strip()
         for item in segments
@@ -270,16 +283,18 @@ def build_quality_report(
     speaker_alias_conflicts = _speaker_alias_conflicts(segments)
     candidate_people = mentioned_people_candidates(segments, limit=24)
     generic_actions = [
-        item for item in actions if _is_generic_owner(str(item.get("owner") or ""))
+        item
+        for item in actionable_actions
+        if _is_generic_owner(str(item.get("owner") or ""))
     ]
-    duplicate_actions = _duplicate_action_items(actions)
-    owner_distribution = _owner_distribution(actions)
-    unsupported_actions = _unsupported_action_evidence(actions, segments)
+    duplicate_actions = _duplicate_action_items(actionable_actions)
+    owner_distribution = _owner_distribution(actionable_actions)
+    unsupported_actions = _unsupported_action_evidence(actionable_actions, segments)
     unsupported_action_keys = {
         _action_quality_key(item) for item in unsupported_actions
     }
     weak_action_owners = _weak_action_owner_evidence(
-        actions,
+        actionable_actions,
         segments,
         candidate_people,
         unsupported_action_keys,
@@ -303,8 +318,8 @@ def build_quality_report(
         }
     )
     evidence_coverage = (
-        1 - len(unsupported_actions) / len(actions)
-        if actions
+        1 - len(unsupported_actions) / len(actionable_actions)
+        if actionable_actions
         else 1
     )
     review_segments = [
@@ -353,6 +368,18 @@ def build_quality_report(
                 "empty_transcript",
                 "暂无转写",
                 "会议还没有可检查的转写文本，无法判断分段和负责人质量。",
+            )
+        )
+    if placeholder_segments:
+        issues.append(
+            _quality_issue(
+                "high",
+                "placeholder_transcript",
+                "存在占位转写",
+                (
+                    f"{len(placeholder_segments)} 个转写段来自占位、空语音或缺音频兜底，"
+                    "需要重新转写或人工复核后再入库。"
+                ),
             )
         )
     if len(unique_speakers) <= 1 and len(segments) >= 2:
@@ -438,6 +465,21 @@ def build_quality_report(
                 "generic_owner",
                 "待办负责人仍需确认",
                 f"{len(generic_actions)} 个待办的负责人仍是泛化角色或待确认。",
+            )
+        )
+    if system_review_actions:
+        sample = "；".join(
+            str(item.get("task") or "")[:80] for item in system_review_actions[:3]
+        )
+        issues.append(
+            _quality_issue(
+                "medium",
+                "system_review_action",
+                "存在系统复核提醒",
+                (
+                    f"{len(system_review_actions)} 条记录只是系统复核入口，不是可自动督办的会议待办"
+                    f"{'：' + sample if sample else '。'}"
+                ),
             )
         )
     if duplicate_actions:
@@ -553,6 +595,8 @@ def build_quality_report(
             "speaker_count": len(unique_speakers),
             "candidate_people_count": len(candidate_people),
             "action_count": len(actions),
+            "actionable_action_count": len(actionable_actions),
+            "system_review_action_count": len(system_review_actions),
             "generic_owner_count": len(generic_actions),
             "duplicate_action_count": len(duplicate_actions),
             "unsupported_action_count": len(unsupported_actions),
@@ -570,6 +614,7 @@ def build_quality_report(
             ),
             "source_segment_coverage": source_coverage["coverage"],
             "source_segment_weak_count": source_coverage["weak_count"],
+            "placeholder_transcript_count": len(placeholder_segments),
             "owner_distribution": owner_distribution,
             "top_owner_ratio": concentration[2] if concentration else 0,
             "speaker_review_count": len(review_segments),
@@ -641,12 +686,14 @@ def _quality_issue(severity: str, issue_type: str, title: str, detail: str) -> d
 def _quality_recommendations(issues: list[dict]) -> list[str]:
     mapping = {
         "empty_transcript": "先完成转写，再生成纪要和待办。",
+        "placeholder_transcript": "占位转写不能作为会议证据，先重新转写或回听校正。",
         "single_speaker": "优先检查最长的转写段，使用“按人名拆分”和“设为新发言人”。",
         "speaker_review": "在人人物校对区把模型推断的人名统一成真实姓名。",
         "speaker_evidence_weak": "优先播放对应音频，确认模型没有把角色、议题或误听词当成人名。",
         "speaker_alias_conflict": "同名多标签通常来自模型保留 ASR 原始 speaker_id，确认后用人物校对统一。",
         "long_segment": "把超过 3 分钟或内容很长的段落继续按议题拆分。",
         "mixed_speaker_markers": "对出现“某某说/某某：”的段落执行按人名拆分。",
+        "system_review_action": "系统复核提醒只用于提醒人工补齐记录，不要复制给 IM 或同步为督办。",
         "generic_owner": "复制待办前先把“待确认/负责人”改成真实人名或具体团队。",
         "duplicate_action": "复制待办前先合并重复项，避免同一件事多次发给负责人。",
         "unsupported_action_evidence": "对缺少证据的待办回看转写或录音，确认不是模型补写。",
@@ -904,6 +951,7 @@ def build_knowledge_readiness(quality_report: dict) -> dict:
     issue_types = {str(item.get("type") or "") for item in issues}
     blocking_types = {
         "empty_transcript",
+        "placeholder_transcript",
         "generic_owner",
         "unsupported_action_evidence",
         "action_evidence_contradiction",
@@ -923,6 +971,7 @@ def build_knowledge_readiness(quality_report: dict) -> dict:
         "long_segment",
         "mixed_speaker_markers",
         "single_speaker",
+        "system_review_action",
     }
     blockers = sorted(issue_types & blocking_types)
     review_warnings = sorted(issue_types & review_types)
@@ -937,8 +986,11 @@ def build_knowledge_readiness(quality_report: dict) -> dict:
             "speakerReviewCount": int(metrics.get("speaker_review_count") or 0),
             "speakerEvidenceWeakCount": int(metrics.get("speaker_evidence_weak_count") or 0),
             "speakerAliasConflictCount": int(metrics.get("speaker_alias_conflict_count") or 0),
+            "placeholderTranscriptCount": int(metrics.get("placeholder_transcript_count") or 0),
             "unsupportedActionCount": int(metrics.get("unsupported_action_count") or 0),
             "weakActionOwnerCount": int(metrics.get("weak_action_owner_count") or 0),
+            "systemReviewActionCount": int(metrics.get("system_review_action_count") or 0),
+            "actionableActionCount": int(metrics.get("actionable_action_count") or 0),
             "actionContradictionCount": int(metrics.get("action_contradiction_count") or 0),
             "summaryUnsupportedCount": int(metrics.get("summary_unsupported_count") or 0),
             "summaryContradictionCount": int(
@@ -971,6 +1023,8 @@ def _knowledge_readiness_notes(blockers: list[str], review_warnings: list[str]) 
     notes = []
     if blockers:
         notes.append("存在阻塞风险，建议暂缓自动入库，先由人工复核。")
+    if "placeholder_transcript" in blockers:
+        notes.append("存在占位转写，知识平台不得把占位文本当作会议原始证据。")
     if "unsupported_action_evidence" in blockers:
         notes.append("待办缺少转写证据，知识平台不要直接生成督办记录。")
     if "action_evidence_contradiction" in blockers:
@@ -989,6 +1043,8 @@ def _knowledge_readiness_notes(blockers: list[str], review_warnings: list[str]) 
         notes.append("同一显示名对应多个说话人标签，知识平台应按显示名合并展示并保留原始 speaker_id。")
     if "weak_action_owner_evidence" in review_warnings:
         notes.append("待办负责人证据弱，知识平台应保留待确认状态。")
+    if "system_review_action" in review_warnings:
+        notes.append("系统复核提醒不是会议待办，外部督办 Agent 应忽略自动提醒。")
     return notes
 
 
@@ -1010,6 +1066,7 @@ def _knowledge_review_evidence(quality_report: dict) -> dict:
         item
         for item in quality_report.get("actionEvidence") or []
         if item.get("status") in {
+            "system_review",
             "majority",
             "conflict",
             "contradiction",
@@ -1039,6 +1096,30 @@ def _flags(value) -> list[str]:
             return [str(item) for item in parsed]
         return [str(parsed)]
     return [str(value)] if value else []
+
+
+def _placeholder_transcript_segments(
+    segments: list[dict],
+    flags_by_segment: list[list[str]] | None = None,
+) -> list[dict]:
+    if flags_by_segment is None:
+        flags_by_segment = [_flags(item.get("flags")) for item in segments]
+    return [
+        item
+        for item, flags in zip(segments, flags_by_segment, strict=False)
+        if PLACEHOLDER_ASR_FLAGS & set(flags)
+    ]
+
+
+def _is_system_review_action(action: dict) -> bool:
+    task = str(action.get("task") or "").strip()
+    return any(task.startswith(prefix) for prefix in SYSTEM_REVIEW_TASK_PREFIXES)
+
+
+def _system_review_action_reason(task: str) -> str:
+    if task.startswith("检查转写结果并补充真实会议纪要"):
+        return "这是占位转写、空语音或缺音频触发的系统复核提醒，不是会议中产生的可督办待办。"
+    return "这是模型待办被证据检查拦截后保留的人工复核入口，不应自动同步为督办事项。"
 
 
 def _segment_duration_ms(item: dict) -> int:
@@ -1110,6 +1191,7 @@ def _is_generic_owner(owner: str) -> bool:
         "主持人",
         "全体",
         "团队",
+        "系统",
         "待确认",
     }
     return owner in generic_words or _is_pronoun_owner(owner) or owner.endswith("负责人")
@@ -1323,13 +1405,18 @@ def _action_items_with_evidence(action_items, quality_report: dict) -> list[dict
         item["suggestedOwner"] = str(evidence.get("suggested_owner") or "")
         item["suggestedOwnerReason"] = str(evidence.get("suggested_owner_reason") or "")
         item["suggestedOwnerEvidence"] = evidence.get("suggested_owner_evidence") or []
-        item["knowledgeSafe"] = status in {"supported", "majority"}
-        item["requiresReview"] = status in {
+        item["actionKind"] = str(evidence.get("action_kind") or "meeting_action")
+        item["reviewOnly"] = bool(evidence.get("review_only") or False)
+        item["autoActionable"] = bool(evidence.get("auto_actionable", True))
+        item["reminderSafe"] = bool(evidence.get("reminder_safe", False))
+        item["knowledgeSafe"] = bool(evidence.get("knowledge_safe", status in {"supported", "majority"}))
+        item["requiresReview"] = item["reviewOnly"] or status in {
             "unsupported",
             "weak_owner",
             "conflict",
             "contradiction",
             "majority",
+            "system_review",
             "unknown",
         }
         items.append(item)
@@ -1356,7 +1443,19 @@ def _action_evidence_items(
         contradiction = _action_claim_contradiction(task, evidence)
         status = "supported"
         reason = "该待办可在转写中找到相关任务或负责人线索。"
-        if contradiction:
+        action_kind = "meeting_action"
+        review_only = False
+        auto_actionable = True
+        reminder_safe = False
+        knowledge_safe = True
+        if _is_system_review_action(action):
+            status = "system_review"
+            action_kind = "system_review"
+            review_only = True
+            auto_actionable = False
+            knowledge_safe = False
+            reason = _system_review_action_reason(task)
+        elif contradiction:
             status = "contradiction"
             reason = contradiction
         elif key in unsupported_keys:
@@ -1374,6 +1473,13 @@ def _action_evidence_items(
         elif evidence and _evidence_has_multisource_conflict(evidence, segments):
             status = "conflict"
             reason = "该待办依据来自多源同录冲突片段，请回听确认日期、数量或负责人后再督办。"
+        if status not in {"supported", "majority"}:
+            knowledge_safe = False
+            auto_actionable = False
+        if status == "majority":
+            reminder_safe = False
+        elif status == "supported":
+            reminder_safe = True
         items.append(
             {
                 "id": action.get("id", ""),
@@ -1382,6 +1488,11 @@ def _action_evidence_items(
                 "due": action.get("due", ""),
                 "status": status,
                 "reason": reason,
+                "action_kind": action_kind,
+                "review_only": review_only,
+                "auto_actionable": auto_actionable,
+                "reminder_safe": reminder_safe,
+                "knowledge_safe": knowledge_safe,
                 "evidence": evidence,
                 "suggested_owner": suggestion.get("owner", ""),
                 "suggested_owner_reason": suggestion.get("reason", ""),
@@ -2743,16 +2854,25 @@ def build_meeting_graph(meeting: dict, speakers, action_items, transcript_segmen
         item = row_to_dict(row)
         task = item.get("task") or f"待办 {index}"
         action_id = f"action:{item.get('id') or index}"
-        add_node(action_id, task, "action", status=item.get("status", "open"), due=item.get("due", ""))
-        add_edge(f"meeting:{meeting_id}", action_id, "产生待办")
+        is_system_review = _is_system_review_action(item)
+        add_node(
+            action_id,
+            task,
+            "action",
+            status=item.get("status", "open"),
+            due=item.get("due", ""),
+            action_kind="system_review" if is_system_review else "meeting_action",
+            auto_actionable=not is_system_review,
+        )
+        add_edge(f"meeting:{meeting_id}", action_id, "系统复核" if is_system_review else "产生待办")
         for topic in _graph_topics_for_text(task):
             topic_id = f"topic:{_stable_graph_token(topic)}"
             if topic_id not in node_ids:
                 add_node(topic_id, topic, "topic", mention_count=1, evidence=[])
                 add_edge(f"meeting:{meeting_id}", topic_id, "讨论主题")
-            add_edge(topic_id, action_id, "产生待办")
+            add_edge(topic_id, action_id, "复核入口" if is_system_review else "产生待办")
         owner = (item.get("owner") or "").strip()
-        if owner:
+        if owner and not is_system_review:
             owner_id = _speaker_node_for_owner(owner, speaker_name_by_id)
             if owner_id not in node_ids:
                 add_node(owner_id, owner, "speaker", inferred=True)

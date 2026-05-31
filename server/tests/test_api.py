@@ -2402,7 +2402,33 @@ def test_llm_unavailable_keeps_review_action_for_placeholder_asr(
     detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
     assert len(detail["actionItems"]) == 1
     assert detail["actionItems"][0]["task"] == "检查转写结果并补充真实会议纪要"
+    assert detail["actionItems"][0]["evidenceStatus"] == "system_review"
+    assert detail["actionItems"][0]["actionKind"] == "system_review"
+    assert detail["actionItems"][0]["reviewOnly"] is True
+    assert detail["actionItems"][0]["autoActionable"] is False
+    assert detail["actionItems"][0]["reminderSafe"] is False
+    assert detail["actionItems"][0]["knowledgeSafe"] is False
     assert detail["actionItems"][0]["requiresReview"] is True
+    assert detail["qualityReport"]["metrics"]["placeholder_transcript_count"] == 1
+    assert detail["qualityReport"]["metrics"]["system_review_action_count"] == 1
+    assert detail["qualityReport"]["metrics"]["actionable_action_count"] == 0
+    assert detail["qualityReport"]["actionEvidence"][0]["status"] == "system_review"
+    assert detail["qualityReport"]["actionEvidence"][0]["review_only"] is True
+    assert "placeholder_transcript" in detail["knowledgeReadiness"]["blockers"]
+    assert "system_review_action" in detail["knowledgeReadiness"]["reviewWarnings"]
+    assert (
+        detail["knowledgeReadiness"]["reviewEvidence"]["actionEvidence"][0]["status"]
+        == "system_review"
+    )
+
+    external = client.get(
+        f"/api/external/meetings/{meeting_id}",
+        headers={"Authorization": "Bearer test-token"},
+    ).json()
+    external_action = external["actionItems"][0]
+    assert external_action["actionKind"] == "system_review"
+    assert external_action["autoActionable"] is False
+    assert external_action["reminderSafe"] is False
 
 
 def test_insert_transcript_preserves_manual_speaker_names_only(tmp_path: Path) -> None:
@@ -4815,7 +4841,15 @@ def test_llm_summary_keeps_review_fallback_when_all_actions_unsupported() -> Non
         "",
     )
     assert report["metrics"]["unsupported_action_count"] == 0
-    assert report["metrics"]["generic_owner_count"] == 1
+    assert report["metrics"]["generic_owner_count"] == 0
+    assert report["metrics"]["system_review_action_count"] == 1
+    assert report["metrics"]["actionable_action_count"] == 0
+    assert report["actionEvidence"][0]["status"] == "system_review"
+    assert report["actionEvidence"][0]["action_kind"] == "system_review"
+    assert report["actionEvidence"][0]["auto_actionable"] is False
+    assert report["actionEvidence"][0]["reminder_safe"] is False
+    issue_types = {item["type"] for item in report["issues"]}
+    assert "system_review_action" in issue_types
 
 
 def test_grounded_summary_prefers_suggested_action_owner_without_fallback() -> None:
@@ -5299,6 +5333,14 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "apply-suggested-owner" in app_js
     assert "未找到相关转写片段" in app_js
     assert "action-row-wrap" in app_js
+    assert "系统复核提醒" in app_js
+    assert "isReviewOnlyAction" in app_js
+    assert "autoActionable" in app_js
+    assert "reminderSafe" in app_js
+    assert "data-review-only" in app_js
+    assert "暂无可复制的督办待办" in app_js
+    assert "system_review_action_count" in app_js
+    assert "placeholder_transcript_count" in app_js
     assert "发言人证据风险" in app_js
     assert "发言人证据弱" in app_js
     assert "speakerEvidence" in app_js
@@ -5316,6 +5358,10 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert ".action-risk-line" in styles
     assert ".action-risk-line.supported" in styles
     assert ".action-risk-line.conflict" in styles
+    assert ".action-risk-line.system_review" in styles
+    assert ".system-review-banner" in styles
+    assert ".action-row-wrap.review-only" in styles
+    assert ".knowledge-review-item.system-review" in styles
     assert ".action-suggestion" in styles
     assert ".action-risk-evidence" in styles
     assert ".evidence-jump" in styles

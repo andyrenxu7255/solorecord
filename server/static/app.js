@@ -538,8 +538,12 @@ function renderRecordingSources(sources) {
 
 function renderActionRow(item, riskMap = new Map()) {
   const risk = actionRiskForItem(item, riskMap);
+  const reviewOnly = isReviewOnlyAction(item) || risk?.reviewOnly;
   return `
-    <div class="action-row-wrap ${risk ? "has-risk" : ""}" data-action-id="${escapeAttr(item.id || "")}">
+    <div class="action-row-wrap ${risk ? "has-risk" : ""} ${reviewOnly ? "review-only" : ""}"
+      data-action-id="${escapeAttr(item.id || "")}"
+      data-review-only="${reviewOnly ? "true" : "false"}">
+      ${reviewOnly ? `<div class="system-review-banner">系统复核提醒，不会复制为督办待办</div>` : ""}
       <div class="action-row">
         <input class="input action-owner" placeholder="负责人" value="${escapeAttr(item.owner || "")}">
         <input class="input action-task" placeholder="待办事项" value="${escapeAttr(item.task || "")}">
@@ -564,6 +568,7 @@ function buildActionRiskMap(report) {
     const labels = {
       supported: ["有转写依据"],
       majority: ["多数源确认"],
+      system_review: ["系统复核提醒"],
       weak_owner: ["负责人证据弱"],
       conflict: ["多源冲突待核对"],
       contradiction: ["待办与原文相反"],
@@ -579,6 +584,10 @@ function buildActionRiskMap(report) {
         ? dedupeActionEvidence(item.suggested_owner_evidence)
         : [],
       type: item.status || "supported",
+      actionKind: item.action_kind || "meeting_action",
+      reviewOnly: Boolean(item.review_only || item.action_kind === "system_review" || item.status === "system_review"),
+      autoActionable: item.auto_actionable !== false,
+      reminderSafe: item.reminder_safe === true,
     });
   });
   const add = (item, type, label, detail) => {
@@ -601,6 +610,14 @@ function buildActionRiskMap(report) {
       }
     });
     current.type = current.type || type;
+    current.reviewOnly = Boolean(
+      current.reviewOnly
+      || item.review_only
+      || item.action_kind === "system_review"
+      || item.status === "system_review"
+    );
+    current.autoActionable = item.auto_actionable !== false && current.autoActionable !== false;
+    current.reminderSafe = item.reminder_safe === true || current.reminderSafe === true;
     map.set(key, current);
   };
   (report.unsupportedActions || []).forEach((item) => {
@@ -624,7 +641,19 @@ function dedupeActionEvidence(items) {
 }
 
 function actionRiskForItem(item, riskMap) {
-  return riskMap.get(actionRiskKey(item)) || null;
+  const risk = riskMap.get(actionRiskKey(item)) || null;
+  if (risk || !isReviewOnlyAction(item)) return risk;
+  return {
+    labels: ["系统复核提醒"],
+    details: [reviewOnlyActionReason(item)],
+    evidence: Array.isArray(item.evidence) ? dedupeActionEvidence(item.evidence) : [],
+    suggestedEvidence: [],
+    type: "system_review",
+    actionKind: "system_review",
+    reviewOnly: true,
+    autoActionable: false,
+    reminderSafe: false,
+  };
 }
 
 function actionRiskKey(item) {
@@ -675,6 +704,26 @@ function renderActionRisk(risk) {
       ` : ""}
     </div>
   `;
+}
+
+function isReviewOnlyAction(item) {
+  const task = String(item?.task || "").trim();
+  return Boolean(
+    item?.reviewOnly
+    || item?.actionKind === "system_review"
+    || item?.action_kind === "system_review"
+    || item?.evidenceStatus === "system_review"
+    || task.startsWith("检查转写结果并补充真实会议纪要")
+    || task.startsWith("按转写原文复核待办")
+  );
+}
+
+function reviewOnlyActionReason(item) {
+  const task = String(item?.task || "").trim();
+  if (task.startsWith("检查转写结果并补充真实会议纪要")) {
+    return "这是占位转写、空语音或缺音频触发的复核入口，不是会议中产生的可督办待办。";
+  }
+  return "这是模型待办被证据检查拦截后保留的人工复核入口，不会自动复制为督办事项。";
 }
 
 function renderEvidenceJumpButton(item) {
@@ -787,6 +836,8 @@ function renderQualityReport(report, knowledgeReadiness = null) {
   const longSegmentCount = Number(metrics.long_segment_count || 0);
   const llmSegmentCount = Number(metrics.llm_segment_count || 0);
   const sourceWeakCount = Number(metrics.source_segment_weak_count || 0);
+  const placeholderTranscriptCount = Number(metrics.placeholder_transcript_count || 0);
+  const systemReviewActionCount = Number(metrics.system_review_action_count || 0);
   const multiSourceMerged = Number(metrics.multi_source_merged_count || 0);
   const multiSourceMajority = Number(metrics.multi_source_majority_count || 0);
   const multiSourceComplemented = Number(metrics.multi_source_complemented_count || 0);
@@ -813,6 +864,7 @@ function renderQualityReport(report, knowledgeReadiness = null) {
       <div><span>多源互补</span><b>${multiSourceComplemented}</b></div>
       <div><span>多源冲突</span><b>${multiSourceConflict}</b></div>
       <div><span>待办归属风险</span><b>${ownerRisk}</b></div>
+      <div><span>系统复核提醒</span><b>${systemReviewActionCount}</b></div>
     </div>
     ${renderKnowledgeReadiness(knowledgeReadiness)}
     ${renderSummaryEvidence(report.summaryEvidence)}
@@ -825,6 +877,7 @@ function renderQualityReport(report, knowledgeReadiness = null) {
       { label: "查看证据弱段落", filter: "flag:speaker_evidence_weak", count: weakSpeakerEvidenceCount },
       { label: "查看长段落", filter: "risk:long_segment", count: longSegmentCount },
       { label: "查看覆盖不足分段", filter: "risk:source_coverage", count: sourceWeakCount },
+      { label: "查看占位转写", filter: "flag:mock_asr", count: placeholderTranscriptCount },
       { label: "查看多源冲突", filter: "risk:multi_source_conflict", count: multiSourceConflict },
       { label: "查看大模型分段", filter: "flag:semantic_llm", count: llmSegmentCount },
       { label: "查看纪要风险", filter: "summary:evidence_weak", count: summaryUnsupportedCount + summaryContradictionCount + summaryConflictCount },
@@ -968,9 +1021,9 @@ function knowledgeReviewEvidenceText(type, item) {
   }
   if (type === "action") {
     return {
-      title: `待办复核：${item.task || "待办事项"}`,
+      title: `${item.status === "system_review" || item.action_kind === "system_review" ? "系统复核提醒" : "待办复核"}：${item.task || "待办事项"}`,
       detail: `${actionEvidenceStatusLabel(item.status)}${item.owner ? ` · 负责人：${item.owner}` : ""}${item.reason ? ` · ${item.reason}` : ""}`,
-      className: item.status === "conflict" || item.status === "contradiction" ? "conflict" : "warning",
+      className: item.status === "conflict" || item.status === "contradiction" ? "conflict" : item.status === "system_review" ? "system-review" : "warning",
     };
   }
   return {
@@ -991,7 +1044,9 @@ function knowledgeReadinessStatusLabel(status) {
 function knowledgeIssueLabel(type) {
   return {
     empty_transcript: "转写为空",
+    placeholder_transcript: "占位转写",
     generic_owner: "泛化负责人",
+    system_review_action: "系统复核提醒",
     unsupported_action_evidence: "待办缺证据",
     action_evidence_contradiction: "待办与原文相反",
     summary_evidence_weak: "纪要证据弱",
@@ -1126,6 +1181,7 @@ function actionEvidenceStatusLabel(status) {
   return {
     supported: "有转写依据",
     majority: "多数源确认",
+    system_review: "系统复核提醒",
     conflict: "多源冲突待核对",
     contradiction: "待办与原文相反",
     weak_owner: "负责人证据弱",
@@ -1453,9 +1509,10 @@ async function copyActionsToClipboard() {
     task: row.querySelector(".action-task").value.trim(),
     due: row.querySelector(".action-due").value.trim(),
     status: row.querySelector(".action-status").value,
-  })).filter((item) => item.task);
+    reviewOnly: row.dataset.reviewOnly === "true",
+  })).filter((item) => item.task && !item.reviewOnly);
   if (!items.length) {
-    toast("暂无可复制的待办");
+    toast("暂无可复制的督办待办，系统复核提醒已跳过");
     return;
   }
   const text = buildActionCopyText(items);
@@ -2450,10 +2507,19 @@ function buildClientQualityReport(segments, actions) {
     return flags.includes("speaker_review");
   }).length;
   const speakerCount = new Set(segments.map((segment) => segment.display_name || segment.speaker_id).filter(Boolean)).size;
-  const genericOwnerCount = actions.filter((action) => isGenericOwner(action.owner)).length;
+  const placeholderTranscriptCount = segments.filter((segment) => {
+    const flags = parseFlags(segment.flags);
+    return flags.includes("mock_asr") || flags.includes("empty_asr") || flags.includes("missing_audio");
+  }).length;
+  const actionableActions = actions.filter((action) => !isReviewOnlyAction(action));
+  const systemReviewActionCount = actions.length - actionableActions.length;
+  const genericOwnerCount = actionableActions.filter((action) => isGenericOwner(action.owner)).length;
   const issues = [];
   if (!segments.length) {
     issues.push({ severity: "high", title: "暂无转写", detail: "会议还没有可检查的转写文本。" });
+  }
+  if (placeholderTranscriptCount) {
+    issues.push({ severity: "high", title: "存在占位转写", detail: `${placeholderTranscriptCount} 个段落需要重新转写或人工复核。` });
   }
   if (speakerCount <= 1 && segments.length >= 2) {
     issues.push({ severity: "medium", title: "整场只有一个发言人标签", detail: "多人会议建议检查长段并拆分发言人。" });
@@ -2464,6 +2530,9 @@ function buildClientQualityReport(segments, actions) {
   if (genericOwnerCount) {
     issues.push({ severity: "high", title: "待办负责人仍需确认", detail: `${genericOwnerCount} 个待办负责人偏泛。` });
   }
+  if (systemReviewActionCount) {
+    issues.push({ severity: "medium", title: "存在系统复核提醒", detail: "系统复核提醒不是可自动督办的会议待办。" });
+  }
   const score = Math.max(0, Math.min(100, 92 - issues.reduce((sum, issue) => sum + (issue.severity === "high" ? 22 : 12), 0)));
   return {
     score,
@@ -2473,12 +2542,16 @@ function buildClientQualityReport(segments, actions) {
       candidate_people_count: 0,
       speaker_review_count: speakerReviewCount,
       speaker_evidence_weak_count: 0,
+      action_count: actions.length,
+      actionable_action_count: actionableActions.length,
+      system_review_action_count: systemReviewActionCount,
       generic_owner_count: genericOwnerCount,
       unsupported_action_count: 0,
       weak_action_owner_count: 0,
-      action_evidence_coverage: actions.length ? 1 : 1,
+      action_evidence_coverage: actionableActions.length ? 1 : 1,
       summary_evidence_coverage: 1,
       summary_unsupported_count: 0,
+      placeholder_transcript_count: placeholderTranscriptCount,
     },
     candidatePeople: [],
     summaryEvidence: { coverage: 1, claim_count: 0, unsupported_count: 0, unsupportedClaims: [] },

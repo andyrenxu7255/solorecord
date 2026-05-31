@@ -991,6 +991,11 @@ textarea.input {
   border-color: #b7d7ff;
 }
 
+.knowledge-review-item.system-review {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
 .knowledge-review-item.conflict {
   background: #fff1f2;
   border-color: #fecdd3;
@@ -1302,6 +1307,23 @@ textarea.input {
   padding: 8px;
 }
 
+.action-row-wrap.review-only {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+}
+
+.system-review-banner {
+  align-items: center;
+  background: #eef2f7;
+  border: 1px solid #d8e0ea;
+  border-radius: var(--radius-sm);
+  color: #475569;
+  display: flex;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 8px;
+}
+
 .action-risk-line {
   display: flex;
   align-items: center;
@@ -1313,6 +1335,10 @@ textarea.input {
 
 .action-risk-line.supported {
   color: #285d4b;
+}
+
+.action-risk-line.system_review {
+  color: #475569;
 }
 
 .action-risk-line.unsupported,
@@ -1328,6 +1354,11 @@ textarea.input {
   color: #285d4b;
   padding: 3px 7px;
   font-weight: 700;
+}
+
+.action-risk-line.system_review span {
+  background: #e2e8f0;
+  color: #334155;
 }
 
 .action-risk-line.unsupported span,
