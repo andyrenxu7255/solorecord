@@ -596,6 +596,8 @@ def _parse_refined_segments(content: str, original_segments: list[dict]) -> list
         invalid_speaker_name = _is_invalid_person_name(speaker)
         scenario = _scenario_value(item.get("scenario"))
         inferred_speaker = _speaker_differs_from_source(speaker, fallback)
+        if _keeps_native_asr_speaker(fallback, speaker_id, scenario, inferred_speaker):
+            flags.append("asr_speaker")
         if (
             confidence < 0.75
             or speaker in {"待确认", "未知", "不确定"}
@@ -649,6 +651,21 @@ def _refined_base_flags(fallback: dict) -> list[str]:
         if (text in preserved_exact or text.startswith(preserved_prefixes)) and text not in flags:
             flags.append(text)
     return flags
+
+
+def _keeps_native_asr_speaker(
+    fallback: dict,
+    speaker_id: str,
+    scenario: str,
+    inferred_speaker: bool,
+) -> bool:
+    fallback_flags = {str(flag) for flag in fallback.get("flags") or []}
+    if "asr_speaker" not in fallback_flags:
+        return False
+    if scenario != "native_speaker" or inferred_speaker:
+        return False
+    fallback_speaker_id = str(fallback.get("speaker_id") or "").strip()
+    return not fallback_speaker_id or str(speaker_id or "").strip() == fallback_speaker_id
 
 
 def _fallback_segment_for_refined_item(

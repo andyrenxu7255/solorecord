@@ -301,7 +301,8 @@ server/solorecord_server/llm_adapters.py
 5. LLM 不可用或返回非法 JSON 时，`processing._rule_refine_segments()` 用规则兜底拆明显人名标记；`_split_inline_addressed_response()` 会处理 ASR 没有在“某某你先说”和“我这边/我负责”回应之间加标点的单段文本；`_apply_contextual_speaker_inference()` 会继续处理“被点名后下一段以我这边/我负责回应”以及“没有我字但继续同一议题、交付物、时间节点”的归属，但会写入 `speaker_review` 和 `reason:*`，让用户确认。
 6. 分段上传会写入 `semantic_partial`，让用户在会议中先看到阶段草稿；结束会议后的 `/finish` 总是基于整场上下文再跑一次语义后处理，并写入 `semantic_final`。
 7. `_insert_transcript_segments()` 持久化 `flags` 和 `source_segment_no`，供 Web 标记“需确认”“大模型分段”“规则分段”“上下文推断”，也供外部知识平台追踪来源。已人工保存为具体人名的 `speaker_id` 会优先覆盖后续同 ID 的泛化 ASR 名称；`发言人 1/2/3` 这类泛化旧名不会压住模型新识别的人名。
-8. 如果 LLM 把一个多源合并段拆成多个较短对话轮次，每个新段仍要继承 `multi_source_refs:*`，否则 `sourceCoverage` 会误判原始录音分段未覆盖。带 `multi_source_conflict` 的段落即使被 LLM 重排，也必须继续保留 `speaker_review` 或冲突标记，方便 Web 和外部知识 Agent 阻断自动入库。
+8. 如果 LLM 只是把同一个 ASR 原生 speaker 的长段拆成多个较短段落，并且输出仍使用同一个 `speaker_id` 与 `native_speaker` 场景，`llm_adapters._parse_refined_segments()` 会保留 `asr_speaker`。如果 LLM 通过 `context_bridge`、`dialogue_logic` 或 `task_ownership` 改了发言人，则不能保留 `asr_speaker`，必须继续用 `speaker_review` 表示“上下文推断待确认”。
+9. 如果 LLM 把一个多源合并段拆成多个较短对话轮次，每个新段仍要继承 `multi_source_refs:*`，否则 `sourceCoverage` 会误判原始录音分段未覆盖。带 `multi_source_conflict` 的段落即使被 LLM 重排，也必须继续保留 `speaker_review` 或冲突标记，方便 Web 和外部知识 Agent 阻断自动入库。
 
 质量检查：
 
@@ -877,7 +878,8 @@ Processing order:
 5. If the LLM is unavailable or returns invalid JSON, `processing._rule_refine_segments()` falls back to clear speaker-marker splitting. `_split_inline_addressed_response()` also handles ASR text that omits punctuation between a named call-out and a reply such as “I will handle it”. `_apply_contextual_speaker_inference()` can conservatively link first-person or same-topic continuation replies to the previously called person. It always keeps `speaker_review` and `reason:*` flags for human review.
 6. Segment uploads write `semantic_partial` so users can see an in-meeting draft. The final `/finish` flow always runs full-meeting semantic post-processing and writes `semantic_final`.
 7. `_insert_transcript_segments()` persists `flags`, `source_id`, and `source_segment_no`, letting Web show “needs review”, “LLM segmented”, and “rule segmented”, and letting external knowledge agents trace evidence back to source segments. Concrete manually saved names for a `speaker_id` take precedence over later generic ASR names; generic names such as `Speaker 1` do not block new model-inferred names.
-8. If the LLM splits one multi-source merged row into shorter turns, every derived row must still inherit `multi_source_refs:*`; otherwise `sourceCoverage` may falsely report missing original audio segments. Rows with `multi_source_conflict` must keep the conflict or `speaker_review` flag after LLM refinement so Web and external knowledge agents can block automatic ingestion.
+8. If the LLM only splits a long row from the same native ASR speaker and keeps the same `speaker_id` with `native_speaker`, `llm_adapters._parse_refined_segments()` preserves `asr_speaker`. If the LLM changes the speaker through `context_bridge`, `dialogue_logic`, or `task_ownership`, it must not preserve `asr_speaker`; keep `speaker_review` so reviewers know the attribution is contextual.
+9. If the LLM splits one multi-source merged row into shorter turns, every derived row must still inherit `multi_source_refs:*`; otherwise `sourceCoverage` may falsely report missing original audio segments. Rows with `multi_source_conflict` must keep the conflict or `speaker_review` flag after LLM refinement so Web and external knowledge agents can block automatic ingestion.
 
 Quality checks:
 

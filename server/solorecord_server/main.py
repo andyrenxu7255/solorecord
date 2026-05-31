@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import json
+import sqlite3
 from pathlib import Path
 import re
 import secrets
@@ -168,24 +169,29 @@ def create_meeting(request: MeetingCreate, user: CurrentUser) -> dict:
     max_sources = _clamp_source_count(request.max_sources, default=1 if recording_mode == "single" else 3)
     join_code = _normalize_join_code(request.join_code) or _new_join_code()
     with get_db() as db:
-        db.execute(
-            """
-            INSERT INTO meetings
-            (id, title, owner_id, status, join_code, recording_mode, max_sources, created_at, updated_at, started_at)
-            VALUES (?, ?, ?, 'local_recorded', ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                meeting_id,
-                title,
-                user["id"],
-                join_code,
-                recording_mode,
-                max_sources,
-                now_iso(),
-                now_iso(),
-                request.started_at,
-            ),
-        )
+        try:
+            db.execute(
+                """
+                INSERT INTO meetings
+                (id, title, owner_id, status, join_code, recording_mode, max_sources, created_at, updated_at, started_at)
+                VALUES (?, ?, ?, 'local_recorded', ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    meeting_id,
+                    title,
+                    user["id"],
+                    join_code,
+                    recording_mode,
+                    max_sources,
+                    now_iso(),
+                    now_iso(),
+                    request.started_at,
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            if "meetings.join_code" in str(exc):
+                raise HTTPException(status_code=409, detail="join_code already exists") from exc
+            raise
         db.execute(
             "INSERT INTO meeting_members (meeting_id, user_id, role) VALUES (?, ?, 'owner')",
             (meeting_id, user["id"]),

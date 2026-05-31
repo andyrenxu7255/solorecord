@@ -5,6 +5,7 @@ import json
 import math
 import struct
 import sys
+import uuid
 import wave
 from pathlib import Path
 
@@ -183,7 +184,8 @@ def main() -> int:
     expect(external, 200, "external meetings")
     assert external.json()["items"], "expected external meeting items"
 
-    multi = _run_multi_source_story(client, headers)
+    smoke_run_id = uuid.uuid4().hex[:8].upper()
+    multi = _run_multi_source_story(client, headers, smoke_run_id)
 
     print(
         json.dumps(
@@ -214,7 +216,12 @@ def _valid_wav_bytes(frequency: int = 440) -> bytes:
     return buffer.getvalue()
 
 
-def _run_multi_source_story(client: httpx.Client, owner_headers: dict[str, str]) -> dict:
+def _run_multi_source_story(
+    client: httpx.Client,
+    owner_headers: dict[str, str],
+    run_id: str,
+) -> dict:
+    join_code = f"SMK{run_id}"
     user_login = client.post(
         "/api/auth/demo-login",
         json={"display_name": "Smoke Source B", "email": "source-b@example.com"},
@@ -227,7 +234,7 @@ def _run_multi_source_story(client: httpx.Client, owner_headers: dict[str, str])
         headers=owner_headers,
         json={
             "title": "Smoke Multi Source Meeting",
-            "join_code": "SMOKE0601",
+            "join_code": join_code,
             "recording_mode": "multi_source",
             "max_sources": 3,
             "source_label": "front recorder",
@@ -236,12 +243,12 @@ def _run_multi_source_story(client: httpx.Client, owner_headers: dict[str, str])
     expect(create, 200, "multi-source create")
     meeting_id = create.json()["meeting"]["id"]
 
-    discover = client.get("/api/web/meetings/discover?q=SMOKE0601", headers=user_headers)
+    discover = client.get(f"/api/web/meetings/discover?q={join_code}", headers=user_headers)
     expect(discover, 200, "multi-source discover")
     discover_items = discover.json()["items"]
     assert len(discover_items) == 1, "expected one joinable multi-source meeting"
     discover_item = discover_items[0]
-    assert discover_item["join_code"] == "SMOKE0601"
+    assert discover_item["join_code"] == join_code
     assert discover_item["source_count"] == 1
     assert discover_item["remaining_sources"] == 2
     for hidden_key in ("summary", "role_notes", "transcriptSegments", "audioSegments", "actionItems"):
@@ -251,7 +258,7 @@ def _run_multi_source_story(client: httpx.Client, owner_headers: dict[str, str])
         "/api/web/meetings/join",
         headers=user_headers,
         json={
-            "join_code": "SMOKE0601",
+            "join_code": join_code,
             "source_label": "back recorder",
             "device_name": "smoke device",
         },

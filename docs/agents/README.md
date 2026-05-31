@@ -223,6 +223,7 @@ Agent 验收时必须检查：
 - 如果点名前存在“先过整体节奏/先看背景/我们先对齐范围”等主持人导语，导语必须保留原 ASR 发言人并标记 `source_prefix_before_callout`，不能并入第一个被点名人的发言。
 - 如果主持人点名某人负责某议题，后续段落没有“我”字但继续围绕同一议题、交付物或时间节点展开，服务端可以做 `contextual_speaker_inference`，但必须保留 `speaker_review` 和 `reason:*`，不能当成声纹确认。
 - LLM 语义重分段输入和输出都应携带 `source_index`/`source_id`/`source_segment_no`。如果新增模型适配器，必须保留这些字段，避免最终转写失去原始音频分段追溯能力。
+- LLM 只拆分同一个 ASR 原生 speaker 的长段、且输出仍使用相同 `speaker_id` 和 `native_speaker` 场景时，可以保留 `asr_speaker`；如果 LLM 通过上下文、任务归属或议题延续改了发言人，绝不能保留 `asr_speaker`，必须保留 `speaker_review`。
 - 即使 ASR 返回多个原生 speaker，只要存在未解析的“某某负责/某某确认/某某后面看”等任务归属线索，也应进入语义后处理；不能只因为有多个 `asr_speaker` 就跳过上下文分段。
 - 分段上传后应能看到带 `semantic_partial` 的阶段转写；`/finish` 后应把带 `semantic_final` 的整场上下文重分段结果写回数据库，而不是只用于纪要。
 - 验证人工改名闭环：把某个 `speaker_id` 改成具体姓名后重新处理，最终时间线应保留该姓名；但旧的 `发言人 N` 泛化名称不应阻止大模型/规则识别新的真实人名。
@@ -683,6 +684,7 @@ Agent acceptance checks:
 - Host preface text before a call-out, such as agenda/background setup, must remain assigned to the original ASR speaker and carry `source_prefix_before_callout`; do not merge it into the first called person's turn.
 - LLM semantic refinement input and output should carry `source_index`, `source_id`, and `source_segment_no`. New adapters must preserve these fields so final transcript rows remain traceable to source audio.
 - If a host calls on someone for a topic and the next segment continues the same topic, deliverable, or deadline without saying “I”, the server may write `contextual_speaker_inference`; it must keep `speaker_review` and `reason:*`, and agents must not treat it as voiceprint confirmation.
+- If the LLM only splits a long row from the same native ASR speaker and keeps the same `speaker_id` plus `native_speaker`, it may preserve `asr_speaker`; if it changes the speaker through context, task ownership, or topic continuation, it must not preserve `asr_speaker` and must keep `speaker_review`.
 - Partial transcripts should be visible after segment upload; `/finish` should write the full-meeting context-refined timeline back to the database, not only use it for summaries.
 - The Web timeline should surface review markers derived from `speaker_review`, `llm_refined`/`semantic_llm`, and `semantic_rule`.
 - `qualityReport.metrics.speaker_evidence_weak_count` should show whether LLM speaker names lack original ASR evidence. If it is above zero, play the affected segments first.

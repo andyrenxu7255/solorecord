@@ -537,6 +537,27 @@ def test_multi_source_join_uploads_same_local_segment_without_conflict(tmp_path:
     ).content == b"back source"
 
 
+def test_create_meeting_returns_conflict_for_duplicate_join_code(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+
+    first = client.post(
+        "/api/web/meetings",
+        headers=headers,
+        json={"title": "第一场", "join_code": "same-code"},
+    )
+    assert first.status_code == 200
+
+    duplicate = client.post(
+        "/api/web/meetings",
+        headers=headers,
+        json={"title": "第二场", "join_code": "same-code"},
+    )
+
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"] == "join_code already exists"
+
+
 def test_discover_joinable_multi_source_meetings_returns_metadata_only(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     owner_headers = login(client)
@@ -4310,6 +4331,111 @@ def test_llm_refinement_preserves_multisource_evidence_flags() -> None:
         assert "multi_source_count:2" in segment["flags"]
         assert "multi_source_refs:back:1,front:1" in segment["flags"]
         assert "semantic_partial" not in segment["flags"]
+
+
+def test_llm_refinement_preserves_native_asr_speaker_evidence() -> None:
+    import solorecord_server.llm_adapters as llm_adapters
+
+    content = """
+    {
+      "segments": [
+        {
+          "source_index": 1,
+          "speaker": "发言人 2",
+          "speaker_id": "SPEAKER_02",
+          "start_ms": 0,
+          "end_ms": 30000,
+          "text": "错误样例周三前补三类。",
+          "confidence": 0.91,
+          "scenario": "native_speaker"
+        },
+        {
+          "source_index": 1,
+          "speaker": "发言人 2",
+          "speaker_id": "SPEAKER_02",
+          "start_ms": 30000,
+          "end_ms": 60000,
+          "text": "自动测试同步补完。",
+          "confidence": 0.89,
+          "scenario": "native_speaker"
+        }
+      ]
+    }
+    """
+    refined = llm_adapters._parse_refined_segments(
+        content,
+        [
+            {
+                "source_id": "front",
+                "source_segment_no": 1,
+                "speaker_id": "SPEAKER_02",
+                "display_name": "发言人 2",
+                "start_ms": 0,
+                "end_ms": 60000,
+                "text": "错误样例周三前补三类，自动测试同步补完。",
+                "flags": ["asr_speaker", "semantic_partial"],
+            }
+        ],
+    )
+
+    assert len(refined) == 2
+    for segment in refined:
+        assert segment["speaker_id"] == "SPEAKER_02"
+        assert "asr_speaker" in segment["flags"]
+        assert "scenario:native_speaker" in segment["flags"]
+        assert "semantic_partial" not in segment["flags"]
+
+
+def test_llm_refinement_does_not_mark_context_inference_as_asr_speaker() -> None:
+    import solorecord_server.llm_adapters as llm_adapters
+
+    content = """
+    {
+      "segments": [
+        {
+          "source_index": 2,
+          "speaker": "翼天",
+          "speaker_id": "MANUAL_yitian",
+          "start_ms": 5000,
+          "end_ms": 12000,
+          "text": "错误样例今天补三类，自动测试明天补完。",
+          "confidence": 0.86,
+          "scenario": "context_bridge",
+          "reason": "上一段点名翼天，当前段继续错误样例和自动测试议题"
+        }
+      ]
+    }
+    """
+    refined = llm_adapters._parse_refined_segments(
+        content,
+        [
+            {
+                "source_id": "front",
+                "source_segment_no": 1,
+                "speaker_id": "SPEAKER_01",
+                "display_name": "主持人",
+                "start_ms": 0,
+                "end_ms": 5000,
+                "text": "翼天你先说一下错误样例和自动测试。",
+                "flags": ["asr_speaker"],
+            },
+            {
+                "source_id": "front",
+                "source_segment_no": 2,
+                "speaker_id": "SPEAKER_02",
+                "display_name": "发言人 2",
+                "start_ms": 5000,
+                "end_ms": 12000,
+                "text": "错误样例今天补三类，自动测试明天补完。",
+                "flags": ["asr_speaker"],
+            },
+        ],
+    )
+
+    assert refined[0]["display_name"] == "翼天"
+    assert "asr_speaker" not in refined[0]["flags"]
+    assert "speaker_review" in refined[0]["flags"]
+    assert "scenario:context_bridge" in refined[0]["flags"]
 
 
 def test_llm_refinement_preserves_multisource_conflict_review_flag() -> None:

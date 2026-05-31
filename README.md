@@ -162,7 +162,7 @@ python /opt/solorecord-asr/run_asr.py --audios-json {audio_json} --sample-rate {
 
 ASR 返回原生说话人字段时，服务端会优先使用；如果只返回单段文本、单一发言人，或虽有多个原始 speaker 但文本中出现点名和承接回应，服务端会再调用配置好的 LLM 做语义重分段和发言人推断。分段上传后的阶段结果标记为 `semantic_partial`，结束会议后服务端会基于整场上下文再生成标记为 `semantic_final` 的最终时间线，避免 5 分钟分片割裂“点名、回应、交付物、截止时间”之间的关系。LLM 不可用时会用规则兜底拆分“张三说”“李四：”，并保守处理“翼天你先说”后接“我这边负责”，包括 ASR 没有在点名句和回应句之间加标点的场景，以及被点名议题后续继续围绕同一交付物、时间节点展开的上下文归属。Web 时间线会显示“需确认”“大模型分段”“规则分段”等校对提示；需要校对的行会展示推断依据和相邻上下文。整理质量区会显示发言人证据风险、纪要证据率、待办证据率和待办归属风险；纪要区会列出“纪要有依据”的引用片段和“纪要待核对”的缺证据结论，待办区会逐条显示“有转写依据/负责人证据弱/缺转写证据”。这些证据帮助发现模型把议题误当人名、补写缺少依据的结论/待办，或把任务错误归给只是在全文出现过的人。用户手动把某个发言人改成具体人名后，后续同一 `speaker_id` 会优先保留人工校正；普通 `发言人 N` 泛化旧名不会阻止模型识别新名字。
 
-语义重分段会把每个模型输出段继续关联回 `source_index`/`source_segment_no`，所以 UI、导出和外部知识平台都能追溯到原始音频分段。通过上下文、任务归属或议题延续推断出的发言人会保留 `speaker_review`、`scenario:*` 和 `reason:*` 标记；这表示“可用的会议上下文推断”，不是声纹确认。若 ASR 已经返回多个原生 speaker，但仍存在“李波后面看登录界面”“围城负责外接数据源”等未落到具体人物的线索，服务端也会触发语义后处理，而不是简单相信 ASR 粗分段。
+语义重分段会把每个模型输出段继续关联回 `source_index`/`source_segment_no`，所以 UI、导出和外部知识平台都能追溯到原始音频分段。如果 LLM 只是把同一个 ASR 原生 speaker 的长段拆成多段，并且仍使用同一个 `speaker_id` 与 `native_speaker` 场景，最终段会保留 `asr_speaker`，表示它仍来自 ASR 原生说话人证据。通过上下文、任务归属或议题延续推断出的发言人会保留 `speaker_review`、`scenario:*` 和 `reason:*` 标记，但不会伪装成 `asr_speaker`；这表示“可用的会议上下文推断”，不是声纹确认。若 ASR 已经返回多个原生 speaker，但仍存在“李波后面看登录界面”“围城负责外接数据源”等未落到具体人物的线索，服务端也会触发语义后处理，而不是简单相信 ASR 粗分段。
 
 多源同录会在最终整理前做保守校对：不同录音源同一时间窗里文本高度相近且关键事实一致时合并并标记 `multi_source_merged`。如果某台设备晚几十秒开始录音，服务端还会结合该设备自己的分段号、时间差和文本相似度做错峰对齐，合并后额外标记 `multi_source_time_aligned`，避免把同一段发言重复展示。若多个来源各自漏掉不同短语，服务端可把来自原始转写的短语补到同一条证据里，并标记 `multi_source_complemented`；这不是模型编写新内容，而是多源证据互补。若时间、数量或负责人等关键事实冲突，例如一个源听成“周三三类”、另一个源听成“周五五类”，系统会保留两条证据并标记 `multi_source_conflict` 和 `speaker_review`，交给用户回听确认，不会为了去重抹掉冲突。
 
@@ -240,9 +240,14 @@ topic-continuation reply, the configured LLM performs semantic re-segmentation
 and speaker inference. If the LLM is unavailable, a rule fallback still splits
 clear markers such as “Alice said” or “Bob:” and conservatively handles named
 call-outs followed by first-person or same-topic replies, including ASR output
-that does not insert punctuation between the call-out and the reply. These
-inferences are review hints, not voiceprint confirmation. The Web timeline
-surfaces “needs review”, “LLM segmented”, and “rule segmented” review hints.
+that does not insert punctuation between the call-out and the reply. When the
+LLM only splits a long native ASR-speaker row and keeps the same `speaker_id`
+with `scenario=native_speaker`, derived rows keep `asr_speaker` as native ASR
+evidence. Contextual attribution, task ownership, or topic continuation keeps
+`speaker_review`, `scenario:*`, and `reason:*`, but does not pretend to be
+`asr_speaker`; these inferences are review hints, not voiceprint confirmation.
+The Web timeline surfaces “needs review”, “LLM segmented”, and “rule
+segmented” review hints.
 The quality panel also shows speaker-evidence risk, same-name speaker-label
 conflicts, action evidence coverage, and a lightweight people-topic-action-time
 graph, so weakly supported names or action items can be reviewed before they
