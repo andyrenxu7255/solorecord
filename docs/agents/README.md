@@ -132,7 +132,7 @@ Docker smoke fallback 见 `docs/human-ops/README.md`。
 9. 配置 Provider：通过 Web 管理端或 API 保存 ASR/LLM/Hermes/ES 配置；密钥字段留空表示保持不变。
 10. 发布终端应用：Android 使用 `-PSOLO_SERVER_ENDPOINT=<SOLO_BASE_URL>` 构建 APK；Windows 使用 `clients/desktop` 构建 portable ZIP；macOS/iOS/HarmonyOS 在对应构建机签名出包；全部通过 `/api/admin/releases` 上传并设置 `platform`。
 11. 端到端联调：测试 LDAP 登录、录音上传、弱网重试只补传未完成分段、转写/纪要、说话人改名、服务器恢复记录、服务器音频下载、外部 API 拉取。
-12. 质量联调：检查 `qualityReport` 中的 `speaker_review_count`、`speaker_evidence_weak_count`、`speakerEvidence`、`summaryEvidence.supportedClaims`、`summaryEvidence.unsupportedClaims`、`actionEvidence`、`generic_owner_count`、`unsupported_action_count`、`action_evidence_coverage`、`timeline_repaired_count` 和 `scenario_counts`；真实会议不要只看纪要是否“像样”，还要看发言人、纪要和待办是否能从转写原文中找到证据。`summaryEvidence.supportedClaims[].status=majority` 可作为多数源主证据但要保留抽查提示，`status=conflict` 只由冲突源支撑，纪要必须保留待确认语气。若会议纪要标题为“基于转写原文的保守整理”，表示 LLM 原始纪要证据不足，服务端已自动降级为证据优先版本。
+12. 质量联调：检查 `qualityReport` 中的 `speaker_review_count`、`speaker_evidence_weak_count`、`speakerEvidence`、`summaryEvidence.supportedClaims`、`summaryEvidence.unsupportedClaims`、`actionEvidence`、`generic_owner_count`、`unsupported_action_count`、`action_evidence_coverage`、`timeline_repaired_count` 和 `scenario_counts`；真实会议不要只看纪要是否“像样”，还要看发言人、纪要和待办是否能从转写原文中找到证据。`summaryEvidence.supportedClaims[].status=majority` 可作为多数源主证据但要保留抽查提示，`status=conflict` 只由冲突源支撑，纪要必须保留待确认语气；如果 LLM 把冲突事实写成确定结论，服务端应降级为保守整理。若会议纪要标题为“基于转写原文的保守整理”，表示 LLM 原始纪要证据不足或冲突语气不合格，服务端已自动降级为证据优先版本。
 13. 输出交付摘要：只列 URL、版本、健康状态、已启用能力、待接入项和下一步，不输出任何密钥。
 
 ### `server/.env` 写入规则

@@ -2205,6 +2205,9 @@ def _summary_is_grounded(
     metrics = report.get("metrics") or {}
     coverage = float(metrics.get("summary_evidence_coverage") or 0)
     unsupported = int(metrics.get("summary_unsupported_count") or 0)
+    unqualified_conflicts = int(metrics.get("summary_unqualified_conflict_count") or 0)
+    if unqualified_conflicts:
+        return False
     if unsupported == 0:
         return True
     return coverage >= 0.6 and unsupported <= 1

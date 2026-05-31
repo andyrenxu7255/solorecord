@@ -3486,6 +3486,101 @@ def test_llm_summary_falls_back_when_not_grounded() -> None:
     assert report["metrics"]["summary_unsupported_count"] == 0
 
 
+def test_llm_summary_falls_back_when_multisource_conflict_is_definite() -> None:
+    import solorecord_server.processing as processing
+
+    segments = [
+        {
+            "speaker_id": "MANUAL_yitian",
+            "display_name": "翼天",
+            "source_id": "front",
+            "source_segment_no": 1,
+            "start_ms": 0,
+            "end_ms": 60000,
+            "text": "错误样例周三前补三类，自动测试同步补完。",
+            "confidence": 0.82,
+            "flags": ["semantic_final", "multi_source_conflict", "speaker_review"],
+        },
+        {
+            "speaker_id": "MANUAL_yitian",
+            "display_name": "翼天",
+            "source_id": "back",
+            "source_segment_no": 1,
+            "start_ms": 200,
+            "end_ms": 60200,
+            "text": "错误样例周五前补五类，自动测试同步补完。",
+            "confidence": 0.82,
+            "flags": ["semantic_final", "multi_source_conflict", "speaker_review"],
+        },
+    ]
+
+    summary, role_notes, actions = processing._grounded_summary_result(
+        "会议确认错误样例周三前补三类。",
+        "翼天负责错误样例。",
+        [
+            {
+                "owner": "翼天",
+                "task": "补充错误样例和自动测试",
+                "due": "周三",
+                "status": "open",
+            }
+        ],
+        segments,
+    )
+
+    assert "会议确认错误样例周三前补三类" not in summary
+    assert "基于转写原文的保守整理" in summary
+    assert "错误样例周三前补三类" in summary
+    assert "错误样例周五前补五类" in summary
+    assert role_notes
+    assert actions[0]["owner"] == "翼天"
+
+
+def test_llm_summary_keeps_conflict_claim_with_review_language() -> None:
+    import solorecord_server.processing as processing
+
+    segments = [
+        {
+            "speaker_id": "MANUAL_yitian",
+            "display_name": "翼天",
+            "source_id": "front",
+            "source_segment_no": 1,
+            "start_ms": 0,
+            "end_ms": 60000,
+            "text": "错误样例周三前补三类，自动测试同步补完。",
+            "confidence": 0.82,
+            "flags": ["semantic_final", "multi_source_conflict", "speaker_review"],
+        },
+        {
+            "speaker_id": "MANUAL_yitian",
+            "display_name": "翼天",
+            "source_id": "back",
+            "source_segment_no": 1,
+            "start_ms": 200,
+            "end_ms": 60200,
+            "text": "错误样例周五前补五类，自动测试同步补完。",
+            "confidence": 0.82,
+            "flags": ["semantic_final", "multi_source_conflict", "speaker_review"],
+        },
+    ]
+
+    summary, _, _ = processing._grounded_summary_result(
+        "错误样例周三前补三类待确认，建议回听确认。",
+        "",
+        [
+            {
+                "owner": "翼天",
+                "task": "补充错误样例和自动测试",
+                "due": "周三",
+                "status": "open",
+            }
+        ],
+        segments,
+    )
+
+    assert summary == "错误样例周三前补三类待确认，建议回听确认。"
+
+
 def test_quality_report_flags_source_segment_coverage_gaps(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)
