@@ -524,7 +524,13 @@ def _merge_multisource_segments(segments: list[dict]) -> list[dict]:
             continue
         item = _merge_duplicate_source_group(group)
         group_source_ids = _group_source_ids(group)
-        if _has_nearby_multisource_conflict(item, ordered, skip_source_ids=group_source_ids):
+        if _group_has_majority_support(item, group, ordered):
+            _add_segment_flags(item, ("multi_source_majority",))
+        elif _has_nearby_multisource_conflict(
+            item,
+            ordered,
+            skip_source_ids=group_source_ids,
+        ):
             if _group_has_majority_over_conflicts(item, group, ordered):
                 _add_segment_flags(item, ("multi_source_majority",))
             else:
@@ -846,6 +852,22 @@ def _group_has_majority_over_conflicts(
         skip_source_ids=group_sources,
     )
     return bool(conflict_sources) and len(group_sources) > len(conflict_sources)
+
+
+def _group_has_majority_support(
+    merged: dict,
+    group: list[dict],
+    segments: list[dict],
+) -> bool:
+    group_sources = _group_source_ids(group)
+    if len(group_sources) < 2:
+        return False
+    conflict_sources = _nearby_multisource_conflict_sources(
+        merged,
+        segments,
+        skip_source_ids=group_sources,
+    )
+    return len(group_sources) > len(conflict_sources)
 
 
 def _group_source_ids(group: list[dict]) -> set[str]:

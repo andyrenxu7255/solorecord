@@ -74,6 +74,7 @@ def meeting_document(meeting_id: str) -> dict:
         f"[{_time(row['start_ms'])}] {row['display_name']}: {row['text']}" for row in transcript_segments
     )
     action_text = "\n".join(f"{row['owner']}: {row['task']} {row['due']}" for row in action_items)
+    normalized_transcript_segments = with_derived_quality_flags(transcript_segments)
     audio_segments = []
     for row in audio_rows:
         item = row_to_dict(row)
@@ -82,7 +83,7 @@ def meeting_document(meeting_id: str) -> dict:
         )
         audio_segments.append(item)
     quality_report = build_quality_report(
-        transcript_segments,
+        normalized_transcript_segments,
         action_items,
         audio_rows,
         meeting_dict.get("summary", ""),
@@ -99,13 +100,18 @@ def meeting_document(meeting_id: str) -> dict:
         "members": [row_to_dict(row) for row in members],
         "recordingSources": [row_to_dict(row) for row in recording_sources],
         "audioSegments": audio_segments,
-        "transcriptSegments": [row_to_dict(row) for row in transcript_segments],
+        "transcriptSegments": normalized_transcript_segments,
         "speakers": [row_to_dict(row) for row in speakers],
         "actionItems": action_items_with_evidence,
         "exports": [_export_item(row) for row in exports],
         "qualityReport": quality_report,
         "knowledgeReadiness": build_knowledge_readiness(quality_report),
-        "knowledgeGraph": build_meeting_graph(meeting_dict, speakers, action_items, transcript_segments),
+        "knowledgeGraph": build_meeting_graph(
+            meeting_dict,
+            speakers,
+            action_items,
+            normalized_transcript_segments,
+        ),
         "searchText": "\n".join(
             part
             for part in [
@@ -210,6 +216,40 @@ def _export_item(row) -> dict:
     return item
 
 
+def with_derived_quality_flags(rows) -> list[dict]:
+    return [_with_derived_quality_flags_for_row(row_to_dict(row)) for row in rows]
+
+
+def _with_derived_quality_flags_for_row(row: dict) -> dict:
+    item = dict(row)
+    flags = _flags(item.get("flags"))
+    if (
+        "multi_source_merged" in flags
+        and "multi_source_conflict" not in flags
+        and "multi_source_majority" not in flags
+        and _multi_source_count_from_flags(flags) >= 2
+    ):
+        flags.append("multi_source_majority")
+        item["flags"] = json.dumps(flags, ensure_ascii=False)
+    return item
+
+
+def _multi_source_count_from_flags(flags: list[str]) -> int:
+    for flag in flags:
+        if not str(flag).startswith("multi_source_count:"):
+            continue
+        try:
+            return int(str(flag).split(":", 1)[1])
+        except (TypeError, ValueError):
+            return 0
+    for flag in flags:
+        if not str(flag).startswith("multi_source_refs:"):
+            continue
+        refs = [item for item in str(flag).split(":", 1)[1].split(",") if item]
+        return len(refs)
+    return 0
+
+
 def build_quality_report(
     transcript_segments,
     action_items,
@@ -217,7 +257,7 @@ def build_quality_report(
     summary: str = "",
     role_notes: str = "",
 ) -> dict:
-    segments = _segments_with_stable_ids([row_to_dict(row) for row in transcript_segments])
+    segments = _segments_with_stable_ids(with_derived_quality_flags(transcript_segments))
     actions = [row_to_dict(row) for row in action_items]
     audio_segments = [row_to_dict(row) for row in audio_rows]
     flags_by_segment = [_flags(item.get("flags")) for item in segments]

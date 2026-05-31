@@ -11,6 +11,7 @@ from .llm_adapters import (
 )
 from .processing import (
     _meeting_duration_ms,
+    _merge_multisource_segments,
     _normalize_action_owners,
     _normalize_semantic_segments,
     _preserve_source_segments,
@@ -183,7 +184,8 @@ def probe_meeting(
 
 
 def _postprocess_segments_without_llm(segments: list[dict]) -> list[dict]:
-    refined = _rule_refine_residual_mixed_segments(segments)
+    refined = _merge_multisource_segments(segments)
+    refined = _rule_refine_residual_mixed_segments(refined)
     refined = _rule_refine_segments(refined)
     return _normalize_semantic_segments(refined, "probe")
 

@@ -989,10 +989,12 @@ def test_multi_source_final_processing_merges_duplicate_evidence(tmp_path: Path)
     assert len(transcript["segments"]) == 1
     segment = transcript["segments"][0]
     assert "multi_source_merged" in segment["flags"]
+    assert "multi_source_majority" in segment["flags"]
     assert segment["source_id"] == "back+front"
     assert "下午发消息" in segment["text"]
     detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
     assert detail["qualityReport"]["metrics"]["multi_source_merged_count"] == 1
+    assert detail["qualityReport"]["metrics"]["multi_source_majority_count"] == 1
     assert detail["qualityReport"]["metrics"]["multi_source_conflict_count"] == 0
     assert detail["qualityReport"]["metrics"]["source_segment_coverage"] == 1
     assert detail["qualityReport"]["sourceCoverage"]["weakSegments"] == []
@@ -1060,11 +1062,13 @@ def test_multi_source_final_processing_complements_partial_text(tmp_path: Path) 
     segment = transcript["segments"][0]
     assert "multi_source_merged" in segment["flags"]
     assert "multi_source_complemented" in segment["flags"]
+    assert "multi_source_majority" in segment["flags"]
     assert "销售逐个通知客户" in segment["text"]
     assert "下午发消息" in segment["text"]
     assert "物料清单同步" in segment["text"]
     detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
     assert detail["qualityReport"]["metrics"]["multi_source_complemented_count"] == 1
+    assert detail["qualityReport"]["metrics"]["multi_source_majority_count"] == 1
 
 
 def test_multi_source_final_processing_flags_critical_fact_conflicts(tmp_path: Path) -> None:
@@ -1450,6 +1454,7 @@ def test_multi_source_refs_preserve_all_eight_source_segments(tmp_path: Path) ->
     segment = transcript["segments"][0]
     flags = parse_flags(segment["flags"])
     assert "multi_source_merged" in flags
+    assert "multi_source_majority" in flags
     refs_flag = next(flag for flag in flags if flag.startswith("multi_source_refs:"))
     for index, source_id in enumerate(source_ids, start=1):
         assert f"{source_id}:{index}" in refs_flag
@@ -1457,6 +1462,7 @@ def test_multi_source_refs_preserve_all_eight_source_segments(tmp_path: Path) ->
     detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
     report = detail["qualityReport"]
     assert report["metrics"]["recording_source_count"] == 8
+    assert report["metrics"]["multi_source_majority_count"] == 1
     assert report["metrics"]["source_segment_coverage"] == 1
     assert report["sourceCoverage"]["weakSegments"] == []
 
@@ -1518,11 +1524,13 @@ def test_multi_source_final_processing_aligns_sources_started_late(tmp_path: Pat
     assert len(transcript["segments"]) == 1
     segment = transcript["segments"][0]
     assert "multi_source_merged" in segment["flags"]
+    assert "multi_source_majority" in segment["flags"]
     assert "multi_source_time_aligned" in segment["flags"]
     assert segment["source_id"] == "back+front"
     assert segment["start_ms"] == 55000
     detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
     assert detail["qualityReport"]["metrics"]["multi_source_merged_count"] == 1
+    assert detail["qualityReport"]["metrics"]["multi_source_majority_count"] == 1
     assert detail["qualityReport"]["metrics"]["multi_source_conflict_count"] == 0
     assert detail["qualityReport"]["metrics"]["source_segment_coverage"] == 1
 
@@ -3057,6 +3065,114 @@ def test_quality_probe_postprocess_preserves_multisource_coverage_keys(tmp_path:
         (item["source_id"], item["source_segment_no"], item["status"])
         for item in coverage["segments"]
     } == {("front", 1, "covered"), ("back", 1, "covered")}
+
+
+def test_quality_probe_postprocess_marks_multisource_majority(
+    tmp_path: Path,
+) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post(
+        "/api/web/meetings",
+        headers=headers,
+        json={"title": "多源探针多数源", "recording_mode": "multi_source", "max_sources": 2},
+    )
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+    import solorecord_server.quality_probe as quality_probe
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO audio_segments
+            (id, meeting_id, source_id, source_segment_no, segment_no, file_name,
+             storage_path, mime_type, size_bytes, sha256, duration_ms, start_ms,
+             end_ms, upload_status, created_at)
+            VALUES
+            ('aud_probe_majority_front', ?, 'front', 1, 1, 'front.wav', 'front.wav',
+             'audio/wav', 1, 'sha-front-majority-probe', 60000, 0, 60000, 'uploaded', 'now'),
+            ('aud_probe_majority_back', ?, 'back', 1, 2, 'back.wav', 'back.wav',
+             'audio/wav', 1, 'sha-back-majority-probe', 60000, 0, 60000, 'uploaded', 'now')
+            """,
+            (meeting_id, meeting_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id,
+             display_name, start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_probe_majority_front', ?, 1, 'front', 1, 'SPEAKER_01', '任旭',
+             0, 60000, '客户名单今天定版，销售逐个通知客户。',
+             0.84, '["semantic_partial"]', 'now'),
+            ('seg_probe_majority_back', ?, 1, 'back', 1, 'SPEAKER_01', '任旭',
+             200, 60200, '客户名单今天定版，销售逐个通知客户，下午发消息。',
+             0.88, '["semantic_partial"]', 'now')
+            """,
+            (meeting_id, meeting_id),
+        )
+
+    result = quality_probe.probe_meeting(
+        meeting_id,
+        run_llm=False,
+        run_postprocess=True,
+    )
+    report = result["postprocess"]["quality_report"]
+    assert report["metrics"]["multi_source_merged_count"] == 1
+    assert report["metrics"]["multi_source_majority_count"] == 1
+    assert report["metrics"]["source_segment_coverage"] == 1
+
+
+def test_meeting_document_derives_majority_for_legacy_multisource_rows(
+    tmp_path: Path,
+) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post(
+        "/api/web/meetings",
+        headers=headers,
+        json={"title": "历史多源多数源", "recording_mode": "multi_source", "max_sources": 2},
+    )
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO audio_segments
+            (id, meeting_id, source_id, source_segment_no, segment_no, file_name,
+             storage_path, mime_type, size_bytes, sha256, duration_ms, start_ms,
+             end_ms, upload_status, created_at)
+            VALUES
+            ('aud_legacy_majority_front', ?, 'front', 1, 1, 'front.wav', 'front.wav',
+             'audio/wav', 1, 'sha-front-legacy-majority', 60000, 0, 60000, 'uploaded', 'now'),
+            ('aud_legacy_majority_back', ?, 'back', 1, 2, 'back.wav', 'back.wav',
+             'audio/wav', 1, 'sha-back-legacy-majority', 60000, 0, 60000, 'uploaded', 'now')
+            """,
+            (meeting_id, meeting_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id,
+             display_name, start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_legacy_majority', ?, 1, 'back+front', 1, 'SPEAKER_01', '任旭',
+             0, 60000, '客户名单今天定版，销售逐个通知客户。',
+             0.9, '["semantic_final","multi_source_merged","multi_source_count:2","multi_source_refs:front:1,back:1"]', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
+    transcript = client.get(
+        f"/api/web/meetings/{meeting_id}/transcript",
+        headers=headers,
+    ).json()
+    flags = parse_flags(transcript["segments"][0]["flags"])
+
+    assert "multi_source_majority" in flags
+    assert detail["qualityReport"]["metrics"]["multi_source_majority_count"] == 1
 
 
 def test_quality_probe_postprocess_does_not_spread_same_source_conflict(

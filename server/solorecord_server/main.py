@@ -27,7 +27,13 @@ from .config import get_settings
 from .db import get_db, init_db
 from .exports import create_export
 from .processing import enqueue_transcription, process_uploaded_segment
-from .repository import list_documents_for_external, list_documents_for_user, meeting_document, transcript_document
+from .repository import (
+    list_documents_for_external,
+    list_documents_for_user,
+    meeting_document,
+    transcript_document,
+    with_derived_quality_flags,
+)
 from .schemas import (
     ActionItemsUpdate,
     LdapLoginRequest,
@@ -691,7 +697,7 @@ def get_transcript(meeting_id: str, user: CurrentUser) -> dict:
             "SELECT * FROM transcript_segments WHERE meeting_id = ? ORDER BY start_ms",
             (meeting_id,),
         ).fetchall()
-    return {"version": meeting["version"], "segments": [row_to_dict(row) for row in rows]}
+    return {"version": meeting["version"], "segments": with_derived_quality_flags(rows)}
 
 
 @app.put("/api/mobile/meetings/{meeting_id}/transcript")
