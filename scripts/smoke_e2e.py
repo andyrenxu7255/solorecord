@@ -21,6 +21,11 @@ def main() -> int:
     parser.add_argument("--name", default="Smoke Admin")
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--job-timeout", type=float, default=300)
+    parser.add_argument(
+        "--skip-release-check",
+        action="store_true",
+        help="Skip fake client package uploads when running against a shared server.",
+    )
     args = parser.parse_args()
 
     base_url = args.base_url.rstrip("/")
@@ -141,45 +146,46 @@ def main() -> int:
     export = client.post(f"/api/web/meetings/{meeting_id}/exports?export_format=markdown", headers=headers)
     expect(export, 200, "markdown export")
 
-    release = client.post(
-        "/api/admin/releases",
-        data={
-            "platform": "android",
-            "version_name": "9.9.9-smoke",
-            "version_code": "9999",
-            "release_notes": "smoke",
-            "force_update": "false",
-        },
-        files={"file": ("app.apk", b"fake apk", "application/vnd.android.package-archive")},
-        headers=headers,
-    )
-    expect(release, 200, "release upload")
+    if not args.skip_release_check:
+        release = client.post(
+            "/api/admin/releases",
+            data={
+                "platform": "android",
+                "version_name": "9.9.9-smoke",
+                "version_code": "9999",
+                "release_notes": "smoke",
+                "force_update": "false",
+            },
+            files={"file": ("app.apk", b"fake apk", "application/vnd.android.package-archive")},
+            headers=headers,
+        )
+        expect(release, 200, "release upload")
 
-    latest = client.get("/api/web/releases/latest", headers=headers)
-    expect(latest, 200, "latest release")
-    download_url = latest.json()["release"]["downloadUrl"]
-    downloaded = client.get(download_url)
-    expect(downloaded, 200, "apk download")
-    assert downloaded.content == b"fake apk"
+        latest = client.get("/api/web/releases/latest", headers=headers)
+        expect(latest, 200, "latest release")
+        download_url = latest.json()["release"]["downloadUrl"]
+        downloaded = client.get(download_url)
+        expect(downloaded, 200, "apk download")
+        assert downloaded.content == b"fake apk"
 
-    windows_release = client.post(
-        "/api/admin/releases",
-        data={
-            "platform": "windows",
-            "version_name": "9.9.9-smoke",
-            "version_code": "9999",
-            "release_notes": "windows smoke",
-            "force_update": "false",
-        },
-        files={"file": ("SoloRecord-Setup.exe", b"fake exe", "application/vnd.microsoft.portable-executable")},
-        headers=headers,
-    )
-    expect(windows_release, 200, "windows release upload")
-    windows_latest = client.get("/api/web/releases/latest?platform=windows", headers=headers)
-    expect(windows_latest, 200, "latest windows release")
-    windows_download = client.get(windows_latest.json()["release"]["downloadUrl"])
-    expect(windows_download, 200, "windows exe download")
-    assert windows_download.content == b"fake exe"
+        windows_release = client.post(
+            "/api/admin/releases",
+            data={
+                "platform": "windows",
+                "version_name": "9.9.9-smoke",
+                "version_code": "9999",
+                "release_notes": "windows smoke",
+                "force_update": "false",
+            },
+            files={"file": ("SoloRecord-Setup.exe", b"fake exe", "application/vnd.microsoft.portable-executable")},
+            headers=headers,
+        )
+        expect(windows_release, 200, "windows release upload")
+        windows_latest = client.get("/api/web/releases/latest?platform=windows", headers=headers)
+        expect(windows_latest, 200, "latest windows release")
+        windows_download = client.get(windows_latest.json()["release"]["downloadUrl"])
+        expect(windows_download, 200, "windows exe download")
+        assert windows_download.content == b"fake exe"
 
     external_bad = client.get("/api/external/meetings", headers={"Authorization": "Bearer wrong-token"})
     expect(external_bad, 401, "external bad token rejected")
