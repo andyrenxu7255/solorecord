@@ -303,14 +303,16 @@ SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
 
 1. 用账号 A 创建会议，填写会议编号，例如 `ROOM0601`，录音源名称写“前排手机”。
 2. 用账号 B 在另一台终端填写同一个会议编号，录音源名称写“后排手机”。
-3. 两台设备都上传自己的第 1 段。服务端应生成两个 `audio_segments`，全局 `segment_no` 不同，但 `source_segment_no` 都是 `1`，`source_id` 分别不同。
-4. Web 会议详情应显示多个录音源、多个录音分段，且两个来源的音频都可按权限下载/播放。
-5. 结束会议后，重复拾音内容应出现 `multi_source_merged_count`；如果两个来源同一时间内容差异较大，应出现 `multi_source_conflict_count` 和质量提示。
-6. 外部知识平台拉取 `/api/external/meetings/{meetingId}/transcript?include_history=true` 时，应能看到 `source_id`、`source_segment_no`、`qualityReport` 和 `knowledgeReadiness`。
+3. 账号 B 用同一设备名和同一录音源名称重复加入一次，应返回同一个 `source_id`，录音源数量不应增加。
+4. 两台设备都上传自己的第 1 段。服务端应生成两个 `audio_segments`，全局 `segment_no` 不同，但 `source_segment_no` 都是 `1`，`source_id` 分别不同。
+5. Web 会议详情应显示多个录音源、多个录音分段，且两个来源的音频都可按权限下载/播放。
+6. 结束会议后，重复拾音内容应出现 `multi_source_merged_count`；如果两个来源同一时间内容差异较大，应出现 `multi_source_conflict_count` 和质量提示。
+7. 外部知识平台拉取 `/api/external/meetings/{meetingId}/transcript?include_history=true` 时，应能看到 `source_id`、`source_segment_no`、`qualityReport` 和 `knowledgeReadiness`。
 
 运维排障要点：
 
 - `max_sources` 限制为 1-8，上传接口也会检查来源上限；如果出现 409，先确认是否超过会议来源数。
+- 重复点击加入时，同一账号、同一设备名、同一录音源名称应复用原 `source_id`；同一账号要开第二台设备时，应使用不同录音源名称。
 - 多源会议中，不能只按 `source_segment_no` 判断覆盖率；应按 `(source_id, source_segment_no)` 看证据。
 - Web 时间线筛选、待办/纪要证据里的“定位转写”也按 `(source_id, source_segment_no)` 定位。若两台设备都有第 1 段，应分别跳到对应录音源；如果跳错，优先检查前端 payload 是否丢了 `source_id`。
 - `multi_source_conflict` 不是系统失败，而是提醒人工回听不同来源的同一时间段。

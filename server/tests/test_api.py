@@ -86,6 +86,16 @@ def login_user(client: TestClient) -> dict:
     return {"Authorization": f"Bearer {data['access_token']}"}
 
 
+def login_named_user(client: TestClient, name: str, email: str) -> dict:
+    response = client.post(
+        "/api/auth/demo-login",
+        json={"display_name": name, "email": email},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    return {"Authorization": f"Bearer {data['access_token']}"}
+
+
 def test_ldap_login_uses_server_side_bind_and_session(tmp_path: Path) -> None:
     client = make_ldap_client(tmp_path)
     with patch("solorecord_server.auth._ldap_fetch_user") as fetch_user:
@@ -361,6 +371,19 @@ def test_multi_source_join_uploads_same_local_segment_without_conflict(tmp_path:
     joined_source = join.json()["joinedSource"]
     assert joined_source["source_id"] == "source_02"
 
+    retry_join = client.post(
+        "/api/web/meetings/join",
+        headers=user_headers,
+        json={
+            "join_code": "room-0601",
+            "source_label": "后排手机",
+            "device_name": "Pixel",
+        },
+    )
+    assert retry_join.status_code == 200
+    assert retry_join.json()["joinedSource"]["source_id"] == joined_source["source_id"]
+    assert len(retry_join.json()["recordingSources"]) == 2
+
     first = client.post(
         f"/api/mobile/meetings/{meeting_id}/segments",
         headers=owner_headers,
@@ -418,6 +441,139 @@ def test_multi_source_join_uploads_same_local_segment_without_conflict(tmp_path:
         f"/api/mobile/meetings/{meeting_id}/segments/2/audio",
         headers=user_headers,
     ).content == b"back source"
+
+
+def test_multi_source_supports_eight_recorders_and_rejects_ninth(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    owner_headers = login(client)
+    create = client.post(
+        "/api/web/meetings",
+        headers=owner_headers,
+        json={
+            "title": "八源大会议室",
+            "join_code": "room-8",
+            "recording_mode": "multi_source",
+            "max_sources": 99,
+            "source_label": "主持人电脑",
+        },
+    )
+    assert create.status_code == 200
+    meeting_id = create.json()["meeting"]["id"]
+
+    uploads = [
+        (
+            owner_headers,
+            "primary",
+            b"source primary",
+        )
+    ]
+    for number in range(2, 9):
+        headers = login_named_user(client, f"Recorder {number}", f"recorder{number}@example.com")
+        join = client.post(
+            "/api/web/meetings/join",
+            headers=headers,
+            json={
+                "join_code": "room-8",
+                "source_label": f"录音源 {number}",
+                "device_name": f"Device {number}",
+            },
+        )
+        assert join.status_code == 200
+        joined_source = join.json()["joinedSource"]
+        assert joined_source["source_id"] == f"source_{number:02d}"
+        uploads.append((headers, joined_source["source_id"], f"source {number}".encode()))
+
+    for index, (headers, source_id, body) in enumerate(uploads, start=1):
+        upload = client.post(
+            f"/api/mobile/meetings/{meeting_id}/segments",
+            headers=headers,
+            data={
+                "segment_no": "1",
+                "source_id": source_id,
+                "source_segment_no": "1",
+                "start_ms": "0",
+                "end_ms": "60000",
+                "duration_ms": "60000",
+            },
+            files={"file": (f"{source_id}_0001.m4a", body, "audio/mp4")},
+        )
+        assert upload.status_code == 200
+        assert upload.json()["segmentNo"] == index
+        assert upload.json()["sourceSegmentNo"] == 1
+
+    detail = client.get(f"/api/web/meetings/{meeting_id}", headers=owner_headers).json()
+    assert len(detail["recordingSources"]) == 8
+    assert len(detail["audioSegments"]) == 8
+    assert detail["qualityReport"]["metrics"]["recording_source_count"] == 8
+    assert [item["segment_no"] for item in detail["audioSegments"]] == list(range(1, 9))
+    assert {item["source_segment_no"] for item in detail["audioSegments"]} == {1}
+
+    ninth_headers = login_named_user(client, "Recorder 9", "recorder9@example.com")
+    ninth = client.post(
+        "/api/web/meetings/join",
+        headers=ninth_headers,
+        json={
+            "join_code": "room-8",
+            "source_label": "录音源 9",
+            "device_name": "Device 9",
+        },
+    )
+    assert ninth.status_code == 409
+
+
+def test_multi_source_reuses_retry_but_allows_distinct_sources_for_same_user(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    owner_headers = login(client)
+    user_headers = login_user(client)
+    create = client.post(
+        "/api/web/meetings",
+        headers=owner_headers,
+        json={
+            "title": "同用户多设备",
+            "join_code": "same-user",
+            "recording_mode": "multi_source",
+            "max_sources": 3,
+        },
+    )
+    assert create.status_code == 200
+
+    first = client.post(
+        "/api/web/meetings/join",
+        headers=user_headers,
+        json={
+            "join_code": "same-user",
+            "source_label": "手机录音",
+            "device_name": "Android",
+        },
+    )
+    assert first.status_code == 200
+    first_source = first.json()["joinedSource"]["source_id"]
+
+    retry = client.post(
+        "/api/web/meetings/join",
+        headers=user_headers,
+        json={
+            "join_code": "same-user",
+            "source_label": "手机录音",
+            "device_name": "Android",
+        },
+    )
+    assert retry.status_code == 200
+    assert retry.json()["joinedSource"]["source_id"] == first_source
+    assert len(retry.json()["recordingSources"]) == 2
+
+    second_device = client.post(
+        "/api/web/meetings/join",
+        headers=user_headers,
+        json={
+            "join_code": "same-user",
+            "source_label": "电脑录音",
+            "device_name": "Android",
+        },
+    )
+    assert second_device.status_code == 200
+    assert second_device.json()["joinedSource"]["source_id"] != first_source
+    assert len(second_device.json()["recordingSources"]) == 3
 
 
 def test_multi_source_limit_is_enforced(tmp_path: Path) -> None:

@@ -49,6 +49,8 @@ Windows 版本下载后解压，运行 `SoloRecord.exe`。iOS、macOS 和 Harmon
 
 多人同录时，所有参与录音的人在“会议编号”里填写同一个编号，例如 `0601A`；“录音源名称”建议写成“任旭手机”“会议室后排”“客户侧电脑”这类可辨识名称。系统会把 1-8 个录音源归集到同一场会议，各来源先独立上传和转写，整场结束后再由系统做多源校对、去重和冲突提示。不同设备不需要完全同一秒开始录音，晚几十秒开始通常也能被系统按分段和文本对齐；但重要会议仍建议尽量同时开始，减少漏掉开场信息。
 
+如果网络不好或误点了重复加入，同一账号、同一设备名和同一录音源名称会继续使用原来的录音源，不会额外占用名额。同一个人同时用手机和电脑录音时，请给两台设备填写不同的录音源名称。
+
 录音时系统会滚动保存音频。即使会议较长，也会按小段保存，减少意外丢失风险。默认约 5 分钟一个分段，具体时长由服务器配置；相邻分段会保留约 2 秒重叠，减少分段边界丢词。
 
 录音中页面会显示音频分段数、已上传数、待上传数和正在写入的当前段。当前段也会定期写入本地索引，WAV 文件头会边录边刷新；如果系统异常关闭，已写入的部分更容易被本机保留下来。下次打开 App 时，异常中断的当前段会转成待上传分段。正常结束录音时，最后一段会先保存到本机，再提交服务器处理。
@@ -295,6 +297,8 @@ Open the Recording tab:
 3. Tap End Recording when the meeting is over.
 
 For multi-source recording, every recorder should enter the same meeting code, for example `0601A`. Use a recognizable source name such as "Renxu phone", "back of meeting room", or "customer laptop". The server groups 1-8 recording sources into one meeting. Each source uploads and transcribes independently, then final processing merges duplicate evidence and flags conflicts, including disagreements on dates, amounts, or owners. Recorders do not have to start at the exact same second; a device that starts tens of seconds late can usually still be aligned by segment and text, but important meetings should still start all recorders as close together as possible.
+
+If the network is unstable or you tap join again, the same account, device name, and source name reuse the existing recording source instead of consuming another slot. If one person records with both phone and laptop, use different source names for the two devices.
 
 The app saves audio in rolling segments while recording. The default is about five minutes per segment, controlled by the server. Adjacent segments keep about two seconds of overlap to reduce boundary word loss. Long meetings are split into smaller files to reduce loss risk. If the app is closed, recording stops and the current segment is preserved as far as possible.
 

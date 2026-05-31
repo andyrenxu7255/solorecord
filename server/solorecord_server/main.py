@@ -1226,6 +1226,17 @@ def _register_recording_source(
                 label or existing["label"],
                 device_name or existing["device_name"],
             )
+    if not requested_source_id:
+        reusable = _reusable_recording_source(db, meeting_id, user, label, device_name)
+        if reusable:
+            return _ensure_recording_source(
+                db,
+                meeting_id,
+                user,
+                reusable["source_id"],
+                label or reusable["label"],
+                device_name or reusable["device_name"],
+            )
     max_sources = _clamp_source_count(meeting["max_sources"], default=1)
     count = db.execute(
         "SELECT COUNT(*) AS count FROM recording_sources WHERE meeting_id = ?",
@@ -1255,6 +1266,48 @@ def _register_recording_source(
         label or user.get("display_name") or requested_source_id,
         device_name,
     )
+
+
+def _reusable_recording_source(
+    db,
+    meeting_id: str,
+    user: dict,
+    label: str = "",
+    device_name: str = "",
+):
+    user_id = str(user.get("id") or "").strip()
+    if not user_id:
+        return None
+    label = (label or "").strip()
+    device_name = (device_name or "").strip()
+    rows = db.execute(
+        """
+        SELECT * FROM recording_sources
+        WHERE meeting_id = ? AND user_id = ?
+        ORDER BY CASE WHEN source_id = 'primary' THEN 0 ELSE 1 END, created_at
+        """,
+        (meeting_id, user_id),
+    ).fetchall()
+    if not rows:
+        return None
+    if not label and not device_name:
+        return rows[0]
+    for row in rows:
+        row_device = str(row["device_name"] or "").strip()
+        row_label = str(row["label"] or "").strip()
+        if device_name and row_device and row_device == device_name:
+            if not label or not row_label or row_label == label:
+                return row
+            continue
+        if device_name and row_device and row_device != device_name:
+            continue
+        if device_name and label and row_label and row_label == label:
+            return row
+        if device_name:
+            continue
+        if label and row_label and row_label == label:
+            return row
+    return None
 
 
 def _ensure_upload_recording_source(
