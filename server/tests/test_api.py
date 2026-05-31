@@ -3669,6 +3669,139 @@ def test_llm_refinement_matches_source_id_before_duplicate_segment_no() -> None:
     assert "speaker_evidence_weak" not in refined[0]["flags"]
 
 
+def test_llm_refinement_preserves_multisource_evidence_flags() -> None:
+    import solorecord_server.llm_adapters as llm_adapters
+
+    content = """
+    {
+      "segments": [
+        {
+          "source_index": 1,
+          "speaker": "任旭",
+          "speaker_id": "SPEAKER_01",
+          "start_ms": 0,
+          "end_ms": 30000,
+          "text": "客户名单今天定版，销售逐个通知客户，下午发消息。",
+          "confidence": 0.91,
+          "scenario": "native_speaker"
+        },
+        {
+          "source_index": 1,
+          "speaker": "任旭",
+          "speaker_id": "SPEAKER_01",
+          "start_ms": 30000,
+          "end_ms": 60000,
+          "text": "物料清单同步。",
+          "confidence": 0.88,
+          "scenario": "native_speaker"
+        }
+      ]
+    }
+    """
+    refined = llm_adapters._parse_refined_segments(
+        content,
+        [
+            {
+                "source_id": "back+front",
+                "speaker_id": "SPEAKER_01",
+                "display_name": "任旭",
+                "source_segment_no": 1,
+                "start_ms": 0,
+                "end_ms": 60000,
+                "text": "客户名单今天定版，销售逐个通知客户，下午发消息，物料清单同步。",
+                "flags": [
+                    "semantic_partial",
+                    "multi_source_merged",
+                    "multi_source_complemented",
+                    "multi_source_count:2",
+                    "multi_source_refs:back:1,front:1",
+                ],
+            }
+        ],
+    )
+
+    assert len(refined) == 2
+    for segment in refined:
+        assert "multi_source_merged" in segment["flags"]
+        assert "multi_source_complemented" in segment["flags"]
+        assert "multi_source_count:2" in segment["flags"]
+        assert "multi_source_refs:back:1,front:1" in segment["flags"]
+        assert "semantic_partial" not in segment["flags"]
+
+
+def test_llm_refinement_preserves_multisource_conflict_review_flag() -> None:
+    import solorecord_server.llm_adapters as llm_adapters
+
+    content = """
+    {
+      "segments": [
+        {
+          "source_index": 1,
+          "speaker": "翼天",
+          "speaker_id": "SPEAKER_02",
+          "start_ms": 0,
+          "end_ms": 60000,
+          "text": "错误样例周三前补三类，自动测试同步补完。",
+          "confidence": 0.86,
+          "scenario": "native_speaker"
+        }
+      ]
+    }
+    """
+    refined = llm_adapters._parse_refined_segments(
+        content,
+        [
+            {
+                "source_id": "front",
+                "source_segment_no": 1,
+                "speaker_id": "SPEAKER_02",
+                "display_name": "翼天",
+                "start_ms": 0,
+                "end_ms": 60000,
+                "text": "错误样例周三前补三类，自动测试同步补完。",
+                "flags": ["multi_source_conflict", "speaker_review"],
+            }
+        ],
+    )
+
+    assert "multi_source_conflict" in refined[0]["flags"]
+    assert "speaker_review" in refined[0]["flags"]
+
+
+def test_summary_prompt_exposes_multisource_context_to_llm() -> None:
+    import solorecord_server.llm_adapters as llm_adapters
+
+    prompt = llm_adapters._user_prompt(
+        [
+            {
+                "source_id": "front",
+                "source_segment_no": 1,
+                "speaker_id": "SPEAKER_01",
+                "display_name": "翼天",
+                "start_ms": 0,
+                "end_ms": 60000,
+                "text": "错误样例周三前补三类。",
+                "flags": ["multi_source_conflict", "speaker_review"],
+            },
+            {
+                "source_id": "back",
+                "source_segment_no": 1,
+                "speaker_id": "SPEAKER_02",
+                "display_name": "翼天",
+                "start_ms": 200,
+                "end_ms": 60200,
+                "text": "错误样例周五前补五类。",
+                "flags": ["multi_source_conflict", "speaker_review"],
+            },
+        ]
+    )
+
+    assert "source=front#1" in prompt
+    assert "source=back#1" in prompt
+    assert "multi_source_conflict" in prompt
+    assert "不要把互相冲突的多源事实合并为单一结论" in prompt
+
+
 def test_llm_refinement_prefers_source_id_over_wrong_source_index() -> None:
     import solorecord_server.llm_adapters as llm_adapters
 

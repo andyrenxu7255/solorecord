@@ -145,6 +145,9 @@ def _system_prompt() -> str:
         "后续相关任务要优先绑定到这些被点名的人。"
         "如果某人被点名负责某议题，下一段继续围绕同一议题说明进度、时间或交付物，"
         "即使没有出现'我'字，也要把它作为强上下文线索，但证据不足时仍保留待确认。"
+        "如果输入包含多个录音源或 multi_source 标记，应利用多源互补内容提升完整性；"
+        "带 multi_source_conflict 的内容必须在纪要中保留不确定性或提醒复核，"
+        "不要把互相冲突的多源事实合并为单一结论。"
         "为待办填写 owner 时，必须能从发言人、被点名、'我负责/交给某某'或同一议题上下文找到证据；"
         "如果只能猜测，不要硬填人名，写待确认。"
         "候选人名清单只是线索，不是最终结论；只有能从转写上下文支持时才使用。"
@@ -197,9 +200,28 @@ def _user_prompt(segments: list[dict]) -> str:
         if speaker_id not in seen_speakers:
             seen_speakers.add(speaker_id)
             speaker_names.append(f"- {speaker_id}: {speaker}")
+        source_id = str(segment.get("source_id") or "primary").strip() or "primary"
+        source_no = segment.get("source_segment_no")
+        source_label = (
+            f"source={source_id}#{source_no}"
+            if source_no is not None and str(source_no).strip() != ""
+            else f"source={source_id}"
+        )
+        flags = segment.get("flags") or []
+        if not isinstance(flags, list):
+            flags = [str(flags)]
+        flag_label = ",".join(
+            str(flag)
+            for flag in flags
+            if str(flag).startswith("multi_source") or str(flag) == "speaker_review"
+        )
+        evidence_bits = f" ({source_label}"
+        if flag_label:
+            evidence_bits += f"; flags={flag_label[:180]}"
+        evidence_bits += ")"
         lines.append(
             f"[{_time(segment.get('start_ms', 0))}] "
-            f"{speaker}: {segment.get('text', '')}"
+            f"{speaker}{evidence_bits}: {segment.get('text', '')}"
         )
     return (
         "请整理以下会议转写，输出中文 JSON。\n"
@@ -214,6 +236,9 @@ def _user_prompt(segments: list[dict]) -> str:
         "4. 如果责任人与任务跨分段出现，也要关联。\n"
         "5. role_notes 按人/角色归纳观点和承诺。\n"
         "6. 检查转写后半段，不能遗漏后半段新出现的人员、任务和风险。\n\n"
+        "7. 多源同录场景中，multi_source_complemented 表示多个拾音源互补后的证据；"
+        "multi_source_conflict 表示不同录音源存在冲突，纪要和待办要保留复核提示，"
+        "不要把互相冲突的多源事实合并为单一结论。\n\n"
         "会议转写：\n"
         + "\n".join(lines)
     )
@@ -254,6 +279,9 @@ def _segment_refine_user_prompt(segments: list[dict]) -> str:
         "也要带回，方便系统把最终时间线追溯到具体录音源和原始音频分段。\n"
         "1c. 如果同一会议有多个 source_id，同一时间附近的多个来源可能是同一句话的不同拾音版本；"
         "优先保留更清楚、更完整且不冲突的文本，不要把重复内容机械堆叠成多次发言。\n"
+        "1d. 如果输入 flags 包含 multi_source_merged、multi_source_complemented、"
+        "multi_source_time_aligned 或 multi_source_conflict，输出仍要保留 source_index/source_id/"
+        "source_segment_no；带 multi_source_conflict 的事实不要融合成确定结论，应保留需复核语气。\n"
         "2. 保持时间顺序。没有更细时间戳时，可按文本顺序在原段 start_ms/end_ms 范围内均匀分配。\n"
         "3. confidence 范围 0-1；需要人工确认的 speaker 用较低 confidence。\n"
         "4. speaker_id 可复用原始 ID；推断出的新人物可用 MANUAL_姓名拼音或 MANUAL_序号。\n"
@@ -559,7 +587,7 @@ def _parse_refined_segments(content: str, original_segments: list[dict]) -> list
         start_ms = _int_value(item.get("start_ms"), fallback.get("start_ms", index * 1000))
         end_ms = _int_value(item.get("end_ms"), fallback.get("end_ms", start_ms + 1000))
         confidence = _float_value(item.get("confidence"), 0.65)
-        flags = ["llm_refined"]
+        flags = _refined_base_flags(fallback)
         invalid_speaker_name = _is_invalid_person_name(speaker)
         scenario = _scenario_value(item.get("scenario"))
         inferred_speaker = _speaker_differs_from_source(speaker, fallback)
@@ -598,6 +626,24 @@ def _parse_refined_segments(content: str, original_segments: list[dict]) -> list
     if not refined:
         raise LlmAdapterError("LLM returned no refined transcript segments")
     return refined
+
+
+def _refined_base_flags(fallback: dict) -> list[str]:
+    preserved_prefixes = (
+        "multi_source_",
+        "multi_source_count:",
+        "multi_source_refs:",
+    )
+    preserved_exact = {"speaker_review"}
+    ignored = {"semantic_partial", "semantic_final", "semantic_asr", "semantic_rule"}
+    flags = ["llm_refined"]
+    for flag in fallback.get("flags") or []:
+        text = str(flag)
+        if text in ignored:
+            continue
+        if (text in preserved_exact or text.startswith(preserved_prefixes)) and text not in flags:
+            flags.append(text)
+    return flags
 
 
 def _fallback_segment_for_refined_item(
