@@ -878,6 +878,7 @@ def build_knowledge_readiness(quality_report: dict) -> dict:
             "transcript": "/api/external/meetings/{meetingId}/transcript?include_history=true",
             "meeting": "/api/external/meetings/{meetingId}",
         },
+        "reviewEvidence": _knowledge_review_evidence(quality_report),
         "notes": _knowledge_readiness_notes(blockers, review_warnings),
     }
 
@@ -901,6 +902,32 @@ def _knowledge_readiness_notes(blockers: list[str], review_warnings: list[str]) 
     if "weak_action_owner_evidence" in review_warnings:
         notes.append("待办负责人证据弱，知识平台应保留待确认状态。")
     return notes
+
+
+def _knowledge_review_evidence(quality_report: dict) -> dict:
+    source_coverage = quality_report.get("sourceCoverage") or {}
+    summary_evidence = quality_report.get("summaryEvidence") or {}
+    summary_claims = []
+    for item in summary_evidence.get("supportedClaims") or []:
+        if item.get("status") in {"majority", "conflict"}:
+            summary_claims.append(item)
+    for item in summary_evidence.get("unsupportedClaims") or []:
+        copy = dict(item)
+        copy.setdefault("status", "unsupported")
+        summary_claims.append(copy)
+    action_evidence = [
+        item
+        for item in quality_report.get("actionEvidence") or []
+        if item.get("status") in {"majority", "conflict", "weak_owner", "unsupported"}
+    ]
+    return {
+        "multiSourceConflicts": (quality_report.get("multiSourceConflicts") or [])[:6],
+        "sourceCoverageWeakSegments": (source_coverage.get("weakSegments") or [])[:6],
+        "speakerEvidence": (quality_report.get("speakerEvidence") or [])[:6],
+        "speakerAliasConflicts": (quality_report.get("speakerAliasConflicts") or [])[:6],
+        "summaryClaims": summary_claims[:6],
+        "actionEvidence": action_evidence[:8],
+    }
 
 
 def _flags(value) -> list[str]:

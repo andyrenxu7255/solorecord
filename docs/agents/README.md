@@ -376,7 +376,7 @@ macOS/iOS/HarmonyOS 发布：
 - 不要把 ES 当成唯一存储。
 - 不要绕过 `_assert_access` 暴露会议数据。
 - 转写是知识平台的原始证据层。外部知识整理 Agent 只能通过 `/api/external/meetings/{meetingId}/transcript?include_history=true` 拉取，不能直接读 SQLite、`var/` 或音频文件路径。
-- 外部响应里的 `knowledgeReadiness` 是入库门禁摘要。`status=hold` 时不要自动沉淀纪要或督办；`status=review_first` 时可以入库但必须保留风险标记；`status=ready` 才适合无人工介入地进入知识库。
+- 外部响应里的 `knowledgeReadiness` 是入库门禁摘要。`status=hold` 时不要自动沉淀纪要或督办；`status=review_first` 时可以入库但必须保留风险标记；`status=ready` 才适合无人工介入地进入知识库。`knowledgeReadiness.reviewEvidence` 会把多源冲突、覆盖不足分段、发言人风险、纪要风险和待办风险汇总成复核清单，Agent 应把它作为人工复核入口，而不是当成新的事实来源。
 - 外部响应里的 `actionItems` 已直接携带 `evidenceStatus`、`evidenceReason`、`evidence`、`suggestedOwner`、`suggestedOwnerEvidence`、`knowledgeSafe` 和 `requiresReview`。`evidenceStatus=majority` 表示多数源主结果支撑，`knowledgeSafe=true` 且 `requiresReview=true`，可以作为主证据使用但要保留抽查回听提示；`evidenceStatus=conflict` 表示只由冲突片段支撑，必须阻断自动督办和确定知识入库。只做督办的 Agent 可以先读这些字段；需要完整证据审计时再读 `qualityReport.actionEvidence`。
 - 非 admin 不允许删除转写段；转写重处理、分段重传或人工替换前必须保留 `transcript_segment_history`。
 - 不要在 Web 使用未转义的动态 HTML。
@@ -841,6 +841,13 @@ The repository can be public only if no real secrets, runtime data, databases, c
   treat `knowledgeSafe=false` and `requiresReview=true` as a hard gate and must
   not auto-send it. Use `qualityReport.actionEvidence` for complete evidence
   audits.
+- External `knowledgeReadiness` is the ingestion gate summary. `status=hold`
+  means do not automatically store summaries or actions; `status=review_first`
+  means ingestion is possible only with risk markers preserved; `status=ready`
+  is the only state suitable for unattended knowledge ingestion.
+  `knowledgeReadiness.reviewEvidence` summarizes multi-source conflicts, weak
+  coverage segments, speaker risks, summary risks, and action risks as the
+  human-review entry point; agents should not treat it as a new fact source.
 - Non-admin users must not delete transcript segments. Reprocessing, segment
   retry, or manual replacement must preserve prior rows in
   `transcript_segment_history`.

@@ -2710,6 +2710,9 @@ def test_quality_probe_is_read_only_and_reports_current_quality(tmp_path: Path) 
     assert result["source"]["quality_report"]["status"] == "needs_review"
     assert result["source"]["knowledge_readiness"]["status"] == "hold"
     assert "generic_owner" in result["source"]["knowledge_readiness"]["blockers"]
+    review_evidence = result["source"]["knowledge_readiness"]["reviewEvidence"]
+    assert review_evidence["speakerEvidence"][0]["segment_id"] == "seg_probe_1"
+    assert review_evidence["actionEvidence"][0]["status"] == "weak_owner"
 
     with db.get_db() as conn:
         after = conn.execute(
@@ -3033,6 +3036,10 @@ def test_quality_report_marks_conflicting_multisource_actions_for_review(tmp_pat
         "seg_conflict_action_front",
         "seg_conflict_action_back",
     }
+    readiness_evidence = detail["knowledgeReadiness"]["reviewEvidence"]
+    assert len(readiness_evidence["multiSourceConflicts"]) == 2
+    assert readiness_evidence["actionEvidence"][0]["id"] == "act_conflict_action"
+    assert readiness_evidence["actionEvidence"][0]["status"] == "conflict"
 
     external = client.get(
         f"/api/external/meetings/{meeting_id}",
@@ -3043,6 +3050,7 @@ def test_quality_report_marks_conflicting_multisource_actions_for_review(tmp_pat
     assert external_action["knowledgeSafe"] is False
     assert external_action["requiresReview"] is True
     assert len(external["qualityReport"]["multiSourceConflicts"]) == 2
+    assert len(external["knowledgeReadiness"]["reviewEvidence"]["multiSourceConflicts"]) == 2
 
 
 def test_quality_report_marks_conflicting_multisource_summary_for_review(tmp_path: Path) -> None:
@@ -5005,6 +5013,8 @@ def test_full_user_story_permissions_sync_export_and_release(tmp_path: Path) -> 
     readiness = external.json()["items"][0]["knowledgeReadiness"]
     assert readiness["status"] in {"ready", "review_first", "hold"}
     assert "unsupportedActionCount" in readiness["metrics"]
+    assert "reviewEvidence" in readiness
+    assert "actionEvidence" in readiness["reviewEvidence"]
 
     latest_transcript_for_admin = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers).json()
     admin_trim = client.put(
