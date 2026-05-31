@@ -1681,6 +1681,49 @@ def test_llm_refinement_rejects_dropped_source_segment() -> None:
     assert not processing._refined_segments_cover_source(refined, original)
 
 
+def test_llm_refinement_coverage_uses_source_id_for_multisource_segments() -> None:
+    import solorecord_server.processing as processing
+
+    original = [
+        {
+            "source_id": "front",
+            "source_segment_no": 1,
+            "start_ms": 0,
+            "end_ms": 60000,
+            "text": "前排录音确认客户名单今天定版并通知销售。",
+        },
+        {
+            "source_id": "back",
+            "source_segment_no": 1,
+            "start_ms": 0,
+            "end_ms": 60000,
+            "text": "后排录音确认物料清单下午同步给客户。",
+        },
+    ]
+    refined = [
+        {
+            "source_id": "front",
+            "source_segment_no": 1,
+            "start_ms": 0,
+            "end_ms": 60000,
+            "text": "前排录音确认客户名单今天定版并通知销售。",
+        }
+    ]
+
+    assert processing._refined_segments_cover_each_source(refined, original) is False
+
+    refined.append(
+        {
+            "source_id": "back",
+            "source_segment_no": 1,
+            "start_ms": 0,
+            "end_ms": 60000,
+            "text": "后排录音确认物料清单下午同步给客户。",
+        }
+    )
+    assert processing._refined_segments_cover_each_source(refined, original) is True
+
+
 def test_action_owner_normalization_replaces_generic_roles() -> None:
     import solorecord_server.processing as processing
 
@@ -1988,6 +2031,62 @@ def test_quality_probe_postprocess_simulates_residual_splits_read_only(tmp_path:
             (meeting_id,),
         ).fetchone()["count"]
     assert after == before
+
+
+def test_quality_probe_postprocess_preserves_multisource_coverage_keys(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post(
+        "/api/web/meetings",
+        headers=headers,
+        json={"title": "多源探测会", "recording_mode": "multi_source", "max_sources": 2},
+    )
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+    import solorecord_server.quality_probe as quality_probe
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO audio_segments
+            (id, meeting_id, source_id, source_segment_no, segment_no, file_name,
+             storage_path, mime_type, size_bytes, sha256, duration_ms, start_ms,
+             end_ms, upload_status, created_at)
+            VALUES
+            ('aud_probe_front', ?, 'front', 1, 1, 'front.wav', 'front.wav',
+             'audio/wav', 1, 'sha-front-probe', 60000, 0, 60000, 'uploaded', 'now'),
+            ('aud_probe_back', ?, 'back', 1, 2, 'back.wav', 'back.wav',
+             'audio/wav', 1, 'sha-back-probe', 60000, 0, 60000, 'uploaded', 'now')
+            """,
+            (meeting_id, meeting_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id,
+             display_name, start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_probe_front', ?, 1, 'front', 1, 'SPEAKER_01', '任旭',
+             0, 60000, '前排录音确认客户名单今天定版。',
+             0.84, '["semantic_partial"]', 'now'),
+            ('seg_probe_back', ?, 1, 'back', 1, 'SPEAKER_02', '李娜',
+             0, 60000, '后排录音确认物料清单下午同步。',
+             0.84, '["semantic_partial"]', 'now')
+            """,
+            (meeting_id, meeting_id),
+        )
+
+    result = quality_probe.probe_meeting(
+        meeting_id,
+        run_llm=False,
+        run_postprocess=True,
+    )
+    coverage = result["postprocess"]["quality_report"]["sourceCoverage"]
+    assert coverage["coverage"] == 1
+    assert {
+        (item["source_id"], item["source_segment_no"], item["status"])
+        for item in coverage["segments"]
+    } == {("front", 1, "covered"), ("back", 1, "covered")}
 
 
 def test_quality_report_flags_action_owner_over_concentration(tmp_path: Path) -> None:

@@ -227,6 +227,7 @@ def _segment_row_like(segment: dict) -> dict:
         "id": segment.get("id", ""),
         "meeting_id": segment.get("meeting_id", ""),
         "version": segment.get("version", 1),
+        "source_id": segment.get("source_id") or "",
         "source_segment_no": segment.get("source_segment_no"),
         "speaker_id": segment.get("speaker_id") or "SPEAKER_01",
         "display_name": segment.get("display_name") or segment.get("speaker_id") or "发言人",

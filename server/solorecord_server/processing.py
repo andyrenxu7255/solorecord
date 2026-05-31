@@ -1014,13 +1014,15 @@ def _refined_segments_cover_each_source(
 
 
 def _related_refined_text(refined: list[dict], source: dict) -> str:
+    source_id = str(source.get("source_id") or "primary")
     source_no = source.get("source_segment_no")
     related: list[str] = []
     if source_no is not None:
         related = [
             str(item.get("text") or "")
             for item in refined
-            if item.get("source_segment_no") == source_no
+            if int(item.get("source_segment_no") or 0) == int(source_no)
+            and str(item.get("source_id") or "primary") == source_id
         ]
         if related:
             return " ".join(related)
