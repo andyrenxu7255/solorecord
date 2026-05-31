@@ -2285,7 +2285,14 @@ def _summarize(segments: list[dict]) -> tuple[str, str, list[dict]]:
     except Exception:
         pass
     summary, role_notes = _grounded_summary_from_segments(segments)
-    actions = [
+    actions = _llm_unavailable_fallback_actions(segments)
+    return summary, role_notes, actions
+
+
+def _llm_unavailable_fallback_actions(segments: list[dict]) -> list[dict]:
+    if not _has_placeholder_asr_segments(segments):
+        return []
+    return [
         {
             "owner": "待确认",
             "task": "检查转写结果并补充真实会议纪要",
@@ -2293,7 +2300,17 @@ def _summarize(segments: list[dict]) -> tuple[str, str, list[dict]]:
             "status": "open",
         }
     ]
-    return summary, role_notes, actions
+
+
+def _has_placeholder_asr_segments(segments: list[dict]) -> bool:
+    placeholder_flags = {"mock_asr", "empty_asr", "missing_audio"}
+    for segment in segments:
+        flags = segment.get("flags") or []
+        if not isinstance(flags, list):
+            flags = [str(flags)]
+        if placeholder_flags & {str(flag) for flag in flags}:
+            return True
+    return False
 
 
 def _grounded_summary_result(

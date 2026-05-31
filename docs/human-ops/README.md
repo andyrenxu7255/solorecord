@@ -282,7 +282,7 @@ SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
 - 每个分段上传后会先做分段级后处理并标记 `semantic_partial`；点击结束会议后，服务端会用整场上下文再整理一次最终时间线、纪要和待办，并标记 `semantic_final`。
 - 语义重分段输出会保留 `source_index`/`source_segment_no`，方便从 Web 时间线、导出 JSON 或外部知识平台追溯到原始音频分段。通过上下文或任务归属推断的人名会保留 `speaker_review` 和 `reason:*`，上线验收时要把它当作“建议归属”，而不是声纹确认。
 - 如果用户已经把某个 `speaker_id` 改成具体人名，最终整理会优先保留这个人工校正；但 `发言人 1/2/3` 这类泛化旧名不会阻止模型根据上下文识别新的真实人名。
-- 会议详情里的“整理质量”会显示待办证据率。证据率低或出现“待办缺少转写证据”时，说明待办可能是模型补写或上下文关联不足，建议先回看转写/录音再对外发送。新生成的 LLM 待办若完全缺少转写证据，会在保存前被删除；如果全部生成待办都缺证据，系统只保留一条带原文片段的“按转写原文复核待办”，用于提醒人工复核，不应被外部督办系统自动发送。
+- 会议详情里的“整理质量”会显示待办证据率。证据率低或出现“待办缺少转写证据”时，说明待办可能是模型补写或上下文关联不足，建议先回看转写/录音再对外发送。新生成的 LLM 待办若完全缺少转写证据，会在保存前被删除；如果全部生成待办都缺证据，系统只保留一条带原文片段的“按转写原文复核待办”，用于提醒人工复核，不应被外部督办系统自动发送。若 LLM 未配置但 ASR 已生成真实转写，服务端只保存保守纪要，不生成“检查转写结果”系统待办；该提醒只用于 `mock_asr`、`empty_asr`、`missing_audio` 等占位转写场景。
 - 会议详情里的“整理质量”也会显示分段覆盖率。如果出现“音频分段待核对”或 `source_segment_coverage_weak`，说明某个上传音频分段在当前转写中没有足够文本，可能是 ASR 空结果、重传缺失或 LLM 后处理丢段。上线验收时应先回听或重转写该分段，不要把该会议直接交给知识平台自动入库。
 - 如果 `weak_action_owner_count` 大于 0，说明待办内容本身可能来自转写，但负责人和任务之间缺少明确上下文证据。上线验收时要重点检查这些待办，避免把督办消息发给错误的人。
 - 如果待办负责人显示为“我、我们、他、这边、大家”等代词，系统会尝试用第一人称转写和任务关键词换成真实发言人；换不出来会降级为 `待确认`，仍应人工确认后再复制到 IM。
@@ -863,6 +863,7 @@ Operations notes:
 - Each uploaded segment gets partial post-processing first and is marked with `semantic_partial`. When the meeting is finished, the server uses full-meeting context to rewrite the final timeline, summary, and action items with `semantic_final`.
 - If a user has already corrected a `speaker_id` to a concrete name, final processing preserves that correction. Generic old names such as `Speaker 1/2/3` do not block new model-inferred names.
 - The meeting detail quality panel shows action evidence coverage. Low coverage or an “action item lacks transcript evidence” issue means an action may have been hallucinated or weakly linked, so operators should review the transcript/audio before sharing it.
+- If no LLM is configured but ASR produced real transcript text, SoloRecord saves the conservative transcript-grounded summary without creating a synthetic "check transcript result" action. That reminder action is reserved for placeholder rows such as `mock_asr`, `empty_asr`, or `missing_audio`.
 - LLM summaries are not saved blindly. The server first checks whether summary and role-note claims are supported by transcript evidence. If evidence coverage is too low or any generated claim lacks transcript evidence, it replaces the result with a conservative transcript-grounded summary and corrects clearly unsupported action owners when stronger transcript evidence exists. Seeing the "conservative transcript-grounded summary" title means the safety fallback was used.
 - If an action owner is a pronoun such as “I”, “we”, “he”, “this side”, or “everyone”, SoloRecord tries to replace it with a concrete speaker from first-person transcript evidence and task keywords. If it cannot, the owner becomes `待确认` and should be reviewed before IM sharing.
 - If `speaker_evidence_weak_count` is above zero, some speaker names were not supported by original ASR text or original speaker labels. During acceptance, play those segments first and confirm the model did not turn topics, time phrases, or misheard words into names.

@@ -160,7 +160,7 @@ python /opt/solorecord-asr/run_asr.py --audios-json {audio_json} --sample-rate {
 
 如果自建 ASR 已经提供 OpenAI 兼容 HTTP 服务，可以在 Web 管理页选择 `openai-compatible` 或 `funasr`，并在服务器端配置 Endpoint、API Key 和 Model。服务端优先调用 `/audio/transcriptions`，必要时回退尝试 `/asr`；空语音会保留可追踪占位转写，避免会议记录变成不可用。
 
-ASR 返回原生说话人字段时，服务端会优先使用；如果只返回单段文本、单一发言人，或虽有多个原始 speaker 但文本中出现点名和承接回应，服务端会再调用配置好的 LLM 做语义重分段和发言人推断。分段上传后的阶段结果标记为 `semantic_partial`，结束会议后服务端会基于整场上下文再生成标记为 `semantic_final` 的最终时间线，避免 5 分钟分片割裂“点名、回应、交付物、截止时间”之间的关系。LLM 不可用时会用规则兜底拆分“张三说”“李四：”，并保守处理“翼天你先说”后接“我这边负责”，包括 ASR 没有在点名句和回应句之间加标点的场景，以及被点名议题后续继续围绕同一交付物、时间节点展开的上下文归属。Web 时间线会显示“需确认”“大模型分段”“规则分段”等校对提示；需要校对的行会展示推断依据和相邻上下文。整理质量区会显示发言人证据风险、纪要证据率、待办证据率和待办归属风险；纪要区会列出“纪要有依据”的引用片段、“纪要与原文相反”的高风险结论和“纪要待核对”的缺证据结论。`summaryEvidence.status=contradiction` 会阻断知识入库，并触发服务端把 LLM 纪要降级为“基于转写原文的保守整理”。待办区会逐条显示“有转写依据/多数源确认/多源冲突待核对/负责人证据弱/待办与原文相反/缺转写证据”。`actionEvidence.status=contradiction` 用于拦截把“先不要发、暂缓、不能上线”等原文反写成执行待办的情况，此时 `knowledgeSafe=false` 且知识入库为 `hold`；“确认是否发送”这类核对型待办不会被当成执行发送。LLM 新生成的待办若完全缺少转写证据，会在保存前被移除；如果全部生成待办都缺证据，系统会保留一条带原文片段的“按转写原文复核待办”，提示人工检查而不是自动督办。用户手工或历史遗留的缺证据待办会集中标成 `unsupported`，不会再额外重复报“负责人证据弱”。多数源证据只能增强任务文本可信度；如果负责人仍是 `待确认`、代词、时间短语或泛化角色，待办仍会优先标记为 `weak_owner`、`knowledgeSafe=false`，并给出可人工应用的 `suggestedOwner`。即使当前转写还没拆开、说话人仍是主持人或“发言人 1”，系统也会从“翼天你说自动测试”“围城你那个部分讲数据源”等点名句里生成建议负责人；但会过滤“舞台音响、自动测试、数据源”等议题短语，避免把任务词当成人。用户手动把某个发言人改成具体人名后，后续同一 `speaker_id` 会优先保留人工校正；普通 `发言人 N` 泛化旧名不会阻止模型识别新名字。
+ASR 返回原生说话人字段时，服务端会优先使用；如果只返回单段文本、单一发言人，或虽有多个原始 speaker 但文本中出现点名和承接回应，服务端会再调用配置好的 LLM 做语义重分段和发言人推断。分段上传后的阶段结果标记为 `semantic_partial`，结束会议后服务端会基于整场上下文再生成标记为 `semantic_final` 的最终时间线，避免 5 分钟分片割裂“点名、回应、交付物、截止时间”之间的关系。LLM 不可用时会用规则兜底拆分“张三说”“李四：”，并保守处理“翼天你先说”后接“我这边负责”，包括 ASR 没有在点名句和回应句之间加标点的场景，以及被点名议题后续继续围绕同一交付物、时间节点展开的上下文归属。Web 时间线会显示“需确认”“大模型分段”“规则分段”等校对提示；需要校对的行会展示推断依据和相邻上下文。整理质量区会显示发言人证据风险、纪要证据率、待办证据率和待办归属风险；纪要区会列出“纪要有依据”的引用片段、“纪要与原文相反”的高风险结论和“纪要待核对”的缺证据结论。`summaryEvidence.status=contradiction` 会阻断知识入库，并触发服务端把 LLM 纪要降级为“基于转写原文的保守整理”。待办区会逐条显示“有转写依据/多数源确认/多源冲突待核对/负责人证据弱/待办与原文相反/缺转写证据”。`actionEvidence.status=contradiction` 用于拦截把“先不要发、暂缓、不能上线”等原文反写成执行待办的情况，此时 `knowledgeSafe=false` 且知识入库为 `hold`；“确认是否发送”这类核对型待办不会被当成执行发送。LLM 新生成的待办若完全缺少转写证据，会在保存前被移除；如果全部生成待办都缺证据，系统会保留一条带原文片段的“按转写原文复核待办”，提示人工检查而不是自动督办。若 LLM 没有配置但 ASR 已产生真实转写，服务端只生成保守纪要，不会凭空创建“检查转写结果”类系统待办；只有 `mock_asr`、`empty_asr` 或 `missing_audio` 这类占位转写才会保留复核提醒。用户手工或历史遗留的缺证据待办会集中标成 `unsupported`，不会再额外重复报“负责人证据弱”。多数源证据只能增强任务文本可信度；如果负责人仍是 `待确认`、代词、时间短语或泛化角色，待办仍会优先标记为 `weak_owner`、`knowledgeSafe=false`，并给出可人工应用的 `suggestedOwner`。即使当前转写还没拆开、说话人仍是主持人或“发言人 1”，系统也会从“翼天你说自动测试”“围城你那个部分讲数据源”等点名句里生成建议负责人；但会过滤“舞台音响、自动测试、数据源”等议题短语，避免把任务词当成人。用户手动把某个发言人改成具体人名后，后续同一 `speaker_id` 会优先保留人工校正；普通 `发言人 N` 泛化旧名不会阻止模型识别新名字。
 
 语义重分段会把每个模型输出段继续关联回 `source_index`/`source_segment_no`，所以 UI、导出和外部知识平台都能追溯到原始音频分段。如果 LLM 只是把同一个 ASR 原生 speaker 的长段拆成多段，并且仍使用同一个 `speaker_id` 与 `native_speaker` 场景，最终段会保留 `asr_speaker`，表示它仍来自 ASR 原生说话人证据。通过上下文、任务归属或议题延续推断出的发言人会保留 `speaker_review`、`scenario:*` 和 `reason:*` 标记，但不会伪装成 `asr_speaker`；这表示“可用的会议上下文推断”，不是声纹确认。若 ASR 已经返回多个原生 speaker，但仍存在“李波后面看登录界面”“围城负责外接数据源”等未落到具体人物的线索，服务端也会触发语义后处理，而不是简单相信 ASR 粗分段。
 
@@ -277,6 +277,10 @@ Newly generated LLM action items that have no transcript evidence are also
 removed before saving. If every generated action is unsupported, the server
 keeps one transcript-referenced review action so users know to inspect the
 source text, while downstream reminder agents still see it as non-actionable.
+If the LLM is unavailable but ASR has produced real transcript text, the server
+keeps the conservative summary and saves no synthetic review action. The
+"check transcript result" review action is reserved for placeholder rows such
+as `mock_asr`, `empty_asr`, or `missing_audio`.
 User-edited or historical unsupported actions are reported as `unsupported`
 only, not double-counted as weak-owner evidence. Named call-outs can still
 produce `suggestedOwner` before the transcript is fully split, even when the

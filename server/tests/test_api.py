@@ -2303,6 +2303,108 @@ def test_final_processing_keeps_called_person_followup_commitments(tmp_path: Pat
     assert "speaker_review" in transcript["segments"][2]["flags"]
 
 
+def test_llm_unavailable_does_not_create_review_action_for_real_transcript(
+    tmp_path: Path,
+) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "无 LLM 真实转写"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+    import solorecord_server.processing as processing
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO audio_segments
+            (id, meeting_id, segment_no, file_name, storage_path, mime_type, size_bytes,
+             sha256, duration_ms, start_ms, end_ms, upload_status, created_at)
+            VALUES ('aud_real_no_llm', ?, 1, 'part.wav', 'missing.wav', 'audio/wav', 1,
+                    'sha-real-no-llm', 9000, 0, 9000, 'uploaded', 'now')
+            """,
+            (meeting_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_real_no_llm_1', ?, 1, 1, 'SPEAKER_01', '任旭', 0, 4500,
+             '客户名单今天定版。', 0.86, '["semantic_partial"]', 'now'),
+            ('seg_real_no_llm_2', ?, 1, 1, 'SPEAKER_02', '李娜', 4500, 9000,
+             '物料周五前准备好。', 0.84, '["semantic_partial"]', 'now')
+            """,
+            (meeting_id, meeting_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO processing_jobs
+            (id, meeting_id, type, status, current_stage, progress, asr_provider, created_at, updated_at)
+            VALUES ('job_real_no_llm', ?, 'transcribe', 'queued', 'queued', 0, 'mock', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    processing.process_transcription_job("job_real_no_llm")
+
+    detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
+    assert "基于转写原文的保守整理" in detail["meeting"]["summary"]
+    assert detail["actionItems"] == []
+    assert detail["qualityReport"]["metrics"]["unsupported_action_count"] == 0
+    assert detail["qualityReport"]["metrics"]["generic_owner_count"] == 0
+
+
+def test_llm_unavailable_keeps_review_action_for_placeholder_asr(
+    tmp_path: Path,
+) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "无 LLM 占位转写"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+    import solorecord_server.processing as processing
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO audio_segments
+            (id, meeting_id, segment_no, file_name, storage_path, mime_type, size_bytes,
+             sha256, duration_ms, start_ms, end_ms, upload_status, created_at)
+            VALUES ('aud_mock_no_llm', ?, 1, 'part.wav', 'missing.wav', 'audio/wav', 1,
+                    'sha-mock-no-llm', 9000, 0, 9000, 'uploaded', 'now')
+            """,
+            (meeting_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_mock_no_llm_1', ?, 1, 1, 'SPEAKER_01', '发言人 1', 0, 9000,
+             '已接收音频分段 1（part.wav）。本地 ASR 未配置时先生成占位转写，部署模型后可重新转写。',
+             0.55, '["mock_asr","semantic_partial"]', 'now')
+            """,
+            (meeting_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO processing_jobs
+            (id, meeting_id, type, status, current_stage, progress, asr_provider, created_at, updated_at)
+            VALUES ('job_mock_no_llm', ?, 'transcribe', 'queued', 'queued', 0, 'mock', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    processing.process_transcription_job("job_mock_no_llm")
+
+    detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
+    assert len(detail["actionItems"]) == 1
+    assert detail["actionItems"][0]["task"] == "检查转写结果并补充真实会议纪要"
+    assert detail["actionItems"][0]["requiresReview"] is True
+
+
 def test_insert_transcript_preserves_manual_speaker_names_only(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)
