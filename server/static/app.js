@@ -1083,12 +1083,18 @@ function jumpToTranscriptEvidence(button) {
   const segmentId = button?.dataset?.segmentId || "";
   const sourceId = button?.dataset?.sourceId || "";
   const sourceSegment = button?.dataset?.sourceSegment || "";
+  let filterChanged = false;
   if (sourceSegment) {
-    state.selectedTranscriptFilter = sourceId
+    const nextFilter = sourceId
       ? `segment:${sourceKey(sourceId, sourceSegment)}`
       : `segment:${sourceSegment}`;
-    const select = $("#transcriptFilter");
-    if (select) select.value = state.selectedTranscriptFilter;
+    filterChanged = state.selectedTranscriptFilter !== nextFilter;
+    state.selectedTranscriptFilter = nextFilter;
+    if (filterChanged && state.currentMeetingDetail && state.currentTranscriptSegments) {
+      renderMeetingDetail(state.currentMeetingDetail, state.currentTranscriptSegments);
+      requestAnimationFrame(() => jumpToTranscriptEvidence(button));
+      return;
+    }
   }
   const target = segmentId
     ? $(`#transcriptList .transcript-row[data-id="${cssEscape(segmentId)}"]`)

@@ -2882,6 +2882,8 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "actionEvidence" in app_js
     assert "定位转写" in app_js
     assert "jumpToTranscriptEvidence" in app_js
+    assert "filterChanged && state.currentMeetingDetail" in app_js
+    assert "renderMeetingDetail(state.currentMeetingDetail, state.currentTranscriptSegments)" in app_js
     assert "renderEvidenceJumpButton" in app_js
     assert "dedupeActionEvidence" in app_js
     assert "有转写依据" in app_js
