@@ -164,7 +164,7 @@ ASR 返回原生说话人字段时，服务端会优先使用；如果只返回�
 
 语义重分段会把每个模型输出段继续关联回 `source_index`/`source_segment_no`，所以 UI、导出和外部知识平台都能追溯到原始音频分段。通过上下文、任务归属或议题延续推断出的发言人会保留 `speaker_review`、`scenario:*` 和 `reason:*` 标记；这表示“可用的会议上下文推断”，不是声纹确认。若 ASR 已经返回多个原生 speaker，但仍存在“李波后面看登录界面”“围城负责外接数据源”等未落到具体人物的线索，服务端也会触发语义后处理，而不是简单相信 ASR 粗分段。
 
-多源同录会在最终整理前做保守校对：不同录音源同一时间窗里文本高度相近且关键事实一致时合并并标记 `multi_source_merged`；如果时间、数量或负责人等关键事实冲突，例如一个源听成“周三三类”、另一个源听成“周五五类”，系统会保留两条证据并标记 `multi_source_conflict` 和 `speaker_review`，交给用户回听确认，不会为了去重抹掉冲突。
+多源同录会在最终整理前做保守校对：不同录音源同一时间窗里文本高度相近且关键事实一致时合并并标记 `multi_source_merged`。如果某台设备晚几十秒开始录音，服务端还会结合该设备自己的分段号、时间差和文本相似度做错峰对齐，合并后额外标记 `multi_source_time_aligned`，避免把同一段发言重复展示。若时间、数量或负责人等关键事实冲突，例如一个源听成“周三三类”、另一个源听成“周五五类”，系统会保留两条证据并标记 `multi_source_conflict` 和 `speaker_review`，交给用户回听确认，不会为了去重抹掉冲突。
 
 详见 `docs/deployment.md` 的 Local ASR Command Adapter。
 
@@ -249,9 +249,13 @@ graph, so weakly supported names or action items can be reviewed before they
 are shared or indexed by downstream knowledge agents.
 
 For multi-source recording, final processing merges near-overlapping text from
-different sources only when the key facts agree. If sources disagree on dates,
-amounts, or owners, SoloRecord keeps both rows and marks `multi_source_conflict`
-plus `speaker_review` so a human can replay the evidence.
+different sources only when the key facts agree. If one device starts tens of
+seconds late, the server can also align evidence by the source-local segment
+number, start-time delta, and text similarity; these rows are marked with
+`multi_source_time_aligned` in addition to `multi_source_merged`. If sources
+disagree on dates, amounts, or owners, SoloRecord keeps both rows and marks
+`multi_source_conflict` plus `speaker_review` so a human can replay the
+evidence.
 
 See `docs/deployment.md` for the Local ASR Command Adapter details.
 

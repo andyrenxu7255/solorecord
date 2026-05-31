@@ -93,6 +93,14 @@ Android 上传可靠性：
 - 弱网重试只补传未完成分段；`/finish` 重试应复用已有处理 job。
 - 这是分段级断点续传，不是单文件字节 offset 续传。
 
+多源同录可靠性：
+
+- 1-8 个录音源通过同一 `join_code` 归入同一会议。
+- 证据键始终是 `(source_id, source_segment_no)`，不能只按本地分段号判断覆盖、替换或跳转。
+- 最终处理会合并关键事实一致的重复多源片段并标记 `multi_source_merged`。
+- 设备错峰起录但来源分段相邻、时间差和文本相似度满足保守阈值时，合并片段还会标记 `multi_source_time_aligned`。
+- 日期、数量或负责人等关键事实冲突时必须保留多条 `multi_source_conflict` 证据，不得为了去重覆盖冲突。
+
 ## 数据与权限
 
 重要表：
@@ -328,6 +336,14 @@ Android upload reliability:
 - After each segment succeeds, `uploadStatus` is persisted as `uploaded`.
 - Weak-network retry sends only pending segments; `/finish` retry should reuse an existing processing job.
 - This is segment-level resume, not byte-offset resume inside one file.
+
+Multi-source recording reliability:
+
+- 1-8 recording sources join the same meeting through one `join_code`.
+- The evidence key is always `(source_id, source_segment_no)`; never use the local segment number alone for coverage, replacement, or navigation.
+- Final processing merges duplicate multi-source rows only when key facts agree and marks them with `multi_source_merged`.
+- If devices start at different times but neighboring source-local segment numbers, start-time delta, and text similarity pass conservative checks, merged rows also carry `multi_source_time_aligned`.
+- If sources conflict on dates, amounts, or owners, keep separate `multi_source_conflict` evidence rows instead of deduplicating away the disagreement.
 
 ## Data Model
 

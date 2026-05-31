@@ -533,15 +533,18 @@ def _segments_are_multisource_duplicates(left: dict, right: dict) -> bool:
     right_source = str(right.get("source_id") or "primary")
     if left_source == right_source:
         return False
-    if not _segments_overlap_enough(left, right):
-        return False
-    if _segments_have_critical_fact_conflict(left, right):
-        return False
     left_text = str(left.get("text") or "")
     right_text = str(right.get("text") or "")
     if not left_text or not right_text:
         return False
-    return _text_similarity(left_text, right_text) >= 0.58
+    similarity = _text_similarity(left_text, right_text)
+    if _segments_overlap_enough(left, right):
+        if _segments_have_critical_fact_conflict(left, right):
+            return False
+        return similarity >= 0.58
+    if not _segments_are_offset_aligned_duplicate(left, right, similarity):
+        return False
+    return not _segments_have_critical_fact_conflict(left, right)
 
 
 def _segments_overlap_enough(left: dict, right: dict) -> bool:
@@ -593,8 +596,13 @@ def _merge_duplicate_source_group(group: list[dict]) -> dict:
             for item in group
         }
     )
-    merged["start_ms"] = min(int(item.get("start_ms") or 0) for item in group)
-    merged["end_ms"] = max(int(item.get("end_ms") or merged["start_ms"]) for item in group)
+    time_aligned = _group_has_offset_aligned_sources(group)
+    if time_aligned:
+        merged["start_ms"] = int(best.get("start_ms") or 0)
+        merged["end_ms"] = int(best.get("end_ms") or merged["start_ms"])
+    else:
+        merged["start_ms"] = min(int(item.get("start_ms") or 0) for item in group)
+        merged["end_ms"] = max(int(item.get("end_ms") or merged["start_ms"]) for item in group)
     merged["source_id"] = "+".join(source_ids)
     flags = _flags(merged)
     for flag in (
@@ -604,6 +612,8 @@ def _merge_duplicate_source_group(group: list[dict]) -> dict:
     ):
         if flag not in flags:
             flags.append(flag)
+    if time_aligned and "multi_source_time_aligned" not in flags:
+        flags.append("multi_source_time_aligned")
     merged["flags"] = flags
     try:
         confidences = [float(item.get("confidence") or 0) for item in group if item.get("confidence") is not None]
@@ -622,12 +632,98 @@ def _has_nearby_multisource_conflict(segment: dict, segments: list[dict]) -> boo
         if str(other.get("source_id") or "primary") == source_id:
             continue
         if not _segments_overlap_enough(segment, other):
-            continue
+            similarity = _text_similarity(
+                str(segment.get("text") or ""),
+                str(other.get("text") or ""),
+            )
+            if not _segments_are_offset_aligned_conflict_candidate(
+                segment,
+                other,
+                similarity,
+            ):
+                continue
         if _segments_have_critical_fact_conflict(segment, other):
             return True
         if _text_similarity(str(segment.get("text") or ""), str(other.get("text") or "")) < 0.28:
             return True
     return False
+
+
+def _group_has_offset_aligned_sources(group: list[dict]) -> bool:
+    for index, left in enumerate(group):
+        for right in group[index + 1 :]:
+            if str(left.get("source_id") or "primary") == str(right.get("source_id") or "primary"):
+                continue
+            if _segments_overlap_enough(left, right):
+                continue
+            similarity = _text_similarity(
+                str(left.get("text") or ""),
+                str(right.get("text") or ""),
+            )
+            if _segments_are_offset_aligned_duplicate(left, right, similarity):
+                return True
+    return False
+
+
+def _segments_are_offset_aligned_duplicate(
+    left: dict,
+    right: dict,
+    similarity: float,
+) -> bool:
+    if not _has_substantive_offset_alignment_text(left, right):
+        return False
+    return (
+        similarity >= 0.72
+        and _source_segments_are_near(left, right)
+        and _segment_start_delta_ms(left, right) <= 180_000
+    )
+
+
+def _segments_are_offset_aligned_conflict_candidate(
+    left: dict,
+    right: dict,
+    similarity: float,
+) -> bool:
+    return (
+        similarity >= 0.36
+        and _source_segments_are_near(left, right)
+        and _segment_start_delta_ms(left, right) <= 180_000
+    )
+
+
+def _source_segments_are_near(left: dict, right: dict) -> bool:
+    left_no = _source_segment_no(left)
+    right_no = _source_segment_no(right)
+    if left_no is None or right_no is None:
+        return False
+    return abs(left_no - right_no) <= 1
+
+
+def _has_substantive_offset_alignment_text(left: dict, right: dict) -> bool:
+    left_text = _compact_alignment_text(str(left.get("text") or ""))
+    right_text = _compact_alignment_text(str(right.get("text") or ""))
+    if min(len(left_text), len(right_text)) >= 12:
+        return True
+    shared_tokens = set(_merge_text_tokens(left_text)) & set(_merge_text_tokens(right_text))
+    return len(shared_tokens) >= 8
+
+
+def _compact_alignment_text(text: str) -> str:
+    return re.sub(r"[^0-9a-zA-Z\u4e00-\u9fa5]+", "", str(text or "").lower())
+
+
+def _source_segment_no(segment: dict) -> int | None:
+    try:
+        value = segment.get("source_segment_no")
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _segment_start_delta_ms(left: dict, right: dict) -> int:
+    return abs(int(left.get("start_ms") or 0) - int(right.get("start_ms") or 0))
 
 
 def _segments_have_critical_fact_conflict(left: dict, right: dict) -> bool:

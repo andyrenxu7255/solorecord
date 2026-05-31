@@ -27,7 +27,7 @@ SoloRecord 已具备：
 - Android/Windows/macOS/iOS/HarmonyOS 终端应用上传和下载。
 - Windows Electron 客户端、iOS WKWebView 外壳、macOS Electron/SwiftUI 外壳、HarmonyOS Web 外壳工程。
 - Android 分段级断点续传：本地分段落盘，multipart 文件流上传，服务端确认后立即执行分段 ASR，并把阶段转写写回同一场会议；本地账本标记已上传，弱网重试只补传未完成分段。
-- 多源同录：1-8 个录音源通过同一 `join_code` 加入同一会议。证据键是 `(source_id, source_segment_no)`；不要只用本地分段号判断覆盖或替换。最终处理会合并重复多源片段并标记 `multi_source_merged`，冲突片段标记 `multi_source_conflict`。
+- 多源同录：1-8 个录音源通过同一 `join_code` 加入同一会议。证据键是 `(source_id, source_segment_no)`；不要只用本地分段号判断覆盖或替换。最终处理会合并重复多源片段并标记 `multi_source_merged`；设备错峰起录但来源分段相邻、时间差和文本相似度满足保守阈值时，合并片段还会标记 `multi_source_time_aligned`。冲突片段标记 `multi_source_conflict`。
 - LDAP 用户名密码登录；SSO 浏览器登录回跳到 Android：`solorecord://auth/callback` 仍保留。
 - APK 重装后从 `/api/mobile/sync` 恢复记录，并可按权限下载服务器音频分段。
 - 待办可通过 `/api/web/meetings/{meetingId}/actions` 和 `/api/mobile/meetings/{meetingId}/actions` 更新，并进入同步、导出、外部 API 和可选 ES/OpenSearch 索引。
@@ -233,6 +233,7 @@ Agent 验收时必须检查：
 - `qualityReport.metrics.action_evidence_coverage` 应反映待办是否有转写证据；`unsupported_action_count` 大于 0 时，前端应提示“待办缺少转写证据”，便于人工复核模型是否补写。
 - `qualityReport.metrics.source_segment_coverage` 和 `qualityReport.sourceCoverage.weakSegments` 应按 `(source_id, source_segment_no)` 反映每个上传音频分段是否被最终转写覆盖。`source_segment_coverage_weak` 是知识入库阻塞项，外部知识 Agent 不得把该会议视为完整证据。`multi_source_conflict_count` 大于 0 时也应保留人工复核状态。
 - 多源合并前应检查关键事实。若不同录音源在日期、数量或负责人上冲突，应保留多条 `multi_source_conflict` 证据，不得为了去重合并成单条结论。
+- 多源错峰对齐只能作为去重和覆盖辅助：当 `multi_source_time_aligned` 出现时，Agent 应保留原始 `multi_source_refs:*` 追溯；若同一来源附近存在关键事实冲突，仍以 `multi_source_conflict` 和人工复核为准。
 - `qualityReport.metrics.weak_action_owner_count` 应反映待办负责人和任务之间是否缺少上下文证据；调 prompt 或规则时，不能仅因为某个人名在全文出现过，就把该人判为某项任务负责人。
 - 当 `actionEvidence` 或 `weakActionOwners` 出现 `suggested_owner` 时，Web 应显示建议负责人和应用按钮；Agent 可以把它作为人工复核建议，但不得绕过用户确认直接改待办。
 - 如果 LLM 输出 owner 为“我/我们/他/这边/大家”等代词，服务端应尝试用第一人称转写和任务关键词推断真实发言人；推不出必须保留 `待确认`，外部督办 Agent 不得把代词 owner 当成可发送对象。
@@ -471,7 +472,7 @@ SoloRecord currently includes:
 - Android/Windows/macOS/iOS/HarmonyOS client upload/download.
 - Windows Electron client, iOS WKWebView shell, macOS Electron/SwiftUI shell, and HarmonyOS Web shell projects.
 - Android segment-level upload resume: recording segments are stored locally, uploaded as multipart files, marked uploaded after server acknowledgement, and skipped on retry.
-- Multi-source recording: 1-8 sources join the same meeting through `join_code`. The evidence key is `(source_id, source_segment_no)`, not `source_segment_no` alone. Final processing merges duplicate multi-source rows with `multi_source_merged` and flags divergent rows with `multi_source_conflict`.
+- Multi-source recording: 1-8 sources join the same meeting through `join_code`. The evidence key is `(source_id, source_segment_no)`, not `source_segment_no` alone. Final processing merges duplicate multi-source rows with `multi_source_merged`; if devices start at different times but source-local segment numbers, start-time delta, and text similarity pass conservative checks, merged rows also carry `multi_source_time_aligned`. Divergent rows are flagged with `multi_source_conflict`.
 - LDAP username/password login. Browser SSO returning to Android through `solorecord://auth/callback` remains available.
 - APK reinstall recovery through `/api/mobile/sync`, including permission-protected server audio download.
 - Local ASR command adapter.
@@ -674,6 +675,7 @@ Agent acceptance checks:
 - `qualityReport.metrics.action_evidence_coverage` should show whether action items are grounded in transcript evidence. If `unsupported_action_count` is above zero, the Web UI should warn reviewers before the action list is shared.
 - `qualityReport.metrics.source_segment_coverage` and `qualityReport.sourceCoverage.weakSegments` should show whether each uploaded audio segment is covered by the final transcript, keyed by `(source_id, source_segment_no)`. `source_segment_coverage_weak` blocks knowledge ingestion. If `multi_source_conflict_count` is above zero, downstream agents should keep the meeting in human-review status.
 - Before merging multi-source evidence, check critical facts. If sources disagree on dates, amounts, or owners, keep separate `multi_source_conflict` evidence rows instead of deduplicating them into one conclusion.
+- Time-aligned multi-source merging is only a deduplication and coverage aid. When `multi_source_time_aligned` appears, agents should preserve the original `multi_source_refs:*` traceability; any nearby critical-fact disagreement still takes precedence as `multi_source_conflict` and requires human review.
 - If the LLM outputs a pronoun owner such as “I”, “we”, “he”, “this side”, or “everyone”, the server should infer a concrete speaker from first-person transcript evidence and task keywords when possible. If not possible, keep `待确认`; external action agents must not send reminders to pronoun owners.
 
 LLM:

@@ -12,6 +12,7 @@
 | --- | --- | --- |
 | 会议中信任感 | 明确录音状态、时长、同步进度 | 录音页必须显示录音中、本地已保存、分段上传状态 |
 | 时间线回看 | 按时间、说话人、章节回查 | 详情页必须保留转写时间线、音频分段和来源分段 |
+| 多源证据 | 重复来源去重但保留分歧 | 使用 `(source_id, source_segment_no)`，支持保守错峰对齐，关键事实冲突保留复核 |
 | 说话人修正 | 识别错了可手动改名并批量应用 | 同一 speaker id 改名后全场同步 |
 | 行动项 | 会议后抽取 owner、task、due、status | Web 可编辑待办，服务端持久化并可同步 |
 | 原文证据 | 摘要能追到转写和时间点 | 导出和外部 API 必须包含转写段和时间戳 |
@@ -104,6 +105,27 @@
 - 上传第 1 段后会议进入 `partial_ready`。
 - 上传第 2 段后转写时间线包含两个来源分段。
 - 结束会议后 `/finish` 可复用已有阶段转写生成纪要和待办。
+
+### 4.1 多源同录校对
+
+用户期望：
+
+- 多台手机或电脑一起录同一场会议，不会把同一段话重复塞进转写。
+- 如果有人晚一点才开始录音，系统仍能尽量对齐同一段内容。
+- 如果不同设备听到的日期、数量或负责人不一样，系统不要擅自选一个。
+
+系统要求：
+
+- 多源证据必须按 `(source_id, source_segment_no)` 追溯。
+- 同一时间窗或保守错峰窗口内，文本高度相近且关键事实一致时才合并。
+- 错峰对齐合并必须保留 `multi_source_time_aligned` 和 `multi_source_refs:*`。
+- 关键事实冲突必须保留多条 `multi_source_conflict`，并提示人工回听。
+
+验收：
+
+- 两个来源错开 45 秒录到同一句话时，最终转写只保留一条合并证据，并保留两个原始来源引用。
+- 两个来源错开 45 秒但日期或数量不同，最终转写保留两条冲突证据。
+- Web 质量区能显示多源合并、多源冲突和来源分段覆盖情况。
 
 ### 5. 结束会议
 
@@ -230,6 +252,7 @@
 - Web 录音上传失败时保留当前页面缓存并提供重试上传。
 - Android 记录详情优先展示纪要、待办、说话人统计，再展示转写。
 - Android 记录概览增强弱网和阶段转写提示。
+- 多源最终处理支持保守错峰对齐，同时保留日期、数量和负责人冲突证据。
 
 ## 仍需真实会议验证的体验点
 
@@ -253,6 +276,7 @@ Reviewed products include Otter, Fireflies, Microsoft Teams Intelligent Recap, Z
 | --- | --- | --- |
 | In-meeting trust | Clear recording state, duration, sync progress | Show recording, local-save, segment upload state |
 | Timeline review | Review by time, speaker, chapter | Keep transcript timeline, audio segments, source segment number |
+| Multi-source evidence | Deduplicate repeated sources while preserving disagreements | Use `(source_id, source_segment_no)`, support conservative late-start alignment, keep key-fact conflicts for review |
 | Speaker correction | Rename speaker and apply globally | Batch rename by stable speaker id |
 | Action items | Extract owner, task, due date, status | Editable action items persisted server-side |
 | Evidence | Summary links back to transcript/time | Exports and external APIs include timestamped transcript |
@@ -272,6 +296,7 @@ References:
 2. Start recording: local audio is saved immediately and rolled into overlapping segments.
 3. Weak network: completed segments are retried individually; uploaded segments are skipped.
 4. Partial transcription: each uploaded segment creates partial transcript rows in the same meeting.
+4.1. Multi-source review: duplicate evidence can be merged across sources, late-starting devices can be conservatively aligned, and fact conflicts stay visible for human review.
 5. Finish meeting: the final segment is saved first, then `/finish` submits processing; retries reuse the same job.
 6. Review: users see status, progress, speaker stats, summary, actions, audio, transcript, and jobs.
 7. Speaker rename: changing one speaker id updates all matching rows.
@@ -291,6 +316,7 @@ References:
 - Web recorder keeps failed upload blobs in the current page and provides retry.
 - Android record details now prioritize summary, action items, speaker stats, then transcript.
 - Android record overview gives clearer weak-network and partial-transcript guidance.
+- Multi-source final processing supports conservative late-start alignment while preserving date, amount, and owner conflicts as separate evidence.
 
 ## Needs Real-Meeting Validation
 

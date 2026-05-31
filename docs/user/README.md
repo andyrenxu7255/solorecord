@@ -47,7 +47,7 @@ Windows 版本下载后解压，运行 `SoloRecord.exe`。iOS、macOS 和 Harmon
 2. 第一次使用时允许麦克风权限。
 3. 会议结束后点击“结束录音”。
 
-多人同录时，所有参与录音的人在“会议编号”里填写同一个编号，例如 `0601A`；“录音源名称”建议写成“任旭手机”“会议室后排”“客户侧电脑”这类可辨识名称。系统会把 1-8 个录音源归集到同一场会议，各来源先独立上传和转写，整场结束后再由系统做多源校对、去重和冲突提示。
+多人同录时，所有参与录音的人在“会议编号”里填写同一个编号，例如 `0601A`；“录音源名称”建议写成“任旭手机”“会议室后排”“客户侧电脑”这类可辨识名称。系统会把 1-8 个录音源归集到同一场会议，各来源先独立上传和转写，整场结束后再由系统做多源校对、去重和冲突提示。不同设备不需要完全同一秒开始录音，晚几十秒开始通常也能被系统按分段和文本对齐；但重要会议仍建议尽量同时开始，减少漏掉开场信息。
 
 录音时系统会滚动保存音频。即使会议较长，也会按小段保存，减少意外丢失风险。默认约 5 分钟一个分段，具体时长由服务器配置；相邻分段会保留约 2 秒重叠，减少分段边界丢词。
 
@@ -105,6 +105,8 @@ Windows 版本下载后解压，运行 `SoloRecord.exe`。iOS、macOS 和 Harmon
 Web 详情页的“整理质量”会提示候选人名、需要校对的段落、发言人证据风险、分段覆盖率和待办证据率。待办证据率不是最终评分，而是提醒你：待办是否能在转写原文里找到依据。分段覆盖率用于发现某个音频分段在最终转写里过短或缺失。若出现“发言人缺少原文证据”“音频分段待核对”或“待办缺少转写证据”，建议先回看对应转写或录音，再复制给 IM 或外部系统。
 
 如果开启了多源同录，“整理质量”还会显示“多源合并”和“多源冲突”。多源合并表示系统发现多个录音源在同一时间记录了相近内容，并保留了更完整的一条；多源冲突表示同一时间不同来源差异较大，或日期、数量、负责人等关键事实不一致，建议回听对应录音后再对外发送纪要。
+
+如果某台设备晚一点开始录音，整理质量里可能看到“错峰对齐”的多源合并标记。这表示系统认为它和另一台设备记录的是同一段话，并已去重；如果关键日期、数量或负责人不一致，系统不会自动合并，会保留多条冲突证据让你确认。
 
 多源同录下，Web 的转写筛选和“定位转写”会按“录音源 + 该设备自己的分段号”定位。两台设备都上传“第 1 段”时，系统会分别显示到对应录音源，不会把不同设备的第 1 段混在一起。
 
@@ -292,7 +294,7 @@ Open the Recording tab:
 2. Allow microphone permission on first use.
 3. Tap End Recording when the meeting is over.
 
-For multi-source recording, every recorder should enter the same meeting code, for example `0601A`. Use a recognizable source name such as "Renxu phone", "back of meeting room", or "customer laptop". The server groups 1-8 recording sources into one meeting. Each source uploads and transcribes independently, then final processing merges duplicate evidence and flags conflicts, including disagreements on dates, amounts, or owners.
+For multi-source recording, every recorder should enter the same meeting code, for example `0601A`. Use a recognizable source name such as "Renxu phone", "back of meeting room", or "customer laptop". The server groups 1-8 recording sources into one meeting. Each source uploads and transcribes independently, then final processing merges duplicate evidence and flags conflicts, including disagreements on dates, amounts, or owners. Recorders do not have to start at the exact same second; a device that starts tens of seconds late can usually still be aligned by segment and text, but important meetings should still start all recorders as close together as possible.
 
 The app saves audio in rolling segments while recording. The default is about five minutes per segment, controlled by the server. Adjacent segments keep about two seconds of overlap to reduce boundary word loss. Long meetings are split into smaller files to reduce loss risk. If the app is closed, recording stops and the current segment is preserved as far as possible.
 
@@ -437,6 +439,8 @@ If a row is marked “needs review”, the speaker was inferred from context and
 The Web detail page includes a quality panel with candidate names, rows needing review, speaker-evidence risk, and action evidence coverage. This is a review aid: if a speaker lacks source evidence or an action item lacks transcript evidence, check the transcript or audio before sending it to IM or another system.
 
 In multi-source meetings, Web transcript filters and “jump to transcript” links use both the recording source and that device's local segment number. If two devices both upload segment 1, SoloRecord keeps them separate in review and evidence navigation.
+
+If one device starts recording late, the quality panel may show a time-aligned multi-source merge. That means SoloRecord believes two sources captured the same speech and removed the duplicate. If key facts disagree, it keeps separate conflict evidence instead of merging automatically.
 
 What if the summary is inaccurate?
 
