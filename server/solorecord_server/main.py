@@ -380,6 +380,7 @@ def get_meeting(meeting_id: str, user: CurrentUser) -> dict:
         "actionItems": document["actionItems"],
         "exports": document["exports"],
         "qualityReport": document["qualityReport"],
+        "knowledgeReadiness": document["knowledgeReadiness"],
         "knowledgeGraph": document["knowledgeGraph"],
         "jobs": [row_to_dict(row) for row in jobs],
     }

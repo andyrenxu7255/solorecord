@@ -563,6 +563,7 @@ function buildActionRiskMap(report) {
     const labels = {
       supported: ["有转写依据"],
       weak_owner: ["负责人证据弱"],
+      conflict: ["多源冲突待核对"],
       unsupported: ["缺转写证据"],
     }[item.status] || ["待核对"];
     map.set(key, {

@@ -1057,7 +1057,7 @@ def _action_items_with_evidence(action_items, quality_report: dict) -> list[dict
         item["suggestedOwnerReason"] = str(evidence.get("suggested_owner_reason") or "")
         item["suggestedOwnerEvidence"] = evidence.get("suggested_owner_evidence") or []
         item["knowledgeSafe"] = status == "supported"
-        item["requiresReview"] = status in {"unsupported", "weak_owner", "unknown"}
+        item["requiresReview"] = status in {"unsupported", "weak_owner", "conflict", "unknown"}
         items.append(item)
     return items
 
@@ -1081,7 +1081,10 @@ def _action_evidence_items(
         suggestion = _suggest_action_owner(task, owner, segments)
         status = "supported"
         reason = "该待办可在转写中找到相关任务或负责人线索。"
-        if key in unsupported_keys:
+        if evidence and _evidence_has_multisource_conflict(evidence, segments):
+            status = "conflict"
+            reason = "该待办依据来自多源同录冲突片段，请回听确认日期、数量或负责人后再督办。"
+        elif key in unsupported_keys:
             status = "unsupported"
             reason = "待办事项和转写原文关联较弱，请回看转写或录音。"
         elif _is_generic_owner(owner):
@@ -1105,6 +1108,39 @@ def _action_evidence_items(
             }
         )
     return items
+
+
+def _evidence_has_multisource_conflict(evidence: list[dict], segments: list[dict]) -> bool:
+    conflict_segment_ids = {
+        str(item.get("id") or "")
+        for item in segments
+        if "multi_source_conflict" in _flags(item.get("flags"))
+    }
+    conflict_source_keys = {
+        key
+        for item in segments
+        for key in [_source_segment_key(item)]
+        if "multi_source_conflict" in _flags(item.get("flags"))
+        if key is not None
+    }
+    if not conflict_segment_ids and not conflict_source_keys:
+        return False
+    for item in evidence:
+        segment_id = str(item.get("segment_id") or "")
+        if segment_id and segment_id in conflict_segment_ids:
+            return True
+        source_key = _source_segment_key(item)
+        if source_key is not None and source_key in conflict_source_keys:
+            return True
+    return False
+
+
+def _source_segment_key(item: dict) -> tuple[str, str] | None:
+    source_id = str(item.get("source_id") or "").strip()
+    source_segment_no = item.get("source_segment_no")
+    if not source_id or source_segment_no in (None, ""):
+        return None
+    return source_id, str(source_segment_no)
 
 
 def _action_quality_key(item: dict) -> str:

@@ -245,7 +245,7 @@ Agent 验收时必须检查：
 - 被点名句里的议题词可作为待办主责线索。例如“翼天你先说自动测试”后面出现匿名片段“覆盖脚本明天补完”时，可以把主责建议为翼天；但主持人本人不应仅因说出点名句而获得该任务。
 - 销售、法务、前端、测试等组织角色可以作为待办 owner，但必须有同一短语窗口内的责任或动作证据，例如“销售这边周五前跟进客户名单”“前端周三前改页面”。不要把“自动测试、测试覆盖、数据源”等任务词本身当成组织负责人。
 - 如果 `processing._normalize_action_owners()` 给 task 追加 `协同：姓名`，外部督办 Agent 应保留该字段含义：owner 是主责人，协同人是配合人，不要把协同人改成新的主责人。
-- `qualityReport.actionEvidence` 应逐条覆盖全部待办，并提供 `supported`、`weak_owner` 或 `unsupported` 状态和证据片段。证据片段应包含 `segment_id`、`source_segment_no`、`start_ms`、`speaker` 和 `text`。外部督办 Agent 可先读 `actionItems[].evidenceStatus`、`knowledgeSafe` 和 `requiresReview` 判断是否可以自动发送提醒；需要完整审计时再消费 `qualityReport.actionEvidence` 并保留证据追溯链接。
+- `qualityReport.actionEvidence` 应逐条覆盖全部待办，并提供 `supported`、`conflict`、`weak_owner` 或 `unsupported` 状态和证据片段。证据片段应包含 `segment_id`、`source_id`、`source_segment_no`、`start_ms`、`speaker` 和 `text`。`conflict` 表示待办有转写依据，但依据来自 `multi_source_conflict` 片段；外部督办 Agent 必须将 `actionItems[].knowledgeSafe=false`、`requiresReview=true` 作为硬门禁，不能自动发送提醒。外部督办 Agent 可先读 `actionItems[].evidenceStatus`、`knowledgeSafe` 和 `requiresReview` 判断是否可以自动发送提醒；需要完整审计时再消费 `qualityReport.actionEvidence` 并保留证据追溯链接。
 
 LLM：
 
@@ -829,9 +829,12 @@ The repository can be public only if no real secrets, runtime data, databases, c
   and must not read SQLite, `var/`, or raw audio paths directly.
 - External `actionItems` entries directly include `evidenceStatus`,
   `evidenceReason`, `evidence`, `suggestedOwner`,
-  `suggestedOwnerEvidence`, `knowledgeSafe`, and `requiresReview`. Reminder
-  agents can read those fields first; use `qualityReport.actionEvidence` for
-  complete evidence audits.
+  `suggestedOwnerEvidence`, `knowledgeSafe`, and `requiresReview`.
+  `evidenceStatus=conflict` means the action is backed by
+  `multi_source_conflict` transcript rows; reminder agents must treat
+  `knowledgeSafe=false` and `requiresReview=true` as a hard gate and must not
+  auto-send it. Use `qualityReport.actionEvidence` for complete evidence
+  audits.
 - Non-admin users must not delete transcript segments. Reprocessing, segment
   retry, or manual replacement must preserve prior rows in
   `transcript_segment_history`.

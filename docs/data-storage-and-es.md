@@ -84,7 +84,7 @@ GET /api/external/meetings/{meetingId}/transcript?include_history=true
 Authorization: Bearer replace-with-long-random-token
 ```
 
-响应包含当前转写版本、结构化段落、纯文本 `plain_text`、说话人映射、音频分段证据、待办、`searchText`、`qualityReport`、`knowledgeReadiness`、`knowledgeGraph`，以及可选历史归档 `history`。知识平台可以用当前段落生成知识条目，用历史归档做审计和冲突追溯。`actionItems` 会为每条待办附带 `evidenceStatus`、`evidenceReason`、`evidence`、`suggestedOwner`、`suggestedOwnerEvidence`、`knowledgeSafe` 和 `requiresReview`，方便只消费待办列表的督办 Agent 直接判断是否可自动发送提醒；证据明细仍以完整的 `qualityReport.actionEvidence` 为准。
+响应包含当前转写版本、结构化段落、纯文本 `plain_text`、说话人映射、音频分段证据、待办、`searchText`、`qualityReport`、`knowledgeReadiness`、`knowledgeGraph`，以及可选历史归档 `history`。知识平台可以用当前段落生成知识条目，用历史归档做审计和冲突追溯。`actionItems` 会为每条待办附带 `evidenceStatus`、`evidenceReason`、`evidence`、`suggestedOwner`、`suggestedOwnerEvidence`、`knowledgeSafe` 和 `requiresReview`，方便只消费待办列表的督办 Agent 直接判断是否可自动发送提醒；证据明细仍以完整的 `qualityReport.actionEvidence` 为准。当 `evidenceStatus=conflict` 时，待办虽然有转写依据，但依据来自多源冲突片段，知识平台必须保留人工复核状态，不得自动督办或沉淀为确定知识。
 
 `knowledgeGraph` 是给人和外部 Agent 的辅助关系图，包含 meeting、speaker、topic、action、time 节点。topic 节点来自转写和待办文本的轻量抽取，用来连接“谁讨论了什么”“什么主题产生了哪些待办”“待办何时截止”。topic 节点的 `evidence` 会保留 `segment_id`、`source_id`、`source_segment_no`、`start_ms`、`end_ms` 和原文片段。它只能辅助上下文衔接和可视化查阅，不能替代 `transcript.segments`、`qualityReport.speakerEvidence`、`qualityReport.actionEvidence` 这些证据层字段。
 
@@ -95,6 +95,7 @@ Authorization: Bearer replace-with-long-random-token
 - `status=hold`：存在阻塞风险，建议暂缓自动入库。
 - `blockers`：阻塞入库的问题类型，例如缺少转写证据的待办或缺证据纪要。
 - `reviewWarnings`：建议人工复核的问题类型，例如发言人证据弱、负责人归属弱。
+- `actionItems[].evidenceStatus=conflict`：待办由 `multi_source_conflict` 片段支撑，通常表示不同录音源在日期、数量或负责人上不一致；此时 `knowledgeSafe=false`、`requiresReview=true`。
 
 ## ES/OpenSearch
 
@@ -259,7 +260,11 @@ also carries `evidenceStatus`, `evidenceReason`, `evidence`,
 `suggestedOwner`, `suggestedOwnerEvidence`, `knowledgeSafe`, and
 `requiresReview`, so action/reminder agents that read only the action list can
 still decide whether a reminder is grounded enough to send. The full evidence
-table remains `qualityReport.actionEvidence`.
+table remains `qualityReport.actionEvidence`. If an action has
+`evidenceStatus=conflict`, it is backed by transcript evidence from
+`multi_source_conflict` rows; downstream systems must keep it under human review
+and must not auto-send or store it as confirmed knowledge while
+`knowledgeSafe=false` and `requiresReview=true`.
 
 `knowledgeGraph` is an auxiliary relationship graph for people and agents. It
 contains meeting, speaker, topic, action, and time nodes. Topic nodes are

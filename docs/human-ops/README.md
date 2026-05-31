@@ -317,6 +317,7 @@ SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
 - 多源会议中，不能只按 `source_segment_no` 判断覆盖率；应按 `(source_id, source_segment_no)` 看证据。
 - Web 时间线筛选、待办/纪要证据里的“定位转写”也按 `(source_id, source_segment_no)` 定位。若两台设备都有第 1 段，应分别跳到对应录音源；如果跳错，优先检查前端 payload 是否丢了 `source_id`。
 - `multi_source_conflict` 不是系统失败，而是提醒人工回听不同来源的同一时间段。
+- 如果待办显示 `evidenceStatus=conflict` 或“多源冲突待核对”，说明待办有转写证据但多录音源在日期、数量或负责人等关键事实上不一致。此时 `knowledgeSafe=false`、`requiresReview=true`，外部督办或知识平台不得自动发送提醒或写入确定知识。
 
 ## LLM 配置
 
@@ -877,6 +878,7 @@ Troubleshooting notes:
 - In multi-source meetings, coverage must be checked by `(source_id, source_segment_no)`, not by local segment number alone.
 - Web timeline filters and action/summary evidence “jump to transcript” links also target `(source_id, source_segment_no)`. If two devices both have segment 1, each should jump to its own source; if it does not, first check whether the frontend payload lost `source_id`.
 - `multi_source_conflict` is not a processing failure; it means a human should listen to the different sources for that time window.
+- If an action shows `evidenceStatus=conflict` or the "multi-source conflict" review label, the action has transcript evidence but the sources disagree on key facts such as date, amount, or owner. `knowledgeSafe=false` and `requiresReview=true` mean downstream reminder or knowledge platforms must not auto-send or store it as confirmed knowledge.
 
 ### LLM Provider
 
