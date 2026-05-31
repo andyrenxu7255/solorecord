@@ -287,7 +287,7 @@ SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
 - 如果 `weak_action_owner_count` 大于 0，说明待办内容本身可能来自转写，但负责人和任务之间缺少明确上下文证据。上线验收时要重点检查这些待办，避免把督办消息发给错误的人。
 - 如果待办负责人显示为“我、我们、他、这边、大家”等代词，系统会尝试用第一人称转写和任务关键词换成真实发言人；换不出来会降级为 `待确认`，仍应人工确认后再复制到 IM。
 - 如果待办文本末尾出现 `协同：某人`，表示系统从转写中识别到配合/协助关系。它不会改变主责人，但复制给 IM 或同步给外部督办系统时应保留，避免遗漏配合人。
-- `qualityReport.actionEvidence` 会逐条列出待办证据状态：`supported` 表示可找到转写依据，`weak_owner` 表示任务有依据但负责人证据弱，`unsupported` 表示缺转写依据。若系统能找到更有证据的负责人，会同时给出 `suggested_owner` 和引用片段，Web 待办区会显示“建议负责人/应用建议”。证据引用带 `segment_id` 和 `source_segment_no`，Web 可用“定位转写”跳到对应原文。复制待办给 IM 时仍只复制待办正文。
+- `qualityReport.actionEvidence` 会逐条列出待办证据状态：`supported` 表示可找到转写依据，`weak_owner` 表示任务有依据但负责人证据弱，`unsupported` 表示缺转写依据。外部 API 的 `actionItems` 也会直接带 `evidenceStatus`、`evidence`、`suggestedOwner`、`knowledgeSafe` 和 `requiresReview`，方便督办 Agent 不解析完整质量报告也能判断是否可自动提醒。若系统能找到更有证据的负责人，会同时给出 `suggested_owner` 和引用片段，Web 待办区会显示“建议负责人/应用建议”。证据引用带 `segment_id` 和 `source_segment_no`，Web 可用“定位转写”跳到对应原文。复制待办给 IM 时仍只复制待办正文。
 - 如果 `speaker_evidence_weak_count` 大于 0，说明某些发言人名称没有在原始 ASR 文本或原始说话人标签中找到依据。上线验收时应优先播放这些片段，确认模型没有把议题、时间短语或误听词当成人名。
 - `qualityReport.speakerEvidence` 会给出每个需校对发言人段落的推断场景、原因和相邻上下文。验收时不要只看数量，还要打开 Web 时间线检查“推断依据”是否符合真实会议语境。
 - 如果 `speaker_alias_conflict_count` 大于 0，说明同一个姓名被多个 `speaker_id` 表示。Web 会提示“同名多标签”，知识图谱会合并展示同一人员节点并保留原始标签，验收时应确认是否需要在人物校对里统一。

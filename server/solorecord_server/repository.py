@@ -87,6 +87,7 @@ def meeting_document(meeting_id: str) -> dict:
         meeting_dict.get("summary", ""),
         meeting_dict.get("role_notes", ""),
     )
+    action_items_with_evidence = _action_items_with_evidence(action_items, quality_report)
     return {
         "meeting": meeting_dict,
         "owner": {
@@ -99,7 +100,7 @@ def meeting_document(meeting_id: str) -> dict:
         "audioSegments": audio_segments,
         "transcriptSegments": [row_to_dict(row) for row in transcript_segments],
         "speakers": [row_to_dict(row) for row in speakers],
-        "actionItems": [row_to_dict(row) for row in action_items],
+        "actionItems": action_items_with_evidence,
         "exports": [_export_item(row) for row in exports],
         "qualityReport": quality_report,
         "knowledgeReadiness": build_knowledge_readiness(quality_report),
@@ -491,7 +492,7 @@ def build_quality_report(
         "candidatePeople": list(candidate_people.keys()),
         "speakerEvidence": speaker_evidence[:12],
         "speakerAliasConflicts": speaker_alias_conflicts[:12],
-        "actionEvidence": action_evidence[:20],
+        "actionEvidence": action_evidence,
         "duplicateActions": duplicate_actions[:8],
         "unsupportedActions": unsupported_actions[:8],
         "weakActionOwners": weak_action_owners[:8],
@@ -995,6 +996,28 @@ def _weak_owner_item(item: dict, owner: str, task: str, reason: str, segments: l
         "suggested_owner_reason": suggestion.get("reason", ""),
         "suggested_owner_evidence": suggestion.get("evidence", []),
     }
+
+
+def _action_items_with_evidence(action_items, quality_report: dict) -> list[dict]:
+    evidence_by_key = {
+        _action_quality_key(item): item
+        for item in quality_report.get("actionEvidence") or []
+    }
+    items: list[dict] = []
+    for row in action_items:
+        item = row_to_dict(row)
+        evidence = evidence_by_key.get(_action_quality_key(item), {})
+        status = str(evidence.get("status") or "unknown")
+        item["evidenceStatus"] = status
+        item["evidenceReason"] = str(evidence.get("reason") or "")
+        item["evidence"] = evidence.get("evidence") or []
+        item["suggestedOwner"] = str(evidence.get("suggested_owner") or "")
+        item["suggestedOwnerReason"] = str(evidence.get("suggested_owner_reason") or "")
+        item["suggestedOwnerEvidence"] = evidence.get("suggested_owner_evidence") or []
+        item["knowledgeSafe"] = status == "supported"
+        item["requiresReview"] = status in {"unsupported", "weak_owner", "unknown"}
+        items.append(item)
+    return items
 
 
 def _action_evidence_items(

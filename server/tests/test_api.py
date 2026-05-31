@@ -2616,6 +2616,70 @@ def test_quality_report_accepts_department_owner_with_assignment_evidence(tmp_pa
     assert evidence_by_id["act_dept_owner_ok"]["evidence"]
 
 
+def test_external_action_items_embed_evidence_for_agents(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "外部待办证据"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_agent_evidence_1', ?, 1, 'phone-a', 1, 'MANUAL_renxu', '任旭',
+             0, 60000, '任旭负责整理客户名单，并在周三前同步销售工作区。',
+             0.9, '["semantic_final"]', 'now')
+            """,
+            (meeting_id,),
+        )
+        rows = [
+            (
+                f"act_agent_{index:02d}",
+                meeting_id,
+                "任旭",
+                f"整理客户名单第{index:02d}项",
+                "周三",
+                "open",
+                f"now {index:02d}",
+                f"now {index:02d}",
+            )
+            for index in range(1, 23)
+        ]
+        conn.executemany(
+            """
+            INSERT INTO action_items (id, meeting_id, owner, task, due, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+
+    external = client.get(
+        f"/api/external/meetings/{meeting_id}/transcript?include_history=true",
+        headers={"Authorization": "Bearer test-token"},
+    )
+
+    assert external.status_code == 200
+    data = external.json()
+    assert len(data["actionItems"]) == 22
+    assert len(data["qualityReport"]["actionEvidence"]) == 22
+    last_action = data["actionItems"][-1]
+    assert last_action["id"] == "act_agent_22"
+    assert last_action["evidenceStatus"] == "supported"
+    assert last_action["knowledgeSafe"] is True
+    assert last_action["requiresReview"] is False
+    assert last_action["evidence"][0]["segment_id"] == "seg_agent_evidence_1"
+    assert last_action["evidence"][0]["source_id"] == "phone-a"
+    assert last_action["evidence"][0]["source_segment_no"] == 1
+    assert last_action["evidence"][0]["start_ms"] == 0
+    assert last_action["evidence"][0]["end_ms"] == 60000
+    assert last_action["evidence"][0]["speaker"] == "任旭"
+    assert "客户名单" in last_action["evidence"][0]["text"]
+
+
 def test_quality_report_flags_summary_without_transcript_evidence(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)

@@ -241,7 +241,7 @@ Agent 验收时必须检查：
 - “今天下午、周三前、月底前”等日期/截止时间短语只能作为时间事实，不能被当成发言人或负责人。若看到这类词进入 `display_name`、`owner` 或知识图谱 speaker 节点，先修后处理规则再联调真实会议。
 - 销售、法务、前端、测试等组织角色可以作为待办 owner，但必须有同一短语窗口内的责任或动作证据，例如“销售这边周五前跟进客户名单”“前端周三前改页面”。不要把“自动测试、测试覆盖、数据源”等任务词本身当成组织负责人。
 - 如果 `processing._normalize_action_owners()` 给 task 追加 `协同：姓名`，外部督办 Agent 应保留该字段含义：owner 是主责人，协同人是配合人，不要把协同人改成新的主责人。
-- `qualityReport.actionEvidence` 应逐条覆盖全部待办，并提供 `supported`、`weak_owner` 或 `unsupported` 状态和证据片段。证据片段应包含 `segment_id`、`source_segment_no`、`start_ms`、`speaker` 和 `text`，外部督办 Agent 应优先消费该字段判断是否可以自动发送提醒，并保留证据追溯链接。
+- `qualityReport.actionEvidence` 应逐条覆盖全部待办，并提供 `supported`、`weak_owner` 或 `unsupported` 状态和证据片段。证据片段应包含 `segment_id`、`source_segment_no`、`start_ms`、`speaker` 和 `text`。外部督办 Agent 可先读 `actionItems[].evidenceStatus`、`knowledgeSafe` 和 `requiresReview` 判断是否可以自动发送提醒；需要完整审计时再消费 `qualityReport.actionEvidence` 并保留证据追溯链接。
 
 LLM：
 
@@ -371,6 +371,7 @@ macOS/iOS/HarmonyOS 发布：
 - 不要绕过 `_assert_access` 暴露会议数据。
 - 转写是知识平台的原始证据层。外部知识整理 Agent 只能通过 `/api/external/meetings/{meetingId}/transcript?include_history=true` 拉取，不能直接读 SQLite、`var/` 或音频文件路径。
 - 外部响应里的 `knowledgeReadiness` 是入库门禁摘要。`status=hold` 时不要自动沉淀纪要或督办；`status=review_first` 时可以入库但必须保留风险标记；`status=ready` 才适合无人工介入地进入知识库。
+- 外部响应里的 `actionItems` 已直接携带 `evidenceStatus`、`evidenceReason`、`evidence`、`suggestedOwner`、`suggestedOwnerEvidence`、`knowledgeSafe` 和 `requiresReview`。只做督办的 Agent 可以先读这些字段；需要完整证据审计时再读 `qualityReport.actionEvidence`。
 - 非 admin 不允许删除转写段；转写重处理、分段重传或人工替换前必须保留 `transcript_segment_history`。
 - 不要在 Web 使用未转义的动态 HTML。
 - 不要让 Android 端承担重 ASR/降噪/说话人分离。
@@ -814,6 +815,11 @@ The repository can be public only if no real secrets, runtime data, databases, c
 - Transcripts are the evidence layer for knowledge platforms. External
   knowledge agents must pull `/api/external/meetings/{meetingId}/transcript?include_history=true`
   and must not read SQLite, `var/`, or raw audio paths directly.
+- External `actionItems` entries directly include `evidenceStatus`,
+  `evidenceReason`, `evidence`, `suggestedOwner`,
+  `suggestedOwnerEvidence`, `knowledgeSafe`, and `requiresReview`. Reminder
+  agents can read those fields first; use `qualityReport.actionEvidence` for
+  complete evidence audits.
 - Non-admin users must not delete transcript segments. Reprocessing, segment
   retry, or manual replacement must preserve prior rows in
   `transcript_segment_history`.
