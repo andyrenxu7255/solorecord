@@ -236,6 +236,7 @@ Agent 验收时必须检查：
 - 多源错峰对齐只能作为去重和覆盖辅助：当 `multi_source_time_aligned` 出现时，Agent 应保留原始 `multi_source_refs:*` 追溯；若同一来源附近存在关键事实冲突，仍以 `multi_source_conflict` 和人工复核为准。
 - 多源互补只能复制原始转写中存在、且与当前合并段不冲突的短语；`multi_source_complemented` 表示证据融合，不表示 LLM 生成了新事实。若附近来源存在日期、数量或负责人冲突，必须优先标记 `multi_source_conflict`。
 - `qualityReport.metrics.weak_action_owner_count` 应反映待办负责人和任务之间是否缺少上下文证据；调 prompt 或规则时，不能仅因为某个人名在全文出现过，就把该人判为某项任务负责人。
+- 被点名后的发言人归属必须有第一人称回应、任务承诺、同议题关键词承接或显式姓名前缀。ASR `speaker_id` 变化本身不是归属证据；“好的，我们继续下一个议题”这类过渡话应保留原 ASR 发言人。
 - 当 `actionEvidence` 或 `weakActionOwners` 出现 `suggested_owner` 时，Web 应显示建议负责人和应用按钮；Agent 可以把它作为人工复核建议，但不得绕过用户确认直接改待办。
 - 如果 LLM 输出 owner 为“我/我们/他/这边/大家”等代词，服务端应尝试用第一人称转写和任务关键词推断真实发言人；推不出必须保留 `待确认`，外部督办 Agent 不得把代词 owner 当成可发送对象。
 - “今天下午、周三前、月底前”等日期/截止时间短语只能作为时间事实，不能被当成发言人或负责人。若看到这类词进入 `display_name`、`owner` 或知识图谱 speaker 节点，先修后处理规则再联调真实会议。
@@ -681,6 +682,7 @@ Agent acceptance checks:
 - Before merging multi-source evidence, check critical facts. If sources disagree on dates, amounts, or owners, keep separate `multi_source_conflict` evidence rows instead of deduplicating them into one conclusion.
 - Time-aligned multi-source merging is only a deduplication and coverage aid. When `multi_source_time_aligned` appears, agents should preserve the original `multi_source_refs:*` traceability; any nearby critical-fact disagreement still takes precedence as `multi_source_conflict` and requires human review.
 - Multi-source complementation may only copy phrases that already exist in original transcript rows and do not conflict with the merged row. `multi_source_complemented` means evidence fusion, not LLM-created facts. Nearby date, amount, or owner disagreements must still take precedence as `multi_source_conflict`.
+- Named-callout speaker attribution requires a first-person response, task commitment, same-topic keyword continuation, or explicit speaker prefix. An ASR `speaker_id` change by itself is not attribution evidence; transition lines such as "okay, let's continue to the next topic" should keep the original ASR speaker.
 - If the LLM outputs a pronoun owner such as “I”, “we”, “he”, “this side”, or “everyone”, the server should infer a concrete speaker from first-person transcript evidence and task keywords when possible. If not possible, keep `待确认`; external action agents must not send reminders to pronoun owners.
 - Date and deadline phrases such as "this afternoon", "before Wednesday", or "by month end" are time facts only. They must not become `display_name`, action `owner`, or speaker nodes in the knowledge graph.
 - Organizational roles such as sales, legal, frontend, and QA may be action owners, but they need explicit assignment/action evidence in the same short phrase. Task nouns such as automated testing, test coverage, or data source are not enough by themselves to create a team owner.

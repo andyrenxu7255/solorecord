@@ -1475,6 +1475,43 @@ def test_contextual_speaker_inference_links_topic_continuation(tmp_path: Path) -
     assert "scenario:explicit_name" in refined[3]["flags"]
 
 
+def test_contextual_speaker_inference_does_not_use_speaker_change_alone(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "点名不过度归属"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.processing as processing
+
+    segments = [
+        {
+            "speaker_id": "SPEAKER_01",
+            "display_name": "主持人",
+            "source_segment_no": 1,
+            "start_ms": 0,
+            "end_ms": 5000,
+            "text": "翼天你先说一下错误样例和自动测试。",
+            "confidence": 0.86,
+            "flags": ["asr_speaker"],
+        },
+        {
+            "speaker_id": "SPEAKER_02",
+            "display_name": "发言人 2",
+            "source_segment_no": 1,
+            "start_ms": 5000,
+            "end_ms": 9000,
+            "text": "好的，我们继续下一个议题。",
+            "confidence": 0.84,
+            "flags": ["asr_speaker"],
+        },
+    ]
+
+    refined = processing._refine_segments(meeting_id, segments)
+
+    assert [item["display_name"] for item in refined] == ["主持人", "发言人 2"]
+    assert "contextual_speaker_inference" not in refined[1]["flags"]
+    assert "speaker_review" not in refined[1]["flags"]
+
+
 def test_semantic_segmentation_runs_when_asr_speakers_leave_named_cues(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)

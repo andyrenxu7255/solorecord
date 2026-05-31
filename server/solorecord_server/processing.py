@@ -1275,8 +1275,7 @@ def _can_apply_pending_speaker(pending: dict, segment: dict) -> bool:
         return True
     if _matches_pending_topic(pending, text):
         return True
-    speaker_id = str(segment.get("speaker_id") or "")
-    return bool(speaker_id and speaker_id != pending.get("source_speaker_id"))
+    return False
 
 
 def _apply_inferred_speaker(
@@ -1742,11 +1741,15 @@ def _looks_like_addressed_response(text: str) -> bool:
         return False
     if re.search(
         r"(我这边|我们这边|我来|我负责|我们负责|我准备|我已经|我们已经|"
-        r"我先|我们先|这块我|这边我|好的[，,、]?(我|我们)|可以[，,、]?(我|我们))",
+        r"我先|我们先|我会|我们会|这块我|这边我)",
         text,
     ):
         return True
-    if re.match(r"^(好|好的|可以|行|没问题)[，,、。\s]*(这块|这边|我|我们)", text):
+    if re.match(
+        r"^(好|好的|可以|行|没问题)[，,、。\s]*"
+        r"((这块|这边)?(我|我们)(这边)?(?:来|会|负责|跟进|处理|确认|补充|准备|整理|输出|完成|推进|看|改|发|做|搞|检查))",
+        text,
+    ):
         return True
     return False
 
