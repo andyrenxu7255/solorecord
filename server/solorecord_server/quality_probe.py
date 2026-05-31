@@ -97,6 +97,10 @@ def probe_meeting(
             meeting["summary"] if meeting else "",
             meeting["role_notes"] if meeting else "",
         )
+        result["postprocess"]["delta"] = _quality_delta(
+            result["source"],
+            result["postprocess"],
+        )
     if not run_llm:
         return result
     options = llm_options_from_settings_and_db(values)
@@ -165,6 +169,10 @@ def probe_meeting(
         llm_result["knowledge_readiness"] = build_knowledge_readiness(
             llm_result["quality_report"]
         )
+        llm_result["delta"] = _quality_delta(
+            result["source"],
+            _llm_delta_snapshot(llm_result),
+        )
     result["llm"] = llm_result
     return result
 
@@ -200,6 +208,221 @@ def _quality_snapshot(
         "quality_report": report,
         "knowledge_readiness": build_knowledge_readiness(report),
     }
+
+
+def _llm_delta_snapshot(llm_result: dict) -> dict:
+    return {
+        "segment_count": llm_result.get("final_refined_count", 0),
+        "speaker_counts": llm_result.get("final_speaker_counts", []),
+        "candidate_people": llm_result.get("candidate_people", []),
+        "quality_report": llm_result.get("quality_report") or {},
+        "knowledge_readiness": llm_result.get("knowledge_readiness") or {},
+    }
+
+
+def _quality_delta(source: dict, target: dict) -> dict:
+    source_report = source.get("quality_report") or {}
+    target_report = target.get("quality_report") or {}
+    source_metrics = source_report.get("metrics") or {}
+    target_metrics = target_report.get("metrics") or {}
+    source_speakers = _speaker_names(source)
+    target_speakers = _speaker_names(target)
+    source_candidates = set(source.get("candidate_people") or [])
+    target_candidates = set(target.get("candidate_people") or [])
+    metric_deltas = {
+        key: _metric_delta(source_metrics, target_metrics, key)
+        for key in _DELTA_METRICS
+    }
+    return {
+        "score": {
+            "from": int(source_report.get("score") or 0),
+            "to": int(target_report.get("score") or 0),
+            "delta": int(target_report.get("score") or 0)
+            - int(source_report.get("score") or 0),
+        },
+        "status": {
+            "from": source_report.get("status") or "",
+            "to": target_report.get("status") or "",
+        },
+        "knowledge_readiness": {
+            "from": (source.get("knowledge_readiness") or {}).get("status") or "",
+            "to": (target.get("knowledge_readiness") or {}).get("status") or "",
+        },
+        "segment_count_delta": int(target.get("segment_count") or 0)
+        - int(source.get("segment_count") or 0),
+        "speaker_count_delta": len(target_speakers) - len(source_speakers),
+        "speaker_names_added": sorted(target_speakers - source_speakers),
+        "speaker_names_removed": sorted(source_speakers - target_speakers),
+        "candidate_people_added": sorted(target_candidates - source_candidates),
+        "metrics": metric_deltas,
+        "improved_metrics": [
+            key
+            for key in _LOWER_IS_BETTER_METRICS
+            if metric_deltas[key]["delta"] < 0
+        ]
+        + [
+            key
+            for key in _HIGHER_IS_BETTER_METRICS
+            if metric_deltas[key]["delta"] > 0
+        ],
+        "regressed_metrics": [
+            key
+            for key in _LOWER_IS_BETTER_METRICS
+            if metric_deltas[key]["delta"] > 0
+        ]
+        + [
+            key
+            for key in _HIGHER_IS_BETTER_METRICS
+            if metric_deltas[key]["delta"] < 0
+        ],
+        "suggested_owner_count": {
+            "from": _suggested_owner_count(source_report),
+            "to": _suggested_owner_count(target_report),
+            "delta": _suggested_owner_count(target_report)
+            - _suggested_owner_count(source_report),
+        },
+        "suggested_owner_changed_count": len(
+            _suggested_owner_changes(source_report, target_report)
+        ),
+        "suggested_owner_changes": _suggested_owner_changes(
+            source_report,
+            target_report,
+        ),
+        "suggested_owner_examples": _suggested_owner_examples(target_report),
+        "issue_types_removed": sorted(
+            _issue_types(source_report) - _issue_types(target_report)
+        ),
+        "issue_types_added": sorted(
+            _issue_types(target_report) - _issue_types(source_report)
+        ),
+    }
+
+
+def _metric_delta(source_metrics: dict, target_metrics: dict, key: str) -> dict:
+    before = _metric_number(source_metrics.get(key))
+    after = _metric_number(target_metrics.get(key))
+    return {"from": before, "to": after, "delta": after - before}
+
+
+def _metric_number(value) -> float | int:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return round(value, 4)
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0
+    if parsed.is_integer():
+        return int(parsed)
+    return round(parsed, 4)
+
+
+def _speaker_names(snapshot: dict) -> set[str]:
+    names = set()
+    for item in snapshot.get("speaker_counts") or []:
+        if not item:
+            continue
+        names.add(str(item[0]).strip())
+    return {item for item in names if item}
+
+
+def _suggested_owner_count(report: dict) -> int:
+    return sum(
+        1
+        for item in report.get("actionEvidence") or []
+        if str(item.get("suggested_owner") or "").strip()
+    )
+
+
+def _suggested_owner_changes(source_report: dict, target_report: dict) -> list[dict]:
+    source_map = _suggested_owner_map(source_report)
+    target_map = _suggested_owner_map(target_report)
+    changes = []
+    for key, target in target_map.items():
+        source = source_map.get(key, {})
+        before = str(source.get("suggested_owner") or "").strip()
+        after = str(target.get("suggested_owner") or "").strip()
+        if before == after:
+            continue
+        changes.append(
+            {
+                "id": target.get("id") or source.get("id") or "",
+                "task": target.get("task") or source.get("task") or "",
+                "from": before,
+                "to": after,
+                "reason": target.get("suggested_owner_reason", ""),
+            }
+        )
+        if len(changes) >= 8:
+            break
+    return changes
+
+
+def _suggested_owner_map(report: dict) -> dict[str, dict]:
+    mapped = {}
+    for item in report.get("actionEvidence") or []:
+        key = str(item.get("id") or "").strip()
+        if not key:
+            owner = str(item.get("owner") or "").strip()
+            task = str(item.get("task") or "").strip()
+            key = f"{owner}|{task}"
+        if key:
+            mapped[key] = item
+    return mapped
+
+
+def _suggested_owner_examples(report: dict) -> list[dict]:
+    examples = []
+    for item in report.get("actionEvidence") or []:
+        suggested_owner = str(item.get("suggested_owner") or "").strip()
+        if not suggested_owner:
+            continue
+        examples.append(
+            {
+                "id": item.get("id", ""),
+                "owner": item.get("owner", ""),
+                "suggested_owner": suggested_owner,
+                "task": item.get("task", ""),
+                "reason": item.get("suggested_owner_reason", ""),
+            }
+        )
+        if len(examples) >= 5:
+            break
+    return examples
+
+
+def _issue_types(report: dict) -> set[str]:
+    return {
+        str(item.get("type") or "")
+        for item in report.get("issues") or []
+        if str(item.get("type") or "")
+    }
+
+
+_LOWER_IS_BETTER_METRICS = [
+    "generic_owner_count",
+    "unsupported_action_count",
+    "weak_action_owner_count",
+    "summary_unsupported_count",
+    "source_segment_weak_count",
+    "speaker_evidence_weak_count",
+    "speaker_alias_conflict_count",
+    "long_segment_count",
+    "mixed_marker_segment_count",
+    "multi_source_conflict_count",
+]
+
+_HIGHER_IS_BETTER_METRICS = [
+    "speaker_count",
+    "action_evidence_coverage",
+    "summary_evidence_coverage",
+    "source_segment_coverage",
+    "multi_source_majority_count",
+    "multi_source_complemented_count",
+]
+
+_DELTA_METRICS = _LOWER_IS_BETTER_METRICS + _HIGHER_IS_BETTER_METRICS
 
 
 _GENERIC_OWNERS = {

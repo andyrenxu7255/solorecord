@@ -2678,6 +2678,13 @@ def test_quality_probe_postprocess_simulates_residual_splits_read_only(tmp_path:
             """,
             (meeting_id,),
         )
+        conn.execute(
+            """
+            INSERT INTO action_items (id, meeting_id, owner, task, due, status, created_at, updated_at)
+            VALUES ('act_probe_post_1', ?, '待确认', '补充自动测试错误样例', '', 'open', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
         before = conn.execute(
             "SELECT COUNT(*) AS count FROM transcript_segments WHERE meeting_id = ?",
             (meeting_id,),
@@ -2695,6 +2702,15 @@ def test_quality_probe_postprocess_simulates_residual_splits_read_only(tmp_path:
     assert post["quality_report"]["metrics"]["long_segment_count"] == 0
     assert post["quality_report"]["metrics"]["mixed_marker_segment_count"] == 0
     assert post["quality_report"]["metrics"]["speaker_review_count"] == 5
+    delta = post["delta"]
+    assert delta["segment_count_delta"] == 4
+    assert delta["speaker_count_delta"] == 4
+    assert delta["metrics"]["mixed_marker_segment_count"]["delta"] == -1
+    assert "mixed_marker_segment_count" in delta["improved_metrics"]
+    assert "翼天" in delta["speaker_names_added"]
+    assert delta["suggested_owner_changed_count"] == 1
+    assert delta["suggested_owner_changes"][0]["from"] == "傲寒"
+    assert delta["suggested_owner_changes"][0]["to"] == "翼天"
 
     with db.get_db() as conn:
         after = conn.execute(
