@@ -1605,6 +1605,62 @@ def test_insert_transcript_preserves_manual_speaker_names_only(tmp_path: Path) -
     assert [item["display_name"] for item in transcript["segments"]] == ["翼天", "海春"]
 
 
+def test_speaker_rename_replace_text_uses_existing_display_name_alias(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "姓名统一"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_rename_alias_1', ?, 1, 1, 'SPEAKER_01', '发言人 1', 0, 60000,
+             '发言人 1确认报价，SPEAKER_01后续继续推进。',
+             0.82, '["asr_speaker"]', 'now')
+            """,
+            (meeting_id,),
+        )
+        conn.execute(
+            """
+            UPDATE meetings
+            SET summary = '发言人 1确认报价。',
+                role_notes = 'SPEAKER_01：推进合同。'
+            WHERE id = ?
+            """,
+            (meeting_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO action_items (id, meeting_id, owner, task, due, status, created_at, updated_at)
+            VALUES
+            ('act_rename_alias_1', ?, '发言人 1', 'SPEAKER_01补充报价明细', '周三', 'open', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    rename = client.post(
+        f"/api/web/meetings/{meeting_id}/speakers/rename",
+        headers=headers,
+        json={"speaker_id": "SPEAKER_01", "display_name": "张三", "replace_text": True},
+    )
+
+    assert rename.status_code == 200
+    detail = rename.json()
+    transcript = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers).json()
+    assert transcript["segments"][0]["display_name"] == "张三"
+    assert "发言人 1" not in transcript["segments"][0]["text"]
+    assert "SPEAKER_01" not in transcript["segments"][0]["text"]
+    assert detail["meeting"]["summary"] == "张三确认报价。"
+    assert detail["meeting"]["role_notes"] == "张三：推进合同。"
+    assert detail["actionItems"][0]["owner"] == "张三"
+    assert detail["actionItems"][0]["task"] == "张三补充报价明细"
+
+
 def test_llm_refinement_repairs_compressed_timeline(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)

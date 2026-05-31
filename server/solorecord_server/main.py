@@ -693,8 +693,26 @@ def rename_speaker(meeting_id: str, request: SpeakerRename, user: CurrentUser) -
     display_name = request.display_name.strip()
     if not display_name:
         raise HTTPException(status_code=400, detail="display_name is required")
-    aliases = [alias.strip() for alias in request.aliases if alias.strip() and alias.strip() != display_name]
     with get_db() as db:
+        old_names = [
+            str(row["display_name"] or "").strip()
+            for row in db.execute(
+                """
+                SELECT display_name FROM speakers
+                WHERE meeting_id = ? AND speaker_id = ?
+                UNION
+                SELECT display_name FROM transcript_segments
+                WHERE meeting_id = ? AND speaker_id = ?
+                """,
+                (meeting_id, request.speaker_id, meeting_id, request.speaker_id),
+            ).fetchall()
+        ]
+        aliases = _speaker_rename_aliases(
+            request.aliases,
+            old_names,
+            request.speaker_id,
+            display_name,
+        )
         db.execute(
             """
             INSERT INTO speakers (id, meeting_id, speaker_id, display_name, created_at, updated_at)
@@ -750,6 +768,21 @@ def rename_speaker(meeting_id: str, request: SpeakerRename, user: CurrentUser) -
     )
     _try_index(meeting_id)
     return get_meeting(meeting_id, user)
+
+
+def _speaker_rename_aliases(
+    requested_aliases: list[str],
+    old_names: list[str],
+    speaker_id: str,
+    display_name: str,
+) -> list[str]:
+    aliases: list[str] = []
+    for alias in [*requested_aliases, *old_names, speaker_id]:
+        value = str(alias or "").strip()
+        if not value or value == display_name or value in aliases:
+            continue
+        aliases.append(value)
+    return aliases
 
 
 @app.put("/api/web/meetings/{meeting_id}/actions")
