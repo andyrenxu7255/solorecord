@@ -2860,6 +2860,149 @@ def test_llm_refinement_uses_timestamps_to_match_original_evidence() -> None:
     assert refined[0]["confidence"] == 0.91
 
 
+def test_llm_refinement_matches_source_id_before_duplicate_segment_no() -> None:
+    import solorecord_server.llm_adapters as llm_adapters
+
+    content = """
+    {
+      "segments": [
+        {
+          "source_id": "back",
+          "source_segment_no": 1,
+          "start_ms": 2500,
+          "end_ms": 4500,
+          "text": "后排听到销售负责人确认周五提交方案。",
+          "confidence": 0.88,
+          "scenario": "native_speaker"
+        }
+      ]
+    }
+    """
+    refined = llm_adapters._parse_refined_segments(
+        content,
+        [
+            {
+                "source_id": "front",
+                "speaker_id": "SPEAKER_FRONT",
+                "display_name": "前排设备",
+                "source_segment_no": 1,
+                "start_ms": 0,
+                "end_ms": 5000,
+                "text": "前排只听到主持人介绍背景。",
+            },
+            {
+                "source_id": "back",
+                "speaker_id": "SPEAKER_BACK",
+                "display_name": "后排设备",
+                "source_segment_no": 1,
+                "start_ms": 1000,
+                "end_ms": 6000,
+                "text": "后排听到销售负责人确认周五提交方案。",
+            },
+        ],
+    )
+
+    assert refined[0]["source_id"] == "back"
+    assert refined[0]["source_segment_no"] == 1
+    assert refined[0]["display_name"] == "后排设备"
+    assert refined[0]["speaker_id"] == "SPEAKER_BACK"
+    assert "speaker_evidence_weak" not in refined[0]["flags"]
+
+
+def test_llm_refinement_prefers_source_id_over_wrong_source_index() -> None:
+    import solorecord_server.llm_adapters as llm_adapters
+
+    content = """
+    {
+      "segments": [
+        {
+          "source_index": 1,
+          "source_id": "back",
+          "source_segment_no": 1,
+          "start_ms": 2500,
+          "end_ms": 4500,
+          "text": "后排听到销售负责人确认周五提交方案。",
+          "confidence": 0.88,
+          "scenario": "native_speaker"
+        }
+      ]
+    }
+    """
+    refined = llm_adapters._parse_refined_segments(
+        content,
+        [
+            {
+                "source_id": "front",
+                "speaker_id": "SPEAKER_FRONT",
+                "display_name": "前排设备",
+                "source_segment_no": 1,
+                "start_ms": 0,
+                "end_ms": 5000,
+                "text": "前排只听到主持人介绍背景。",
+            },
+            {
+                "source_id": "back",
+                "speaker_id": "SPEAKER_BACK",
+                "display_name": "后排设备",
+                "source_segment_no": 1,
+                "start_ms": 1000,
+                "end_ms": 6000,
+                "text": "后排听到销售负责人确认周五提交方案。",
+            },
+        ],
+    )
+
+    assert refined[0]["source_id"] == "back"
+    assert refined[0]["display_name"] == "后排设备"
+    assert refined[0]["speaker_id"] == "SPEAKER_BACK"
+
+
+def test_llm_refinement_uses_time_when_duplicate_segment_no_is_ambiguous() -> None:
+    import solorecord_server.llm_adapters as llm_adapters
+
+    content = """
+    {
+      "segments": [
+        {
+          "source_segment_no": 1,
+          "start_ms": 12000,
+          "end_ms": 14000,
+          "text": "后排第二句话记录到交付风险。",
+          "confidence": 0.86,
+          "scenario": "native_speaker"
+        }
+      ]
+    }
+    """
+    refined = llm_adapters._parse_refined_segments(
+        content,
+        [
+            {
+                "source_id": "front",
+                "speaker_id": "SPEAKER_FRONT",
+                "display_name": "前排设备",
+                "source_segment_no": 1,
+                "start_ms": 0,
+                "end_ms": 5000,
+                "text": "前排只听到主持人介绍背景。",
+            },
+            {
+                "source_id": "back",
+                "speaker_id": "SPEAKER_BACK",
+                "display_name": "后排设备",
+                "source_segment_no": 1,
+                "start_ms": 10000,
+                "end_ms": 15000,
+                "text": "后排第二句话记录到交付风险。",
+            },
+        ],
+    )
+
+    assert refined[0]["source_id"] == "back"
+    assert refined[0]["display_name"] == "后排设备"
+    assert refined[0]["speaker_id"] == "SPEAKER_BACK"
+
+
 def test_llm_refinement_preserves_source_segment_no_and_marks_context_review() -> None:
     import solorecord_server.llm_adapters as llm_adapters
 

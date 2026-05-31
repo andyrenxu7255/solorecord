@@ -535,7 +535,16 @@ def _parse_refined_segments(content: str, original_segments: list[dict]) -> list
         if not speaker:
             speaker = str(fallback.get("display_name") or fallback.get("speaker_id") or "待确认").strip()
         if not speaker_id:
-            speaker_id = _speaker_id_from_name(speaker, fallback.get("speaker_id"))
+            fallback_speaker_id = str(fallback.get("speaker_id") or "").strip()
+            fallback_names = {
+                str(fallback.get("display_name") or "").strip(),
+                str(fallback.get("speaker") or "").strip(),
+                fallback_speaker_id,
+            }
+            if fallback_speaker_id and speaker in {name for name in fallback_names if name}:
+                speaker_id = fallback_speaker_id
+            else:
+                speaker_id = _speaker_id_from_name(speaker, fallback_speaker_id)
         start_ms = _int_value(item.get("start_ms"), fallback.get("start_ms", index * 1000))
         end_ms = _int_value(item.get("end_ms"), fallback.get("end_ms", start_ms + 1000))
         confidence = _float_value(item.get("confidence"), 0.65)
@@ -588,21 +597,65 @@ def _fallback_segment_for_refined_item(
     if not original_segments:
         return {}
     source_index = _int_value(item.get("source_index") or item.get("index"), 0)
+    indexed_segment = None
     if 1 <= source_index <= len(original_segments):
-        return original_segments[source_index - 1]
+        indexed_segment = original_segments[source_index - 1]
+    source_id = str(item.get("source_id") or "").strip()
     source_segment_no = _int_value(item.get("source_segment_no"), -1)
-    if source_segment_no >= 0:
-        for segment in original_segments:
-            if _int_value(segment.get("source_segment_no"), -2) == source_segment_no:
-                return segment
     start_ms = _int_value(item.get("start_ms"), -1)
+    if source_id and source_segment_no >= 0:
+        for segment in original_segments:
+            if (
+                str(segment.get("source_id") or "").strip() == source_id
+                and _int_value(segment.get("source_segment_no"), -2) == source_segment_no
+            ):
+                return segment
+    if source_id and start_ms >= 0:
+        source_timeline_matches = [
+            segment
+            for segment in original_segments
+            if str(segment.get("source_id") or "").strip() == source_id
+            and _segment_contains_time(segment, start_ms)
+        ]
+        if len(source_timeline_matches) == 1:
+            return source_timeline_matches[0]
+    if source_id:
+        source_matches = [
+            segment
+            for segment in original_segments
+            if str(segment.get("source_id") or "").strip() == source_id
+        ]
+        if len(source_matches) == 1:
+            return source_matches[0]
+    if indexed_segment is not None:
+        return indexed_segment
+    if source_segment_no >= 0:
+        segment_no_matches = [
+            segment
+            for segment in original_segments
+            if _int_value(segment.get("source_segment_no"), -2) == source_segment_no
+        ]
+        if start_ms >= 0:
+            timeline_matches = [
+                segment
+                for segment in segment_no_matches
+                if _segment_contains_time(segment, start_ms)
+            ]
+            if len(timeline_matches) == 1:
+                return timeline_matches[0]
+        if len(segment_no_matches) == 1:
+            return segment_no_matches[0]
     if start_ms >= 0:
         for segment in original_segments:
-            segment_start = _int_value(segment.get("start_ms"), 0)
-            segment_end = _int_value(segment.get("end_ms"), segment_start)
-            if segment_start <= start_ms <= segment_end:
+            if _segment_contains_time(segment, start_ms):
                 return segment
     return original_segments[min(index, len(original_segments) - 1)]
+
+
+def _segment_contains_time(segment: dict, start_ms: int) -> bool:
+    segment_start = _int_value(segment.get("start_ms"), 0)
+    segment_end = _int_value(segment.get("end_ms"), segment_start)
+    return segment_start <= start_ms <= segment_end
 
 
 def _source_segment_no_for_refined_item(item: dict, fallback: dict) -> int | None:
