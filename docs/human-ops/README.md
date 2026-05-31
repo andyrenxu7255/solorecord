@@ -286,6 +286,7 @@ SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
 - 会议详情里的“整理质量”也会显示分段覆盖率。如果出现“音频分段待核对”或 `source_segment_coverage_weak`，说明某个上传音频分段在当前转写中没有足够文本，可能是 ASR 空结果、重传缺失或 LLM 后处理丢段。上线验收时应先回听或重转写该分段，不要把该会议直接交给知识平台自动入库。
 - 如果 `weak_action_owner_count` 大于 0，说明待办内容本身可能来自转写，但负责人和任务之间缺少明确上下文证据。上线验收时要重点检查这些待办，避免把督办消息发给错误的人。
 - 如果待办负责人显示为“我、我们、他、这边、大家”等代词，系统会尝试用第一人称转写和任务关键词换成真实发言人；换不出来会降级为 `待确认`，仍应人工确认后再复制到 IM。
+- 如果大模型把待办负责人写成“负责人、相关负责人、主持人、前端开发、某某负责人”等泛化角色，系统会先降级为 `待确认`，再用转写上下文尝试补回具体人或明确团队。验收时看到 `待确认` 不一定是漏识别，也可能是系统避免误督办的保护。
 - 如果待办文本末尾出现 `协同：某人`，表示系统从转写中识别到配合/协助关系。它不会改变主责人，但复制给 IM 或同步给外部督办系统时应保留，避免遗漏配合人。
 - `qualityReport.actionEvidence` 会逐条列出待办证据状态：`supported` 表示可找到转写依据，`majority` 表示多数录音源已确认但仍建议抽查，`weak_owner` 表示任务有依据但负责人证据弱，`unsupported` 表示缺转写依据，`conflict` 表示只由冲突片段支撑。外部 API 的 `actionItems` 也会直接带 `evidenceStatus`、`evidence`、`suggestedOwner`、`knowledgeSafe` 和 `requiresReview`，方便督办 Agent 不解析完整质量报告也能判断是否可自动提醒。若系统能找到更有证据的负责人，会同时给出 `suggested_owner` 和引用片段，Web 待办区会显示“建议负责人/应用建议”。证据引用带 `segment_id`、`source_id` 和 `source_segment_no`，Web 可用“定位转写”跳到对应原文。复制待办给 IM 时仍只复制待办正文。
 - `qualityReport.multiSourceConflicts` 会把多源冲突从数量展开成可回听清单：每条包含来源、来源分段号、时间、发言人、冲突文本和附近其它冲突来源。Web“整理质量”区会直接显示这些条目并提供“定位转写”；知识平台或运维 Agent 做验收时应先看这个字段，确认后再决定是否入库。
@@ -887,6 +888,7 @@ Troubleshooting notes:
 - `knowledgeReadiness.reviewEvidence` groups the human-review targets in one field: multi-source conflicts, weak coverage segments, speaker risks, summary risks, and action risks. Use it to locate issues quickly, then verify against the transcript evidence.
 - If an action shows `evidenceStatus=conflict` or the "multi-source conflict" review label, the action has transcript evidence but the sources disagree on key facts such as date, amount, or owner. `knowledgeSafe=false` and `requiresReview=true` mean downstream reminder or knowledge platforms must not auto-send or store it as confirmed knowledge.
 - If an action shows `evidenceStatus=majority` or the "majority source confirmed" label, the primary result is supported by most recording sources while a minority conflict still exists nearby. `knowledgeSafe=true` and `requiresReview=true` mean downstream systems may use it as primary evidence, but should preserve a replay-review hint.
+- If the LLM returns a generic action owner such as "owner", "related owner", "host", "frontend developer", or a label ending with "owner", the server downgrades it to `待确认` before trying transcript-grounded repair. Seeing `待确认` during acceptance may be a safety guard against wrong reminders, not simply a missed extraction.
 
 ### LLM Provider
 

@@ -4,6 +4,7 @@ import re
 import httpx
 
 from .config import get_settings
+from .owner_terms import ORG_OWNER_TERMS
 
 
 class LlmAdapterError(RuntimeError):
@@ -759,6 +760,7 @@ def _scenario_value(value) -> str:
 
 
 def _normalize_owner(owner: str) -> str:
+    owner = str(owner or "").strip()
     lowered = owner.lower()
     if not owner or lowered in {
         "unknown",
@@ -767,9 +769,30 @@ def _normalize_owner(owner: str) -> str:
         "null",
         "未明确",
         "不明确",
-    } or _is_pronoun_owner(owner):
+    } or _is_pronoun_owner(owner) or _is_generic_owner(owner):
         return "待确认"
     return owner
+
+
+def _is_generic_owner(owner: str) -> bool:
+    owner = re.sub(r"\s+", "", str(owner or "").strip())
+    if not owner:
+        return True
+    if owner in ORG_OWNER_TERMS:
+        return False
+    if _looks_like_topic_or_time_phrase(owner):
+        return True
+    generic_words = {
+        "负责人",
+        "相关负责人",
+        "前端开发",
+        "UI讨论者",
+        "主持人",
+        "全体",
+        "团队",
+        "待确认",
+    }
+    return owner in generic_words or owner.endswith("负责人")
 
 
 def _is_pronoun_owner(owner: str) -> bool:

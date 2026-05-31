@@ -2619,6 +2619,27 @@ def test_llm_refinement_rejects_summary_like_text_loss() -> None:
     assert processing._refined_segments_cover_source(refined, original) is False
 
 
+def test_llm_summary_normalizes_generic_action_owners() -> None:
+    import solorecord_server.llm_adapters as llm_adapters
+
+    content = """
+    {
+      "summary": "会议确认交付事项。",
+      "role_notes": "销售：跟进客户名单。",
+      "action_items": [
+        {"owner": "销售", "task": "跟进客户名单", "due": "周五", "status": "open"},
+        {"owner": "销售负责人", "task": "确认客户名单负责人", "due": "", "status": "open"},
+        {"owner": "前端开发", "task": "调整登录页面", "due": "", "status": "open"},
+        {"owner": "主持人", "task": "汇总会议纪要", "due": "", "status": "open"}
+      ]
+    }
+    """
+
+    _, _, actions = llm_adapters._parse_summary(content, [])
+
+    assert [item["owner"] for item in actions] == ["销售", "待确认", "待确认", "待确认"]
+
+
 def test_meeting_quality_report_flags_llm_review_risks(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)

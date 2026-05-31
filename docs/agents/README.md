@@ -243,6 +243,7 @@ Agent 验收时必须检查：
 - 被点名后的发言人归属必须有第一人称回应、任务承诺、同议题关键词承接或显式姓名前缀。ASR `speaker_id` 变化本身不是归属证据；“好的，我们继续下一个议题”这类过渡话应保留原 ASR 发言人。
 - 当 `actionEvidence` 或 `weakActionOwners` 出现 `suggested_owner` 时，Web 应显示建议负责人和应用按钮；Agent 可以把它作为人工复核建议，但不得绕过用户确认直接改待办。
 - 如果 LLM 输出 owner 为“我/我们/他/这边/大家”等代词，服务端应尝试用第一人称转写和任务关键词推断真实发言人；推不出必须保留 `待确认`，外部督办 Agent 不得把代词 owner 当成可发送对象。
+- 如果 LLM 输出 owner 为“负责人、相关负责人、主持人、前端开发、某某负责人”等泛化角色，`llm_adapters._normalize_owner()` 应先降级为 `待确认`，再由服务端基于转写证据尝试补回具体人或明确团队。明确组织 owner（如销售、法务、前端）可以保留。
 - “今天下午、下午、周三前、月底前”等日期/截止时间短语只能作为时间事实，不能被当成发言人或负责人。若看到这类词进入 `display_name`、`owner` 或知识图谱 speaker 节点，先修后处理规则再联调真实会议；若历史待办 owner 已是时间词，`actionEvidence.status` 应为 `weak_owner`，不能当作可自动督办对象。
 - 被点名句里的议题词可作为待办主责线索。例如“翼天你先说自动测试”后面出现匿名片段“覆盖脚本明天补完”时，可以把主责建议为翼天；但主持人本人不应仅因说出点名句而获得该任务。
 - 销售、法务、前端、测试等组织角色可以作为待办 owner，但必须有同一短语窗口内的责任或动作证据，例如“销售这边周五前跟进客户名单”“前端周三前改页面”。不要把“自动测试、测试覆盖、数据源”等任务词本身当成组织负责人。
@@ -697,6 +698,7 @@ Agent acceptance checks:
 - LLM summary input should explicitly include `source_id/source_segment_no` and multi-source flags. Dates, amounts, owners, or other facts marked `multi_source_conflict` must remain reviewable uncertainty, not be fused into a definite summary or automatic action item.
 - Named-callout speaker attribution requires a first-person response, task commitment, same-topic keyword continuation, or explicit speaker prefix. An ASR `speaker_id` change by itself is not attribution evidence; transition lines such as "okay, let's continue to the next topic" should keep the original ASR speaker.
 - If the LLM outputs a pronoun owner such as “I”, “we”, “he”, “this side”, or “everyone”, the server should infer a concrete speaker from first-person transcript evidence and task keywords when possible. If not possible, keep `待确认`; external action agents must not send reminders to pronoun owners.
+- If the LLM outputs a generic action owner such as "owner", "related owner", "host", "frontend developer", or a label ending with "owner", `llm_adapters._normalize_owner()` should first downgrade it to `待确认`; the server may then restore a concrete person or explicit team only from transcript evidence. Clear organizational owners such as sales, legal, or frontend may be preserved.
 - Date and deadline phrases such as "this afternoon", "afternoon", "before Wednesday", or "by month end" are time facts only. They must not become `display_name`, action `owner`, or speaker nodes in the knowledge graph. If a historical action owner is already time-like, `actionEvidence.status` should be `weak_owner`, not auto-actionable.
 - Topic words in named callouts may be used as action-owner clues. For example, if the host says "Yitian, talk about automated testing" and a later anonymous segment says "coverage scripts will be finished tomorrow", Yitian is the preferred owner suggestion; the host must not inherit the task just because they said the callout.
 - Organizational roles such as sales, legal, frontend, and QA may be action owners, but they need explicit assignment/action evidence in the same short phrase. Task nouns such as automated testing, test coverage, or data source are not enough by themselves to create a team owner.
