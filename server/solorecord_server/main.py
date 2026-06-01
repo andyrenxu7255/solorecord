@@ -27,17 +27,13 @@ from .auth import (
 from .config import get_settings
 from .db import get_db, init_db
 from .exports import create_export
-from .ontology import (
-    enqueue_ontology_extraction,
-    ontology_graph,
-    process_ontology_job,
-)
 from .processing import enqueue_transcription, process_uploaded_segment
 from .processing import process_transcription_job
 from .repository import (
     list_documents_for_external,
     list_documents_for_user,
     meeting_document,
+    meeting_overview_document,
     transcript_document,
     with_derived_quality_flags,
 )
@@ -382,7 +378,7 @@ def discover_joinable_meetings(
 @app.get("/api/web/meetings/{meeting_id}")
 def get_meeting(meeting_id: str, user: CurrentUser) -> dict:
     _assert_access(meeting_id, user)
-    document = meeting_document(meeting_id)
+    document = meeting_document(meeting_id, include_graphs=False)
     if not document:
         raise HTTPException(status_code=404, detail="Meeting not found")
     with get_db() as db:
@@ -401,9 +397,37 @@ def get_meeting(meeting_id: str, user: CurrentUser) -> dict:
         "exports": document["exports"],
         "qualityReport": document["qualityReport"],
         "knowledgeReadiness": document["knowledgeReadiness"],
-        "knowledgeGraph": document["knowledgeGraph"],
-        "ontologyGraph": document["ontologyGraph"],
         "jobs": [row_to_dict(row) for row in jobs],
+    }
+
+
+@app.get("/api/mobile/meetings/{meeting_id}/overview")
+@app.get("/api/web/meetings/{meeting_id}/overview")
+def get_meeting_overview(meeting_id: str, user: CurrentUser) -> dict:
+    _assert_access(meeting_id, user)
+    document = meeting_overview_document(meeting_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    with get_db() as db:
+        jobs = db.execute(
+            "SELECT * FROM processing_jobs WHERE meeting_id = ? ORDER BY created_at DESC LIMIT 5",
+            (meeting_id,),
+        ).fetchall()
+        transcript_meta = db.execute(
+            """
+            SELECT COUNT(*) AS segment_count,
+                   MIN(start_ms) AS first_start_ms,
+                   MAX(end_ms) AS last_end_ms
+            FROM transcript_segments
+            WHERE meeting_id = ?
+            """,
+            (meeting_id,),
+        ).fetchone()
+    return {
+        **document,
+        "transcriptMeta": row_to_dict(transcript_meta) if transcript_meta else {},
+        "jobs": [row_to_dict(row) for row in jobs],
+        "detailDeferred": True,
     }
 
 
@@ -683,22 +707,6 @@ def process_meeting(meeting_id: str, user: CurrentUser) -> dict:
     return {"jobId": job_id}
 
 
-@app.get("/api/mobile/meetings/{meeting_id}/ontology")
-@app.get("/api/web/meetings/{meeting_id}/ontology")
-def get_meeting_ontology(meeting_id: str, user: CurrentUser) -> dict:
-    _assert_access(meeting_id, user)
-    return ontology_graph(meeting_id)
-
-
-@app.post("/api/mobile/meetings/{meeting_id}/ontology/extract")
-@app.post("/api/web/meetings/{meeting_id}/ontology/extract")
-def extract_meeting_ontology(meeting_id: str, user: CurrentUser) -> dict:
-    _assert_access(meeting_id, user, write=True)
-    job_id = _enqueue_background_ontology(meeting_id)
-    audit(user["id"], "ontology.extract", "meeting", meeting_id, {"job_id": job_id})
-    return {"jobId": job_id}
-
-
 @app.get("/api/mobile/meetings/{meeting_id}/status")
 @app.get("/api/web/meetings/{meeting_id}/status")
 def meeting_status(meeting_id: str, user: CurrentUser) -> dict:
@@ -943,7 +951,7 @@ def external_meetings(client: ExternalClient, limit: int = 100, offset: int = 0)
 
 @app.get("/api/external/meetings/{meeting_id}")
 def external_meeting(meeting_id: str, client: ExternalClient) -> dict:
-    document = meeting_document(meeting_id)
+    document = meeting_document(meeting_id, include_graphs=False)
     if not document:
         raise HTTPException(status_code=404, detail="Meeting not found")
     return {"client": client["client"], **document}
@@ -959,20 +967,6 @@ def external_meeting_transcript(
     if not document:
         raise HTTPException(status_code=404, detail="Meeting not found")
     return {"client": client["client"], **document}
-
-
-@app.get("/api/external/meetings/{meeting_id}/ontology")
-def external_meeting_ontology(meeting_id: str, client: ExternalClient) -> dict:
-    document = meeting_document(meeting_id)
-    if not document:
-        raise HTTPException(status_code=404, detail="Meeting not found")
-    return {
-        "client": client["client"],
-        "meeting": document["meeting"],
-        "owner": document["owner"],
-        "knowledgeReadiness": document["knowledgeReadiness"],
-        "ontologyGraph": document["ontologyGraph"],
-    }
 
 
 @app.post("/api/admin/search/reindex")
@@ -1219,9 +1213,8 @@ def retry_job(job_id: str, user: CurrentUser) -> dict:
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     if job["type"] == "knowledge_graph":
-        new_job = _enqueue_background_ontology(job["meeting_id"])
-    else:
-        new_job = _enqueue_background_transcription(job["meeting_id"], job["asr_provider"])
+        raise HTTPException(status_code=410, detail="Knowledge graph jobs are disabled")
+    new_job = _enqueue_background_transcription(job["meeting_id"], job["asr_provider"])
     audit(user["id"], "job.retry", "job", job_id, {"new_job": new_job})
     return {"jobId": new_job}
 
@@ -1229,12 +1222,6 @@ def retry_job(job_id: str, user: CurrentUser) -> dict:
 def _enqueue_background_transcription(meeting_id: str, asr_provider: str | None = None) -> str:
     job_id = enqueue_transcription(meeting_id, asr_provider, run_inline=False)
     job_executor.submit(process_transcription_job, job_id)
-    return job_id
-
-
-def _enqueue_background_ontology(meeting_id: str) -> str:
-    job_id = enqueue_ontology_extraction(meeting_id, run_inline=False)
-    job_executor.submit(process_ontology_job, job_id)
     return job_id
 
 

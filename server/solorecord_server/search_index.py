@@ -14,7 +14,7 @@ def index_meeting(meeting_id: str) -> None:
     es_index = config.get("es_index", settings.es_index)
     if not enabled or not es_url:
         return
-    document = meeting_document(meeting_id)
+    document = meeting_document(meeting_id, include_graphs=False)
     if not document:
         return
     url = f"{es_url.rstrip('/')}/{es_index}/_doc/{meeting_id}"

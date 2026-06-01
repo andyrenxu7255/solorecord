@@ -5621,14 +5621,10 @@ def test_quality_report_flags_same_name_multiple_speaker_ids(tmp_path: Path) -> 
     issue_types = {item["type"] for item in report["issues"]}
     assert "speaker_alias_conflict" in issue_types
     assert any("同名多标签" in item for item in report["recommendations"])
-
-    graph = detail["knowledgeGraph"]
-    yitian_nodes = [
-        node for node in graph["nodes"]
-        if node["type"] == "speaker" and node["label"] == "翼天"
-    ]
-    assert len(yitian_nodes) == 1
-    assert set(yitian_nodes[0]["speaker_ids"]) == {"SPEAKER_02", "MANUAL_翼天"}
+    assert "knowledgeGraph" not in detail
+    transcript = client.get(f"/api/external/meetings/{meeting_id}/transcript", headers={"Authorization": "Bearer test-token"})
+    assert transcript.status_code == 200
+    assert transcript.json()["qualityReport"]["speakerAliasConflicts"][0]["display_name"] == "翼天"
 
 
 def test_quality_report_flags_too_many_speaker_tags(tmp_path: Path) -> None:
@@ -5706,7 +5702,9 @@ def test_knowledge_graph_links_speakers_topics_actions_and_times(tmp_path: Path)
             (meeting_id,),
         )
 
-    graph = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()["knowledgeGraph"]
+    import solorecord_server.repository as repository
+
+    graph = repository.meeting_document(meeting_id, include_graphs=True)["knowledgeGraph"]
     graph_nodes = {(node["type"], node["label"]) for node in graph["nodes"]}
     graph_edges = {
         (edge["source_label"], edge["target_label"], edge["label"])
@@ -5741,7 +5739,9 @@ def test_knowledge_graph_topic_evidence_preserves_source_refs(tmp_path: Path) ->
             (meeting_id,),
         )
 
-    graph = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()["knowledgeGraph"]
+    import solorecord_server.repository as repository
+
+    graph = repository.meeting_document(meeting_id, include_graphs=True)["knowledgeGraph"]
     topic = next(node for node in graph["nodes"] if node["type"] == "topic" and node["label"] == "客户名单")
     evidence = topic["evidence"][0]
 
@@ -5817,15 +5817,15 @@ def test_ontology_extraction_persists_entities_relations_and_external_api(tmp_pa
 
     detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers)
     assert detail.status_code == 200
-    assert detail.json()["ontologyGraph"]["nodes"]
+    assert "ontologyGraph" not in detail.json()
 
     external = client.get(
-        f"/api/external/meetings/{meeting_id}/ontology",
+        f"/api/external/meetings/{meeting_id}/transcript",
         headers={"Authorization": "Bearer test-token"},
     )
     assert external.status_code == 200
-    assert external.json()["ontologyGraph"]["edges"]
-    assert "transcriptSegments" not in external.json()
+    assert "transcript" in external.json()
+    assert "ontologyGraph" not in external.json()
 
 
 def test_ontology_rule_extractor_builds_contextual_action_chains(tmp_path: Path) -> None:
@@ -5874,7 +5874,7 @@ def test_ontology_rule_extractor_builds_contextual_action_chains(tmp_path: Path)
     assert any(edge[0] == "李四" and edge[2] == "responsible_for" for edge in edge_pairs)
 
 
-def test_ontology_api_requires_meeting_access_and_can_enqueue_job(tmp_path: Path) -> None:
+def test_ontology_api_is_removed_from_meeting_workflow(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     owner_headers = login(client)
     user_headers = login_user(client)
@@ -5884,30 +5884,14 @@ def test_ontology_api_requires_meeting_access_and_can_enqueue_job(tmp_path: Path
     denied = client.get(f"/api/web/meetings/{meeting_id}/ontology", headers=user_headers)
     assert denied.status_code == 404
 
-    import solorecord_server.main as main
-
-    submitted: list[str] = []
-
-    class DelayedExecutor:
-        def submit(self, fn, job_id):
-            submitted.append(job_id)
-            return None
-
-    original_executor = main.job_executor
-    main.job_executor = DelayedExecutor()
-    try:
-        response = client.post(
-            f"/api/web/meetings/{meeting_id}/ontology/extract",
-            headers=owner_headers,
-        )
-    finally:
-        main.job_executor = original_executor
-
-    assert response.status_code == 200
-    assert submitted == [response.json()["jobId"]]
+    response = client.post(
+        f"/api/web/meetings/{meeting_id}/ontology/extract",
+        headers=owner_headers,
+    )
+    assert response.status_code in {404, 405}
 
     denied_post = client.post(f"/api/web/meetings/{meeting_id}/ontology/extract", headers=user_headers)
-    assert denied_post.status_code == 404
+    assert denied_post.status_code in {404, 405}
 
 
 def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
@@ -5967,11 +5951,18 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert ".knowledge-review-item" in styles
     assert ".knowledge-readiness-tags .blocker" in styles
     assert ".summary-evidence-item p" in styles
-    assert "ontologyGraph" in app_js
-    assert "renderOntologyGraphSummary" in app_js
-    assert "openOntologyGraph" in app_js
-    assert "graph.html?meetingId=" in app_js
-    assert ".ontology-stage" in styles
+    assert "/overview" in app_js
+    assert "renderDeferredPanel" in app_js
+    assert "renderTranscriptSkeleton" in app_js
+    assert "正在补全转写和证据检查" in app_js
+    assert "整理质量与证据" in app_js
+    assert "ontologyGraph" not in app_js
+    assert "renderOntologyGraphSummary" not in app_js
+    assert "openOntologyGraph" not in app_js
+    assert "graph.html?meetingId=" not in app_js
+    assert ".transcript-skeleton" in styles
+    assert ".inline-loading" in styles
+    assert ".deferred-panel" in styles
     assert ".graph-inspector" in styles
     assert "detailRoleNotes" in app_js
     assert "分角色整理" in app_js
@@ -6968,14 +6959,10 @@ def test_full_user_story_permissions_sync_export_and_release(tmp_path: Path) -> 
     assert len(action_items) == 2
     assert action_items[0]["owner"] == "张三"
     assert action_items[0]["status"] == "doing"
-    graph = actions_update.json()["knowledgeGraph"]
-    graph_nodes = {(node["type"], node["label"]) for node in graph["nodes"]}
-    graph_edges = {(edge["source_label"], edge["target_label"], edge["label"]) for edge in graph["edges"]}
-    assert ("speaker", "张三") in graph_nodes
-    assert ("action", "周三前补充报价明细") in graph_nodes
-    assert ("time", "周三") in graph_nodes
-    assert ("张三", "周三前补充报价明细", "负责") in graph_edges
-    assert ("周三前补充报价明细", "周三", "截止") in graph_edges
+    assert "knowledgeGraph" not in actions_update.json()
+    actions_detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()["actionItems"]
+    assert actions_detail[0]["owner"] == "张三"
+    assert "evidenceStatus" in actions_detail[0]
     guest_login = client.post(
         "/api/auth/demo-login",
         json={"display_name": "Guest", "email": "guest@example.com"},

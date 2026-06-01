@@ -283,7 +283,7 @@ SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
 - 语义重分段输出会保留 `source_index`/`source_segment_no`，方便从 Web 时间线、导出 JSON 或外部知识平台追溯到原始音频分段。通过上下文或任务归属推断的人名会保留 `speaker_review` 和 `reason:*`，上线验收时要把它当作“建议归属”，而不是声纹确认。
 - 如果用户已经把某个 `speaker_id` 改成具体人名，最终整理会优先保留这个人工校正；但 `发言人 1/2/3` 这类泛化旧名不会阻止模型根据上下文识别新的真实人名。
 - 会议详情里的“整理质量”会显示待办证据率。证据率低或出现“待办缺少转写证据”时，说明待办可能是模型补写或上下文关联不足，建议先回看转写/录音再对外发送。新生成的 LLM 待办若完全缺少转写证据，会在保存前被删除；如果全部生成待办都缺证据，系统只保留一条带原文片段的“按转写原文复核待办”，用于提醒人工复核，不应被外部督办系统自动发送。若 LLM 未配置但 ASR 已生成真实转写，服务端只保存保守纪要，不生成“检查转写结果”系统待办；该提醒只用于 `mock_asr`、`empty_asr`、`missing_audio` 等占位转写场景。这类条目会显示 `evidenceStatus=system_review`、`actionKind=system_review`、`autoActionable=false`、`reminderSafe=false`，Web 复制待办时会跳过；Android 离线记录页和 Markdown/Word/PDF/JSON 导出也会保留“系统复核提醒”标签。
-- 会议详情里的“整理质量”也会显示分段覆盖率。如果出现“音频分段待核对”或 `source_segment_coverage_weak`，说明某个上传音频分段在当前转写中没有足够有效文本，可能是 ASR 空结果、重传缺失或 LLM 后处理丢段。系统会把完全缺失的已上传音频补成“系统复核”转写行，方便定位；但 `mock_asr`、`empty_asr`、`missing_audio`、`source_coverage_gap` 都只是复核占位，不代表有效覆盖。复核占位行不会进入人物校对、图谱主题、纪要证据或待办证据；如果需要形成会议事实，必须回听或重转写后补成真实转写。上线验收时应先回听或重转写该分段，不要把该会议直接交给知识平台自动入库。
+- 会议详情里的“整理质量”也会显示分段覆盖率。如果出现“音频分段待核对”或 `source_segment_coverage_weak`，说明某个上传音频分段在当前转写中没有足够有效文本，可能是 ASR 空结果、重传缺失或 LLM 后处理丢段。系统会把完全缺失的已上传音频补成“系统复核”转写行，方便定位；但 `mock_asr`、`empty_asr`、`missing_audio`、`source_coverage_gap` 都只是复核占位，不代表有效覆盖。复核占位行不会进入人物校对、纪要证据或待办证据；如果需要形成会议事实，必须回听或重转写后补成真实转写。上线验收时应先回听或重转写该分段，不要把该会议直接交给知识平台自动入库。
 - 如果 `weak_action_owner_count` 大于 0，说明待办内容本身可能来自转写，但负责人和任务之间缺少明确上下文证据。上线验收时要重点检查这些待办，避免把督办消息发给错误的人。
 - 如果待办负责人显示为“我、我们、他、这边、大家”等代词，系统会尝试用第一人称转写和任务关键词换成真实发言人；换不出来会降级为 `待确认`，仍应人工确认后再复制到 IM。
 - 如果大模型把待办负责人写成“负责人、相关负责人、主持人、前端开发、某某负责人”等泛化角色，系统会先降级为 `待确认`，再用转写上下文尝试补回具体人或明确团队。验收时看到 `待确认` 不一定是漏识别，也可能是系统避免误督办的保护。
@@ -295,8 +295,8 @@ SOLO_ENABLE_SEMANTIC_SEGMENTATION=true
 - `knowledgeReadiness.reviewEvidence` 会把需要人工复核的证据集中到一个字段里，包括多源冲突、覆盖不足分段、发言人风险、纪要风险和待办风险。Web“整理质量”区也会显示“知识入库复核”，列出 `ready/review_first/hold`、阻塞项、复核标签、说明和可定位证据。运维验收或知识平台联调时可以先看它快速定位问题，再回到转写原文核对；如果覆盖不足分段没有可定位转写，应先回听或重转写。
 - 如果 `speaker_evidence_weak_count` 大于 0，说明某些发言人名称没有在原始 ASR 文本或原始说话人标签中找到依据。上线验收时应优先播放这些片段，确认模型没有把议题、时间短语或误听词当成人名。
 - `qualityReport.speakerEvidence` 会给出每个需校对发言人段落的推断场景、原因和相邻上下文。验收时不要只看数量，还要打开 Web 时间线检查“推断依据”是否符合真实会议语境。
-- 如果 `speaker_alias_conflict_count` 大于 0，说明同一个姓名被多个 `speaker_id` 表示。Web 会提示“同名多标签”，知识图谱会合并展示同一人员节点并保留原始标签，验收时应确认是否需要在人物校对里统一。
-- `knowledgeGraph` 会包含主题节点，把“人员讨论主题”“主题产生待办”“待办截止时间”串起来。主题来自转写和待办的轻量抽取，只用于辅助查阅和知识平台整理，最终事实仍以转写证据为准。
+- 如果 `speaker_alias_conflict_count` 大于 0，说明同一个姓名被多个 `speaker_id` 表示。Web 会提示“同名多标签”，验收时应确认是否需要在人物校对里统一。
+- 会议详情页采用轻量概要先打开，再补齐转写和质量证据。不要把图谱或本体抽槽重新放进详情首屏加载链路；知识平台需要关系分析时，应基于外部转写接口、质量报告、待办证据和 ES/OpenSearch 索引生成。
 - LLM 纪要不是无条件保存。服务端会先检查纪要/分角色整理是否能被转写支撑；如果证据率过低、多源冲突事实被写成确定结论，或纪要把转写中的未完成/否定表达写成已完成/肯定结论，会自动改成“基于转写原文的保守整理”，并按更强转写证据修正明显错误的待办负责人。保守整理里如果引用多源冲突片段，应直接显示“多源冲突待确认”，运维验收时可检查 `summary_unqualified_conflict_count=0`。验收时如果看到这个标题，说明系统选择了保守兜底，而不是模型自由发挥。
 - `qualityReport.summaryEvidence.supportedClaims` 会给出纪要和分角色整理中已匹配到的转写引用，并带 `status=supported|majority|conflict|contradiction`。`majority` 表示多数录音源支撑但仍建议抽查，`conflict` 表示纪要只由冲突片段支撑，必须保留待确认语气并回听确认，`contradiction` 表示纪要与原文完成/否定状态相反，是知识入库阻塞项；`contradictedClaims` 单独列出反向证据，`unsupportedClaims` 是缺证据结论。上线验收时应抽查四类内容：有依据的引用是否真的支撑结论，反向证据是否已按原文改写，多源冲突结论是否写成了确定事实，缺依据的结论是否需要删除或改写。
 
@@ -868,7 +868,7 @@ Operations notes:
 - If an action owner is a pronoun such as “I”, “we”, “he”, “this side”, or “everyone”, SoloRecord tries to replace it with a concrete speaker from first-person transcript evidence and task keywords. If it cannot, the owner becomes `待确认` and should be reviewed before IM sharing.
 - If `speaker_evidence_weak_count` is above zero, some speaker names were not supported by original ASR text or original speaker labels. During acceptance, play those segments first and confirm the model did not turn topics, time phrases, or misheard words into names.
 - If `speaker_alias_conflict_count` is above zero, one display name maps to multiple `speaker_id` values. Web shows this as a same-name/multiple-label warning, and the knowledge graph merges the person node while preserving original IDs for traceability.
-- `knowledgeGraph` includes topic nodes linking “speaker discussed topic”, “topic produced action”, and “action has due date”. Topics are lightweight context helpers from transcripts and action items; transcript evidence remains the source of truth.
+- The meeting detail page opens with a lightweight overview first, then fills in transcript and quality evidence. Do not add graph or ontology extraction back to the first-load detail path; knowledge platforms that need relationships should build them from the external transcript API, quality reports, action evidence, and ES/OpenSearch indexing.
 
 ### Multi-Source Recording Acceptance
 

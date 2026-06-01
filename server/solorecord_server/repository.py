@@ -17,7 +17,80 @@ SYSTEM_REVIEW_TASK_PREFIXES = (
 )
 
 
-def meeting_document(meeting_id: str) -> dict:
+def meeting_overview_document(meeting_id: str) -> dict:
+    with get_db() as db:
+        meeting = db.execute(
+            """
+            SELECT meetings.*, users.display_name AS owner_name, users.email AS owner_email
+            FROM meetings
+            JOIN users ON users.id = meetings.owner_id
+            WHERE meetings.id = ?
+            """,
+            (meeting_id,),
+        ).fetchone()
+        if not meeting:
+            return {}
+        members = db.execute(
+            """
+            SELECT meeting_members.role, users.id, users.display_name, users.email
+            FROM meeting_members
+            JOIN users ON users.id = meeting_members.user_id
+            WHERE meeting_members.meeting_id = ?
+            ORDER BY meeting_members.role, users.display_name
+            """,
+            (meeting_id,),
+        ).fetchall()
+        audio_rows = db.execute(
+            """
+            SELECT audio_segments.*, recording_sources.label AS source_label,
+                   recording_sources.device_name AS source_device_name
+            FROM audio_segments
+            LEFT JOIN recording_sources
+              ON recording_sources.meeting_id = audio_segments.meeting_id
+             AND recording_sources.source_id = audio_segments.source_id
+            WHERE audio_segments.meeting_id = ?
+            ORDER BY audio_segments.segment_no
+            """,
+            (meeting_id,),
+        ).fetchall()
+        recording_sources = db.execute(
+            """
+            SELECT * FROM recording_sources
+            WHERE meeting_id = ?
+            ORDER BY created_at, source_id
+            """,
+            (meeting_id,),
+        ).fetchall()
+        speakers = db.execute(
+            "SELECT * FROM speakers WHERE meeting_id = ? ORDER BY speaker_id",
+            (meeting_id,),
+        ).fetchall()
+        action_items = db.execute(
+            "SELECT * FROM action_items WHERE meeting_id = ? ORDER BY created_at",
+            (meeting_id,),
+        ).fetchall()
+        exports = db.execute(
+            "SELECT * FROM exports WHERE meeting_id = ? ORDER BY created_at DESC",
+            (meeting_id,),
+        ).fetchall()
+    meeting_dict = row_to_dict(meeting)
+    return {
+        "meeting": meeting_dict,
+        "owner": {
+            "id": meeting_dict["owner_id"],
+            "display_name": meeting_dict.get("owner_name", ""),
+            "email": meeting_dict.get("owner_email", ""),
+        },
+        "members": [row_to_dict(row) for row in members],
+        "recordingSources": [row_to_dict(row) for row in recording_sources],
+        "audioSegments": _audio_segment_items(meeting_id, audio_rows),
+        "speakers": [row_to_dict(row) for row in speakers],
+        "actionItems": [row_to_dict(row) for row in action_items],
+        "exports": [_export_item(row) for row in exports],
+    }
+
+
+def meeting_document(meeting_id: str, *, include_graphs: bool = False) -> dict:
     with get_db() as db:
         meeting = db.execute(
             """
@@ -83,13 +156,7 @@ def meeting_document(meeting_id: str) -> dict:
     )
     action_text = "\n".join(f"{row['owner']}: {row['task']} {row['due']}" for row in action_items)
     normalized_transcript_segments = with_derived_quality_flags(transcript_segments)
-    audio_segments = []
-    for row in audio_rows:
-        item = row_to_dict(row)
-        item["download_url"] = (
-            f"/api/mobile/meetings/{meeting_id}/segments/{item['segment_no']}/audio"
-        )
-        audio_segments.append(item)
+    audio_segments = _audio_segment_items(meeting_id, audio_rows)
     quality_report = build_quality_report(
         normalized_transcript_segments,
         action_items,
@@ -98,7 +165,7 @@ def meeting_document(meeting_id: str) -> dict:
         meeting_dict.get("role_notes", ""),
     )
     action_items_with_evidence = _action_items_with_evidence(action_items, quality_report)
-    return {
+    document = {
         "meeting": meeting_dict,
         "owner": {
             "id": meeting_dict["owner_id"],
@@ -114,13 +181,6 @@ def meeting_document(meeting_id: str) -> dict:
         "exports": [_export_item(row) for row in exports],
         "qualityReport": quality_report,
         "knowledgeReadiness": build_knowledge_readiness(quality_report),
-        "knowledgeGraph": build_meeting_graph(
-            meeting_dict,
-            speakers,
-            action_items,
-            normalized_transcript_segments,
-        ),
-        "ontologyGraph": ontology_graph(meeting_id),
         "searchText": "\n".join(
             part
             for part in [
@@ -133,6 +193,15 @@ def meeting_document(meeting_id: str) -> dict:
             if part
         ),
     }
+    if include_graphs:
+        document["knowledgeGraph"] = build_meeting_graph(
+            meeting_dict,
+            speakers,
+            action_items,
+            normalized_transcript_segments,
+        )
+        document["ontologyGraph"] = ontology_graph(meeting_id)
+    return document
 
 
 def transcript_document(meeting_id: str, include_history: bool = False) -> dict:
@@ -151,8 +220,6 @@ def transcript_document(meeting_id: str, include_history: bool = False) -> dict:
         "speakers": document["speakers"],
         "qualityReport": document["qualityReport"],
         "knowledgeReadiness": document["knowledgeReadiness"],
-        "knowledgeGraph": document["knowledgeGraph"],
-        "ontologyGraph": document["ontologyGraph"],
         "transcript": {
             "version": document["meeting"]["version"],
             "segments": current_segments,
@@ -224,6 +291,17 @@ def _export_item(row) -> dict:
     item["size_bytes"] = path.stat().st_size if path.exists() else 0
     item["download_url"] = f"/api/web/exports/{item['id']}/download"
     return item
+
+
+def _audio_segment_items(meeting_id: str, rows) -> list[dict]:
+    audio_segments = []
+    for row in rows:
+        item = row_to_dict(row)
+        item["download_url"] = (
+            f"/api/mobile/meetings/{meeting_id}/segments/{item['segment_no']}/audio"
+        )
+        audio_segments.append(item)
+    return audio_segments
 
 
 def with_derived_quality_flags(rows) -> list[dict]:

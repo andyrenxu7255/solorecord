@@ -313,6 +313,10 @@ async function selectMeeting(id) {
   renderMeetingList();
   renderMeetingLoading(meeting);
   try {
+    const overview = await api(`/api/web/meetings/${id}/overview`);
+    if (loadSeq !== state.meetingLoadSeq || id !== state.selectedMeetingId) return;
+    state.selectedTranscriptVersion = overview.meeting?.version || 1;
+    renderMeetingDetail(overview, [], { transcriptLoading: true });
     const [data, transcript] = await Promise.all([
       api(`/api/web/meetings/${id}`),
       api(`/api/web/meetings/${id}/transcript`),
@@ -344,7 +348,7 @@ function renderMeetingLoading(meeting) {
       <div class="loading-steps">
         <span>读取会议信息</span>
         <span>读取转写时间线</span>
-        <span>整理质量与图谱</span>
+        <span>整理质量与证据</span>
       </div>
       <div class="skeleton-stack" aria-hidden="true">
         <span></span>
@@ -370,36 +374,43 @@ function renderMeetingLoadError(meeting, error) {
   toast("会议详情加载失败，请稍后重试");
 }
 
-function renderMeetingDetail(data, transcriptSegments) {
+function renderMeetingDetail(data, transcriptSegments, options = {}) {
   const meeting = data.meeting;
   state.currentMeetingDetail = data;
   state.currentTranscriptSegments = transcriptSegments;
+  const transcriptLoading = Boolean(options.transcriptLoading);
   const jobs = data.jobs || [];
   const actions = data.actionItems || [];
   const exports = data.exports || [];
-  const knowledgeGraph = data.knowledgeGraph || { nodes: [], edges: [] };
-  const qualityReport = data.qualityReport || buildClientQualityReport(transcriptSegments, actions);
+  const qualityReport = data.qualityReport || (transcriptLoading
+    ? { status: "review_recommended", metrics: {}, issues: [], recommendations: [] }
+    : buildClientQualityReport(transcriptSegments, actions));
   const knowledgeReadiness = data.knowledgeReadiness || null;
   const audioSegments = data.audioSegments || [];
   const uploadedAudio = audioSegments.filter((segment) => segment.upload_status === "uploaded").length;
   const recordingSources = data.recordingSources || [];
   const statusHint = meetingStatusHint(meeting.status, audioSegments, transcriptSegments);
   const speakerSamples = buildSpeakerSamples(transcriptSegments, audioSegments, meeting.id);
-  const speakerStats = buildSpeakerStats(transcriptSegments, actions, speakerSamples);
+  const speakerStats = transcriptLoading && !transcriptSegments.length
+    ? buildSpeakerStatsFromSpeakers(data.speakers || [], actions)
+    : buildSpeakerStats(transcriptSegments, actions, speakerSamples);
   const segmentInsights = buildSegmentInsights(transcriptSegments, actions, audioSegments);
   const actionRiskMap = buildActionRiskMap(qualityReport);
   const speakerEvidenceMap = buildSpeakerEvidenceMap(qualityReport);
   const actionRows = actions.length ? actions : [{ owner: "", task: "", due: "", status: "open" }];
   const filteredSegments = filteredTranscriptSegments(transcriptSegments);
   const availableFilters = buildTranscriptFilters(transcriptSegments);
+  const transcriptMeta = data.transcriptMeta || {};
+  const transcriptCount = transcriptLoading
+    ? Number(transcriptMeta.segment_count || 0)
+    : transcriptSegments.length;
   $("#meetingDetail").innerHTML = `
-    <div>
+    <div class="meeting-detail-shell ${transcriptLoading ? "is-loading-more" : ""}">
       <div class="detail-head">
         <input id="detailTitle" class="input detail-title" value="${escapeAttr(meeting.title)}">
         <div class="detail-actions">
           <button id="saveMeeting" class="button primary">保存标题/纪要</button>
           <button id="processMeeting" class="button secondary">重新转写整理</button>
-          <button id="openOntologyGraph" class="button secondary">打开本体图谱</button>
         </div>
         <div class="detail-actions">
           <button data-export="markdown" class="button secondary">导出 Markdown</button>
@@ -417,15 +428,24 @@ function renderMeetingDetail(data, transcriptSegments) {
         <span>录音分段：${audioSegments.length}</span>
         <span>录音源：${recordingSources.length || 1}</span>
         <span>已上传：${uploadedAudio}</span>
-        <span>转写段落：${transcriptSegments.length}</span>
+        <span>转写段落：${transcriptCount}</span>
         <span>总时长：${formatTime(meeting.duration_ms || 0)}</span>
       </div>
+      ${transcriptLoading ? `
+        <div class="inline-loading" role="status" aria-live="polite">
+          <span class="loading-spinner small" aria-hidden="true"></span>
+          <div>
+            <b>已打开会议，正在补全转写和证据检查</b>
+            <span>会议标题、纪要、待办和录音分段已可先查看；大会议的时间线会稍后自动出现。</span>
+          </div>
+        </div>
+      ` : ""}
       <div class="summary-box">
         <div class="section-row">
           <h3>整理质量</h3>
           <span class="quality-score ${escapeAttr(qualityReport.status || "review_recommended")}">${qualityScoreLabel(qualityReport)}</span>
         </div>
-        ${renderQualityReport(qualityReport, knowledgeReadiness)}
+        ${transcriptLoading ? renderDeferredPanel("正在加载质量证据", "转写时间线到达后会显示发言人证据、待办证据和可入库检查。") : renderQualityReport(qualityReport, knowledgeReadiness)}
       </div>
       <div class="summary-box">
         <div class="section-row">
@@ -433,7 +453,7 @@ function renderMeetingDetail(data, transcriptSegments) {
           <span class="hint">把发言人或音译名统一成正确人名</span>
         </div>
         <div class="people-grid">
-          ${speakerStats.map(renderPersonCard).join("") || "<p class='hint'>暂无人物信息。转写完成后可在这里统一校对人名。</p>"}
+          ${speakerStats.map(renderPersonCard).join("") || (transcriptLoading ? renderDeferredPanel("正在加载人物校对", "人物声音样本会在转写时间线加载后显示。") : "<p class='hint'>暂无人物信息。转写完成后可在这里统一校对人名。</p>")}
         </div>
       </div>
       <div class="summary-box">
@@ -441,13 +461,8 @@ function renderMeetingDetail(data, transcriptSegments) {
           <h3>分段洞察</h3>
           <span class="hint">按时间查看发言人、讨论内容、待办和负责人</span>
         </div>
-        ${renderSegmentInsights(segmentInsights)}
+        ${transcriptLoading ? renderDeferredPanel("正在加载分段洞察", "分段列表到达后会按时间聚合发言人、主题和待办。") : renderSegmentInsights(segmentInsights)}
       </div>
-      <details class="summary-box graph-details">
-        <summary>图谱视图</summary>
-        ${renderOntologyGraphSummary(data.ontologyGraph || null)}
-        ${renderKnowledgeGraph(knowledgeGraph)}
-      </details>
       <div class="summary-box">
         <div class="section-row">
           <h3>导出文件</h3>
@@ -488,24 +503,24 @@ function renderMeetingDetail(data, transcriptSegments) {
         <div class="section-row">
           <div>
             <h3>转写时间线</h3>
-            <p class="hint">长段可直接上下滚动；如果一段里有多人说话，先拆分，再把拆出的段落设为新发言人。</p>
+            <p class="hint">${transcriptLoading ? "正在读取转写时间线，大会议可能需要多等几秒。" : "长段可直接上下滚动；如果一段里有多人说话，先拆分，再把拆出的段落设为新发言人。"}</p>
           </div>
           <div class="detail-actions">
-            <select id="transcriptFilter" class="input compact-input">
+            <select id="transcriptFilter" class="input compact-input" ${transcriptLoading ? "disabled" : ""}>
               ${availableFilters.map((filter) => `
                 <option value="${escapeAttr(filter.value)}" ${filter.value === state.selectedTranscriptFilter ? "selected" : ""}>
                   ${escapeHtml(filter.label)}
                 </option>
               `).join("")}
             </select>
-            <button id="expandTranscript" class="button secondary">展开阅读</button>
-            <button id="copyTranscript" class="button secondary">复制转写</button>
+            <button id="expandTranscript" class="button secondary" ${transcriptLoading ? "disabled" : ""}>展开阅读</button>
+            <button id="copyTranscript" class="button secondary" ${transcriptLoading ? "disabled" : ""}>复制转写</button>
           </div>
         </div>
         <div id="transcriptList" class="transcript-list">
-          ${filteredSegments.map((segment) => renderTranscriptRow(segment, speakerEvidenceMap)).join("") || "<p class='hint'>当前筛选下暂无转写</p>"}
+          ${transcriptLoading ? renderTranscriptSkeleton(transcriptCount) : (filteredSegments.map((segment) => renderTranscriptRow(segment, speakerEvidenceMap)).join("") || "<p class='hint'>当前筛选下暂无转写</p>")}
         </div>
-        <button id="saveTranscript" class="button primary">保存转写修改</button>
+        <button id="saveTranscript" class="button primary" ${transcriptLoading ? "disabled" : ""}>保存转写修改</button>
       </section>
       <h3>最近任务</h3>
       ${jobs.map((job) => `<div class="job-item"><b>${job.current_stage}</b><span>${job.status} · ${job.progress}%</span><span class="hint">${escapeHtml(job.error_message || "")}</span></div>`).join("") || "<p class='hint'>暂无任务</p>"}
@@ -513,17 +528,14 @@ function renderMeetingDetail(data, transcriptSegments) {
   `;
   $("#saveMeeting").addEventListener("click", saveMeeting);
   $("#processMeeting").addEventListener("click", processSelectedMeeting);
-  $("#openOntologyGraph").addEventListener("click", openOntologyGraph);
-  $("#rebuildOntologyGraph")?.addEventListener("click", rebuildOntologyGraph);
-  $("#openOntologyGraphInline")?.addEventListener("click", openOntologyGraph);
-  $("#saveTranscript").addEventListener("click", saveTranscript);
+  $("#saveTranscript")?.addEventListener("click", saveTranscript);
   $("#saveActions").addEventListener("click", saveActions);
   $("#addActionItem").addEventListener("click", addActionRow);
   $("#copyActions").addEventListener("click", copyActionsToClipboard);
   $("#applyAllSuggestedOwners").addEventListener("click", applyAllSuggestedActionOwners);
-  $("#expandTranscript").addEventListener("click", toggleTranscriptExpanded);
-  $("#copyTranscript").addEventListener("click", copyTranscriptToClipboard);
-  $("#transcriptFilter").addEventListener("change", (event) => {
+  $("#expandTranscript")?.addEventListener("click", toggleTranscriptExpanded);
+  $("#copyTranscript")?.addEventListener("click", copyTranscriptToClipboard);
+  $("#transcriptFilter")?.addEventListener("change", (event) => {
     state.selectedTranscriptFilter = event.target.value;
     renderMeetingDetail(data, transcriptSegments);
   });
@@ -891,60 +903,29 @@ function renderExports(exports) {
   `).join("");
 }
 
-function renderKnowledgeGraph(graph) {
-  const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
-  const edges = Array.isArray(graph.edges) ? graph.edges : [];
-  if (!nodes.length) {
-    return "<p class='hint'>暂无可视化关系。转写完成并生成待办后，会显示人员、事项和时间的关联。</p>";
-  }
+function renderDeferredPanel(title, detail) {
   return `
-    <div class="graph-panel">
-      <div class="graph-node-grid">
-        ${nodes.slice(0, 18).map((node) => `
-          <div class="graph-node ${escapeAttr(node.type || "item")}">
-            <b>${escapeHtml(node.label || node.id || "")}</b>
-            <span>${escapeHtml(graphNodeTypeLabel(node.type))}</span>
-          </div>
-        `).join("")}
-      </div>
-      <div class="graph-edge-list">
-        ${edges.slice(0, 20).map((edge) => `
-          <span>${escapeHtml(edge.source_label || edge.source)} → ${escapeHtml(edge.target_label || edge.target)} · ${escapeHtml(edge.label || "关联")}</span>
-        `).join("") || "<span>暂无关系边</span>"}
+    <div class="deferred-panel">
+      <span class="loading-spinner small" aria-hidden="true"></span>
+      <div>
+        <b>${escapeHtml(title)}</b>
+        <span>${escapeHtml(detail)}</span>
       </div>
     </div>
   `;
 }
 
-function renderOntologyGraphSummary(graph) {
-  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
-  const edges = Array.isArray(graph?.edges) ? graph.edges : [];
-  const counts = nodes.reduce((acc, node) => {
-    const type = node.type || "item";
-    acc[type] = (acc[type] || 0) + 1;
-    return acc;
-  }, {});
+function renderTranscriptSkeleton(count) {
+  const rows = Math.max(3, Math.min(Number(count || 0) || 4, 8));
   return `
-    <div class="ontology-summary">
-      <div class="section-row">
-        <div>
-          <h3>本体抽槽</h3>
-          <span class="hint">人员、地点、时间、事项、待办及其关系会持久化保存，供知识平台和图谱页读取。</span>
+    <div class="transcript-skeleton" aria-hidden="true">
+      ${Array.from({ length: rows }).map(() => `
+        <div class="transcript-skeleton-row">
+          <span></span>
+          <span></span>
+          <span></span>
         </div>
-        <div class="detail-actions">
-          <button type="button" id="rebuildOntologyGraph" class="button secondary">重建图谱</button>
-          <button type="button" id="openOntologyGraphInline" class="button primary">打开图谱页</button>
-        </div>
-      </div>
-      <div class="ontology-counts">
-        <span>人员 ${Number(counts.person || 0)}</span>
-        <span>地点 ${Number(counts.place || 0)}</span>
-        <span>时间 ${Number(counts.time || 0)}</span>
-        <span>事项 ${Number(counts.matter || 0)}</span>
-        <span>待办 ${Number(counts.action || 0)}</span>
-        <span>关系 ${edges.length}</span>
-      </div>
-      ${nodes.length ? "" : "<p class='hint'>暂未生成本体图谱。可点击重建图谱，或等待会议整理完成后自动抽槽。</p>"}
+      `).join("")}
     </div>
   `;
 }
@@ -1379,16 +1360,6 @@ function qualitySeverityLabel(severity) {
   }[severity] || "提示";
 }
 
-function graphNodeTypeLabel(type) {
-  return {
-    meeting: "会议",
-    speaker: "人员/角色",
-    action: "待办",
-    time: "时间",
-    topic: "主题",
-  }[type] || "要素";
-}
-
 function renderTranscriptRow(segment, speakerEvidenceMap = new Map()) {
   const source = segment.source_segment_no
     ? `${sourceDisplayLabel(segment)} · 分段 ${segment.source_segment_no}`
@@ -1501,17 +1472,6 @@ async function processSelectedMeeting() {
   await api(`/api/web/meetings/${state.selectedMeetingId}/process`, { method: "POST", body: "{}" });
   toast("已提交处理任务");
   await selectMeeting(state.selectedMeetingId);
-}
-
-async function rebuildOntologyGraph() {
-  await api(`/api/web/meetings/${state.selectedMeetingId}/ontology/extract`, { method: "POST", body: "{}" });
-  toast("已提交图谱抽槽任务");
-  await selectMeeting(state.selectedMeetingId);
-}
-
-function openOntologyGraph() {
-  if (!state.selectedMeetingId) return;
-  window.open(`/graph.html?meetingId=${encodeURIComponent(state.selectedMeetingId)}`, "_blank", "noopener");
 }
 
 async function saveTranscript() {
@@ -2671,6 +2631,44 @@ function buildSpeakerStats(segments, actions = [], speakerSamples = new Map()) {
   return Array.from(stats.values())
     .map((item) => ({ ...item, aliases: Array.from(new Set(item.aliases.filter(Boolean))) }))
     .sort((left, right) => right.durationMs - left.durationMs);
+}
+
+function buildSpeakerStatsFromSpeakers(speakers = [], actions = []) {
+  const stats = new Map();
+  speakers.forEach((speaker) => {
+    const id = speaker.speaker_id || speaker.id || speaker.display_name || "speaker";
+    const name = speaker.display_name || speaker.speaker_id || "发言人";
+    stats.set(speakerStatsKey(id, name), {
+      id,
+      name,
+      count: 0,
+      durationMs: 0,
+      actionCount: 0,
+      aliases: id && id !== name ? [id] : [],
+      speakerIds: [id].filter(Boolean),
+      sample: null,
+    });
+  });
+  actions.forEach((action) => {
+    const owner = String(action.owner || "").trim();
+    if (!owner || owner === "待确认") return;
+    const match = Array.from(stats.values()).find((item) => item.name === owner || item.id === owner);
+    if (match) {
+      match.actionCount += 1;
+    } else {
+      stats.set(`owner:${owner}`, {
+        id: `owner:${owner}`,
+        name: owner,
+        count: 0,
+        durationMs: 0,
+        actionCount: 1,
+        aliases: [],
+        speakerIds: [`owner:${owner}`],
+        sample: null,
+      });
+    }
+  });
+  return Array.from(stats.values()).sort((left, right) => right.actionCount - left.actionCount);
 }
 
 function speakerStatsKey(id, name) {
