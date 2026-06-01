@@ -6,6 +6,7 @@ from pathlib import Path
 from .db import get_db
 from .llm_adapters import mentioned_people_candidates
 from .owner_terms import ORG_OWNER_TERMS
+from .person_names import is_pseudo_person_name
 from .utils import row_to_dict
 
 PLACEHOLDER_ASR_FLAGS = {"mock_asr", "empty_asr", "missing_audio"}
@@ -1305,6 +1306,8 @@ def _is_generic_owner(owner: str) -> bool:
         return True
     if owner in ORG_OWNER_TERMS:
         return False
+    if is_pseudo_person_name(owner):
+        return True
     if _looks_like_due_time_phrase(owner):
         return True
     generic_words = {
@@ -2646,6 +2649,10 @@ def _clean_addressed_owner(owner: str) -> str:
 def _is_invalid_addressed_owner(owner: str) -> bool:
     value = str(owner or "").strip()
     if not value:
+        return True
+    if value in ORG_OWNER_TERMS:
+        return False
+    if is_pseudo_person_name(value):
         return True
     if _is_generic_speaker_label(value) or _is_generic_owner(value):
         return True

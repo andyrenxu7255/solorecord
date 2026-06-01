@@ -14,6 +14,7 @@ from .llm_adapters import (
     summarize_with_llm,
 )
 from .owner_terms import ORG_OWNER_TERMS
+from .person_names import is_pseudo_person_name
 from .publisher import publish_meeting
 from .repository import build_quality_report
 from .search_index import index_meeting
@@ -2736,37 +2737,7 @@ def _valid_role_note_subject(subject: str) -> bool:
 
 
 def _is_pseudo_role_subject(value: str) -> bool:
-    pseudo_subjects = {
-        "给",
-        "包括",
-        "比如",
-        "如果",
-        "还是",
-        "不是",
-        "假如",
-        "其实",
-        "就是",
-        "然后",
-        "还有就是",
-        "到时候",
-        "到时候大家",
-        "第三个呢是",
-        "在我底下",
-        "对我",
-        "你肯定能",
-        "就刚刚或者",
-        "就等于",
-        "呃事实上就等于",
-    }
-    if value in pseudo_subjects:
-        return True
-    if len(value) == 1 and value not in {"法", "销"}:
-        return True
-    if re.search(r"(比如|如果|假如|还是|不是|就是|包括|到时候|然后|其实|刚刚|等于|这边|那个)", value):
-        return True
-    if re.search(r"(我|你|他|她|它|咱|大家)", value) and len(value) <= 6:
-        return True
-    return False
+    return is_pseudo_person_name(value)
 
 
 def _substantive_summary_segments(segments: list[dict]) -> list[dict]:
@@ -2919,9 +2890,10 @@ def _prefer_suggested_action_owners(actions: list[dict], segments: list[dict]) -
         "",
     )
     suggestions = {
-        str(item.get("id") or ""): str(item.get("suggested_owner") or "").strip()
+        str(item.get("id") or ""): suggestion
         for item in report.get("actionEvidence") or []
-        if str(item.get("suggested_owner") or "").strip()
+        for suggestion in [str(item.get("suggested_owner") or "").strip()]
+        if suggestion and not _is_invalid_owner_candidate(suggestion)
     }
     if not suggestions:
         return actions
@@ -2930,8 +2902,9 @@ def _prefer_suggested_action_owners(actions: list[dict], segments: list[dict]) -
         item = dict(action)
         action_id = str(item.get("id") or f"act_probe_{index + 1}")
         suggestion = suggestions.get(action_id)
+        invalid_owner = _is_invalid_owner_candidate(str(item.get("owner") or ""))
         if suggestion and (
-            _is_generic_owner(str(item.get("owner") or ""))
+            invalid_owner
             or _owner_overrides_context(
                 str(item.get("owner") or ""),
                 str(item.get("task") or ""),
@@ -2939,6 +2912,8 @@ def _prefer_suggested_action_owners(actions: list[dict], segments: list[dict]) -
             )
         ):
             item["owner"] = suggestion
+        elif invalid_owner:
+            item["owner"] = "待确认"
         updated.append(item)
     return updated
 
@@ -3092,18 +3067,23 @@ def _normalize_action_owners(actions: list[dict], segments: list[dict]) -> list[
         item = dict(action)
         owner = str(item.get("owner") or "").strip()
         task = str(item.get("task") or "")
-        generic_owner = _is_generic_owner(owner)
+        invalid_owner = _is_invalid_owner_candidate(owner)
         replacement = ""
         if _is_pronoun_owner(owner):
             replacement = _infer_owner_from_pronoun(owner, task, segments)
-        if not replacement and (generic_owner or _owner_overrides_context(owner, task, context_hints)):
-            query = task if generic_owner else " ".join(part for part in [owner, task] if part)
-            replacement = _infer_owner_from_context(query, context_hints, excluded_owner=owner)
+        if not replacement and (invalid_owner or _owner_overrides_context(owner, task, context_hints)):
+            query = task if invalid_owner else " ".join(part for part in [owner, task] if part)
+            replacement = _infer_owner_from_context(
+                query,
+                context_hints,
+                excluded_owner=owner,
+                require_strong=is_pseudo_person_name(owner),
+            )
             if not replacement:
                 replacement = _infer_owner_from_task(query, owner_aliases)
         if replacement:
             item["owner"] = replacement
-        elif _is_pronoun_owner(owner):
+        elif invalid_owner:
             item["owner"] = "待确认"
         item = _enrich_action_collaborators(item, segments)
         item["status"] = _normalize_action_status(item.get("status"))
@@ -3486,6 +3466,8 @@ def _infer_owner_from_context(
     task: str,
     context_hints: dict[str, dict],
     excluded_owner: str = "",
+    *,
+    require_strong: bool = False,
 ) -> str:
     task_tokens = set(_context_tokens(task))
     if not task_tokens:
@@ -3520,10 +3502,12 @@ def _infer_owner_from_context(
             continue
         mentions = [str(item) for item in hint.get("mentions") or [] if str(item)]
         mention_overlap = _best_context_overlap(task_tokens, mentions)
+        has_assignment = any(_has_owner_assignment(mention, name) for mention in mentions)
+        if require_strong and not has_assignment and not _has_strong_owner_overlap(overlap, mention_overlap):
+            continue
         score = mention_overlap * 5 + int(hint.get("score") or 0)
         if mention_overlap < len(overlap):
             score += min(len(overlap) - mention_overlap, 4)
-        has_assignment = any(_has_owner_assignment(mention, name) for mention in mentions)
         if has_assignment:
             score += 18
             if name in ORG_OWNER_TERMS:
@@ -3536,7 +3520,18 @@ def _infer_owner_from_context(
         if score > best_score:
             best_name = name
             best_score = score
-    return best_name if best_score >= 6 else ""
+    return best_name if best_score >= (10 if require_strong else 6) else ""
+
+
+def _has_strong_owner_overlap(overlap: set[str], mention_overlap: int) -> bool:
+    if mention_overlap >= 2:
+        return True
+    meaningful = [
+        token
+        for token in overlap
+        if len(token) >= 3 or re.fullmatch(r"[A-Za-z][A-Za-z0-9_+-]{1,24}", token)
+    ]
+    return len(meaningful) >= 2
 
 
 def _best_context_overlap(task_tokens: set[str], mentions: list[str]) -> int:
@@ -3691,6 +3686,8 @@ def _is_generic_owner(owner: str) -> bool:
         return True
     if owner in ORG_OWNER_TERMS:
         return False
+    if is_pseudo_person_name(owner):
+        return True
     if _looks_like_due_time_phrase(owner) or _looks_like_rule_topic_phrase(owner):
         return True
     generic_words = {
@@ -3709,6 +3706,10 @@ def _is_generic_owner(owner: str) -> bool:
 def _is_invalid_owner_candidate(owner: str) -> bool:
     value = str(owner or "").strip()
     if not value:
+        return True
+    if value in ORG_OWNER_TERMS:
+        return False
+    if is_pseudo_person_name(value):
         return True
     if re.match(r"^(?:等|待|等待|等到|等着|找|通知|安排|让|叫|拉上|交给)", value):
         return True

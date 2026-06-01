@@ -2976,6 +2976,40 @@ def test_action_owner_normalization_replaces_pronoun_owner_from_context() -> Non
     assert normalized[1]["owner"] == "待确认"
 
 
+def test_action_owner_normalization_rejects_pseudo_asr_owner_names() -> None:
+    import solorecord_server.processing as processing
+
+    actions = [
+        {"owner": "给", "task": "清理 demo 数据并进行全流程测试", "due": "", "status": "open"},
+        {"owner": "包括", "task": "优化 UI 风格和后台管理页面", "due": "", "status": "open"},
+        {"owner": "对我", "task": "准备更通俗的样本数据", "due": "", "status": "open"},
+        {"owner": "翼天", "task": "补充错误样例和自动测试覆盖", "due": "明天", "status": "open"},
+    ]
+    segments = [
+        {
+            "display_name": "给",
+            "text": "给你做一下可用吗？",
+        },
+        {
+            "display_name": "包括",
+            "text": "包括登录界面、图表颜色和后台管理页面这些都要改。",
+        },
+        {
+            "display_name": "对我",
+            "text": "对我明白这意思吧。",
+        },
+        {
+            "display_name": "翼天",
+            "text": "我这边补充错误样例和自动测试覆盖，明天给大家看结果。",
+        },
+    ]
+
+    normalized = processing._normalize_action_owners(actions, segments)
+
+    assert [item["owner"] for item in normalized[:3]] == ["待确认", "待确认", "待确认"]
+    assert normalized[3]["owner"] == "翼天"
+
+
 def test_action_owner_normalization_uses_department_owner_context() -> None:
     import solorecord_server.processing as processing
 
@@ -3950,6 +3984,56 @@ def test_quality_report_does_not_suggest_topic_phrase_owner(
     assert evidence["act_topic_phrase_owner"]["status"] == "weak_owner"
     assert evidence["act_topic_phrase_owner"]["suggested_owner"] == ""
     assert evidence["act_topic_phrase_owner"]["suggested_owner_evidence"] == []
+
+
+def test_quality_report_rejects_pseudo_action_owner_and_suggestion(
+    tmp_path: Path,
+) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post(
+        "/api/web/meetings",
+        json={"title": "假负责人清理"},
+        headers=headers,
+    )
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_pseudo_owner_1', ?, 1, 1, 'SPK_bad_1', '给', 0, 10000,
+             '给你做一下可用吗？', 0.8, '["semantic_final"]', 'now'),
+            ('seg_pseudo_owner_2', ?, 1, 1, 'SPK_bad_2', '包括', 10000, 20000,
+             '包括登录界面、图表颜色和后台管理页面都要优化。', 0.8, '["semantic_final"]', 'now'),
+            ('seg_pseudo_owner_3', ?, 1, 1, 'MANUAL_yitian', '翼天', 20000, 30000,
+             '我这边补充错误样例和自动测试覆盖，明天给大家看结果。', 0.9, '["semantic_final"]', 'now')
+            """,
+            (meeting_id, meeting_id, meeting_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO action_items
+            (id, meeting_id, owner, task, due, status, created_at, updated_at)
+            VALUES
+            ('act_pseudo_owner', ?, '给', '优化 UI 风格和后台管理页面', '', 'open', 'now', 'now')
+            """,
+            (meeting_id,),
+        )
+
+    report = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()[
+        "qualityReport"
+    ]
+    evidence = {item["id"]: item for item in report["actionEvidence"]}
+
+    assert evidence["act_pseudo_owner"]["status"] == "weak_owner"
+    assert evidence["act_pseudo_owner"]["suggested_owner"] == ""
+    assert report["metrics"]["generic_owner_count"] == 1
+    assert report["metrics"]["weak_action_owner_count"] == 0
 
 
 def test_quality_evidence_contains_source_id_for_multisource_navigation(tmp_path: Path) -> None:
