@@ -1,9 +1,20 @@
 const TRANSCRIPT_INITIAL_ROWS = 80;
 const TRANSCRIPT_LOAD_MORE_ROWS = 80;
 
+function readStoredUser() {
+  try {
+    return JSON.parse(localStorage.getItem("solo_user") || "null");
+  } catch (error) {
+    localStorage.removeItem("solo_user");
+    return null;
+  }
+}
+
+const storedToken = localStorage.getItem("solo_token") || "";
+
 const state = {
-  token: localStorage.getItem("solo_token") || "",
-  user: JSON.parse(localStorage.getItem("solo_user") || "null"),
+  token: storedToken,
+  user: storedToken ? readStoredUser() : null,
   meetings: [],
   joinableMeetings: [],
   selectedMeetingId: "",
@@ -140,14 +151,15 @@ function requireLoginForAction(message = "请先登录后再继续") {
 
 function restoreSessionFromStorage() {
   const token = localStorage.getItem("solo_token") || "";
-  const userText = localStorage.getItem("solo_user") || "null";
-  if (!token) return false;
-  state.token = token;
-  try {
-    state.user = JSON.parse(userText);
-  } catch (error) {
+  if (!token) {
+    localStorage.removeItem("solo_user");
+    state.token = "";
     state.user = null;
+    renderAccount();
+    return false;
   }
+  state.token = token;
+  state.user = readStoredUser();
   renderAccount();
   return true;
 }
@@ -234,13 +246,14 @@ async function demoLogin() {
 }
 
 function renderAccount() {
-  $("#accountName").textContent = state.user ? `${state.user.display_name} (${state.user.role})` : "未登录";
-  $("#loginButton").textContent = state.user ? "切换账号" : "统一登录";
+  const loggedIn = Boolean(state.token && state.user);
+  $("#accountName").textContent = loggedIn ? `${state.user.display_name} (${state.user.role})` : "未登录";
+  $("#loginButton").textContent = loggedIn ? "切换账号" : "统一登录";
   const desktopStatus = $("#desktopAccountStatus");
   const desktopHint = $("#desktopAccountHint");
   if (desktopStatus && desktopHint) {
-    desktopStatus.textContent = state.user ? `${state.user.display_name} (${state.user.role})` : "未登录";
-    desktopHint.textContent = state.user ? "可以录音、同步和查看会议记录。" : "录音和查看记录需要先登录。";
+    desktopStatus.textContent = loggedIn ? `${state.user.display_name} (${state.user.role})` : "未登录";
+    desktopHint.textContent = loggedIn ? "可以录音、同步和查看会议记录。" : "录音和查看记录需要先登录。";
   }
 }
 
@@ -3506,6 +3519,10 @@ function bindEvents() {
 async function init() {
   configureClientMode();
   bindEvents();
+  if (!state.token && state.user) {
+    localStorage.removeItem("solo_user");
+    state.user = null;
+  }
   renderAccount();
   if (state.token) {
     try {

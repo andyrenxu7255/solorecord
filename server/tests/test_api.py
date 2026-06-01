@@ -6117,6 +6117,31 @@ def test_web_release_page_refreshes_after_login_and_distinguishes_errors() -> No
     assert load_release.count("请先登录后查看发布包。") == 1
 
 
+def test_web_account_state_requires_token_not_stale_user_cache() -> None:
+    app_js = (Path(__file__).parents[1] / "static" / "app.js").read_text(
+        encoding="utf-8"
+    )
+    state_start = app_js.index("const storedToken =")
+    state_end = app_js.index("const PLATFORM_LABELS", state_start)
+    state_block = app_js[state_start:state_end]
+    restore_start = app_js.index("function restoreSessionFromStorage()")
+    restore_end = app_js.index("function activeViewName()", restore_start)
+    restore_block = app_js[restore_start:restore_end]
+    account_start = app_js.index("function renderAccount()")
+    account_end = app_js.index("function ssoLogin()", account_start)
+    account_block = app_js[account_start:account_end]
+    init_start = app_js.index("async function init()")
+    init_block = app_js[init_start:]
+
+    assert "user: storedToken ? readStoredUser() : null" in state_block
+    assert "localStorage.removeItem(\"solo_user\")" in restore_block
+    assert "state.token = \"\"" in restore_block
+    assert "state.user = null" in restore_block
+    assert "const loggedIn = Boolean(state.token && state.user)" in account_block
+    assert "if (!state.token && state.user)" in init_block
+    assert "localStorage.removeItem(\"solo_user\")" in init_block
+
+
 def test_release_download_button_fetches_fresh_signed_url() -> None:
     app_js = (Path(__file__).parents[1] / "static" / "app.js").read_text(
         encoding="utf-8"
