@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import hmac
 import json
+import mimetypes
 import sqlite3
 from pathlib import Path
 import re
@@ -461,7 +462,7 @@ def download_audio_segment(meeting_id: str, segment_no: int, user: CurrentUser) 
     return FileResponse(
         path,
         filename=row["file_name"] or f"part_{segment_no:04d}.m4a",
-        media_type=row["mime_type"] or "application/octet-stream",
+        media_type=_audio_media_type(row["mime_type"], row["file_name"], path),
     )
 
 
@@ -1582,6 +1583,27 @@ def _segment_no_for_source_upload(
         (meeting_id,),
     ).fetchone()
     return max(1, int(row["next_no"] if row else 1))
+
+
+def _audio_media_type(saved_type: str | None, file_name: str | None, path: Path) -> str:
+    media_type = str(saved_type or "").split(";", 1)[0].strip().lower()
+    if media_type.startswith("audio/"):
+        return media_type
+    inferred = mimetypes.guess_type(str(file_name or path.name))[0] or ""
+    if inferred.startswith("audio/"):
+        return inferred
+    suffix = path.suffix.lower()
+    return {
+        ".m4a": "audio/mp4",
+        ".mp4": "audio/mp4",
+        ".aac": "audio/aac",
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".webm": "audio/webm",
+        ".ogg": "audio/ogg",
+        ".opus": "audio/ogg",
+        ".flac": "audio/flac",
+    }.get(suffix, media_type or "application/octet-stream")
 
 
 def _try_index(meeting_id: str) -> None:

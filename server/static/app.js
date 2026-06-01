@@ -93,6 +93,47 @@ function httpError(status, text) {
   return error;
 }
 
+function isPlayableAudioResponse(response, url = "") {
+  const contentType = String(response.headers.get("content-type") || "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+  if (contentType.startsWith("audio/")) return true;
+  if (["video/mp4", "video/x-m4v", "application/mp4", "application/octet-stream"].includes(contentType)) {
+    return true;
+  }
+  if (contentType.includes("json") || contentType.startsWith("text/")) return false;
+  const path = (() => {
+    try {
+      return new URL(url, window.location.href).pathname.toLowerCase();
+    } catch (error) {
+      return String(url || "").toLowerCase();
+    }
+  })();
+  return /\.(m4a|mp3|wav|webm|ogg|opus|aac|flac)$/.test(path);
+}
+
+function audioMimeTypeFromUrl(url, fallback = "") {
+  const mediaType = String(fallback || "").split(";")[0].trim().toLowerCase();
+  if (mediaType.startsWith("audio/")) return mediaType;
+  const path = (() => {
+    try {
+      return new URL(url, window.location.href).pathname.toLowerCase();
+    } catch (error) {
+      return String(url || "").toLowerCase();
+    }
+  })();
+  if (path.endsWith(".wav")) return "audio/wav";
+  if (path.endsWith(".mp3")) return "audio/mpeg";
+  if (path.endsWith(".webm")) return "audio/webm";
+  if (path.endsWith(".ogg") || path.endsWith(".opus")) return "audio/ogg";
+  if (path.endsWith(".aac")) return "audio/aac";
+  if (path.endsWith(".flac")) return "audio/flac";
+  if (path.endsWith(".m4a") || path.endsWith(".mp4")) return "audio/mp4";
+  if (["video/mp4", "application/mp4", "application/octet-stream"].includes(mediaType)) return "audio/mp4";
+  return mediaType || "application/octet-stream";
+}
+
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (!(options.body instanceof FormData)) {
@@ -610,7 +651,7 @@ function renderMeetingDetail(data, transcriptSegments, options = {}) {
   const statusHint = meetingStatusHint(meeting.status, audioSegments, transcriptSegments);
   const speakerSamples = buildSpeakerSamples(transcriptSegments, audioSegments, meeting.id);
   const speakerStats = (transcriptLoading || transcriptUnavailable) && !transcriptSegments.length
-    ? buildSpeakerStatsFromSpeakers(data.speakers || [], actions)
+    ? []
     : buildSpeakerStats(transcriptSegments, actions, speakerSamples);
   const segmentInsights = buildSegmentInsights(transcriptSegments, actions, audioSegments);
   const actionRiskMap = buildActionRiskMap(qualityReport);
@@ -666,10 +707,10 @@ function renderMeetingDetail(data, transcriptSegments, options = {}) {
           <div class="summary-box priority-card priority-people">
             <div class="section-row">
               <h3>人物校对</h3>
-              <span class="hint">先确认发言人，后续纪要和待办才可信</span>
+              <span class="hint">只显示有 5-15 秒可试听声音样本的人物</span>
             </div>
             <div class="people-grid">
-              ${speakerStats.map(renderPersonCard).join("") || (transcriptLoading ? renderDeferredPanel("正在加载人物校对", "人物声音样本会在转写时间线加载后显示。") : "<p class='hint'>暂无人物信息。转写完成后可在这里统一校对人名。</p>")}
+              ${speakerStats.map(renderPersonCard).join("") || (transcriptLoading ? renderDeferredPanel("正在加载人物校对", "人物声音样本会在转写时间线加载后显示。") : "<p class='hint'>暂无可试听人物。缺少原始音频、系统复核行或明显不是人名的标签不会出现在这里，请在整体转录里校对上下文。</p>")}
             </div>
           </div>
           <div class="summary-box priority-card priority-summary">
@@ -692,6 +733,30 @@ function renderMeetingDetail(data, transcriptSegments, options = {}) {
             </div>
             <button id="saveActions" class="button primary">保存待办</button>
           </div>
+        </section>
+        <section id="transcriptWorkspace" class="transcript-workspace">
+          <div class="section-row">
+            <div>
+              <h3>整体转录</h3>
+              <p class="hint">${transcriptLoading ? "正在读取转写时间线，大会议可能需要多等几秒。" : `当前筛选 ${transcriptResultLabel}。按时间、人和转译内容连续阅读，文本可直接校对。`}</p>
+            </div>
+            <div class="detail-actions">
+              <select id="transcriptFilter" class="input compact-input" ${transcriptDisabled ? "disabled" : ""}>
+                ${availableFilters.map((filter) => `
+                  <option value="${escapeAttr(filter.value)}" ${filter.value === state.selectedTranscriptFilter ? "selected" : ""}>
+                    ${escapeHtml(filter.label)}
+                  </option>
+                `).join("")}
+              </select>
+              <button id="expandTranscript" class="button secondary" ${transcriptDisabled ? "disabled" : ""}>展开阅读</button>
+              <button id="copyTranscript" class="button secondary" ${transcriptDisabled ? "disabled" : ""}>复制转写</button>
+            </div>
+          </div>
+          <div id="transcriptList" class="transcript-list transcript-dialogue-list">
+            ${transcriptUnavailable ? renderUnavailablePanel("转写未加载成功", "为避免误删服务端转写，当前禁止保存空时间线。请重新打开会议或刷新页面。") : (transcriptLoading ? renderTranscriptSkeleton(transcriptCount) : (visibleTranscriptSegments.map((segment) => renderTranscriptRow(segment, speakerEvidenceMap)).join("") || "<p class='hint'>当前筛选下暂无转写</p>"))}
+          </div>
+          ${hiddenTranscriptCount ? `<button id="loadMoreTranscript" class="button secondary transcript-more">继续显示 ${Math.min(TRANSCRIPT_LOAD_MORE_ROWS, hiddenTranscriptCount)} 段</button>` : ""}
+          <button id="saveTranscript" class="button primary" ${transcriptDisabled ? "disabled" : ""}>保存转写修改</button>
         </section>
         <section class="evidence-workspace" aria-label="证据与回听工作区">
           <div class="summary-box">
@@ -733,30 +798,6 @@ function renderMeetingDetail(data, transcriptSegments, options = {}) {
               ${audioSegments.map(renderAudioSegment).join("") || "<p class='hint'>暂无音频</p>"}
             </div>
           </div>
-          <section id="transcriptWorkspace" class="transcript-workspace">
-            <div class="section-row">
-              <div>
-                <h3>转写时间线</h3>
-                <p class="hint">${transcriptLoading ? "正在读取转写时间线，大会议可能需要多等几秒。" : `当前筛选 ${transcriptResultLabel}。长段可直接上下滚动；如果一段里有多人说话，先拆分，再把拆出的段落设为新发言人。`}</p>
-              </div>
-              <div class="detail-actions">
-                <select id="transcriptFilter" class="input compact-input" ${transcriptDisabled ? "disabled" : ""}>
-                  ${availableFilters.map((filter) => `
-                    <option value="${escapeAttr(filter.value)}" ${filter.value === state.selectedTranscriptFilter ? "selected" : ""}>
-                      ${escapeHtml(filter.label)}
-                    </option>
-                  `).join("")}
-                </select>
-                <button id="expandTranscript" class="button secondary" ${transcriptDisabled ? "disabled" : ""}>展开阅读</button>
-                <button id="copyTranscript" class="button secondary" ${transcriptDisabled ? "disabled" : ""}>复制转写</button>
-              </div>
-            </div>
-            <div id="transcriptList" class="transcript-list">
-              ${transcriptUnavailable ? renderUnavailablePanel("转写未加载成功", "为避免误删服务端转写，当前禁止保存空时间线。请重新打开会议或刷新页面。") : (transcriptLoading ? renderTranscriptSkeleton(transcriptCount) : (visibleTranscriptSegments.map((segment) => renderTranscriptRow(segment, speakerEvidenceMap)).join("") || "<p class='hint'>当前筛选下暂无转写</p>"))}
-            </div>
-            ${hiddenTranscriptCount ? `<button id="loadMoreTranscript" class="button secondary transcript-more">继续显示 ${Math.min(TRANSCRIPT_LOAD_MORE_ROWS, hiddenTranscriptCount)} 段</button>` : ""}
-            <button id="saveTranscript" class="button primary" ${transcriptDisabled ? "disabled" : ""}>保存转写修改</button>
-          </section>
           <div class="summary-box">
             <h3>最近任务</h3>
             <div class="job-list">
@@ -1649,19 +1690,22 @@ function renderTranscriptRow(segment, speakerEvidenceMap = new Map()) {
       data-source-id="${escapeAttr(segment.source_id || "")}"
       data-source-segment="${escapeAttr(segment.source_segment_no || "")}"
       data-review-placeholder="${reviewPlaceholder ? "true" : "false"}">
-      <div>
+      <div class="transcript-meta">
         <b>${formatTime(segment.start_ms)}</b>
-        <span class="hint">${source}</span>
+        <span>${formatTime(segment.end_ms)}</span>
+        <small>${escapeHtml(source)}</small>
+      </div>
+      <div class="transcript-speaker-cell">
+        <input class="speaker-name transcript-speaker-input" aria-label="发言人" data-speaker="${escapeAttr(segment.speaker_id)}" value="${escapeAttr(segment.display_name || segment.speaker_id)}">
+        <input class="speaker-id" type="hidden" value="${escapeAttr(segment.speaker_id)}">
         ${badges.length ? `<div class="badge-line">${badges.map((badge) => `<span class="mini-badge ${reviewBadgeClass(badge)}">${escapeHtml(badge)}</span>`).join("")}</div>` : ""}
       </div>
-      <div>
-        <input class="speaker-name" data-speaker="${escapeAttr(segment.speaker_id)}" value="${escapeAttr(segment.display_name || segment.speaker_id)}">
-        <input class="speaker-id" type="hidden" value="${escapeAttr(segment.speaker_id)}">
+      <div class="transcript-text-cell">
+        <textarea class="input segment-text" rows="${transcriptTextRows(segment.text || "")}">${escapeHtml(segment.text || "")}</textarea>
+        <input class="start-ms" type="hidden" value="${segment.start_ms || 0}">
+        <input class="end-ms" type="hidden" value="${segment.end_ms || 0}">
+        ${renderSpeakerEvidenceHint(evidence)}
       </div>
-      <textarea class="input segment-text" rows="4">${escapeHtml(segment.text || "")}</textarea>
-      <input class="start-ms" type="hidden" value="${segment.start_ms || 0}">
-      <input class="end-ms" type="hidden" value="${segment.end_ms || 0}">
-      ${renderSpeakerEvidenceHint(evidence)}
       <div class="transcript-tools">
         <button type="button" class="button secondary split-segment">拆分段落</button>
         <button type="button" class="button secondary auto-split-speakers">按人名拆分</button>
@@ -1669,6 +1713,13 @@ function renderTranscriptRow(segment, speakerEvidenceMap = new Map()) {
       </div>
     </div>
   `;
+}
+
+function transcriptTextRows(text) {
+  const length = String(text || "").trim().length;
+  if (length > 260) return 5;
+  if (length > 150) return 4;
+  return 3;
 }
 
 function buildSpeakerEvidenceMap(report) {
@@ -2245,10 +2296,16 @@ async function loadAuthorizedAudio(button) {
       const text = await response.text();
       throw httpError(response.status, text);
     }
+    if (!isPlayableAudioResponse(response, url)) {
+      throw new Error("服务器返回的不是音频文件");
+    }
     const blob = await response.blob();
+    const playableBlob = new Blob([blob], {
+      type: audioMimeTypeFromUrl(url, response.headers.get("content-type") || blob.type),
+    });
     const audio = document.createElement("audio");
     audio.controls = true;
-    audio.src = URL.createObjectURL(blob);
+    audio.src = URL.createObjectURL(playableBlob);
     button.replaceWith(audio);
   } catch (error) {
     const message = isAuthError(error)
@@ -2286,11 +2343,13 @@ async function playSpeakerSample(button) {
       const text = await response.text();
       throw httpError(response.status, text);
     }
-    const contentType = response.headers.get("content-type") || "";
-    if (!contentType.startsWith("audio/") && !contentType.includes("octet-stream")) {
+    if (!isPlayableAudioResponse(response, url)) {
       throw new Error("服务器返回的不是音频文件");
     }
-    const objectUrl = URL.createObjectURL(await response.blob());
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(new Blob([blob], {
+      type: audioMimeTypeFromUrl(url, response.headers.get("content-type") || blob.type),
+    }));
     audio.dataset.objectUrl = objectUrl;
     audio.dataset.sampleEnd = String(end);
     audio.src = objectUrl;
@@ -2319,29 +2378,88 @@ async function playSpeakerSample(button) {
 function seekAndPlayAudio(audio, start, end) {
   const safeStart = Math.max(0, Number(start || 0));
   const safeEnd = Math.max(safeStart + 1, Number(end || safeStart + 10));
-  audio.ontimeupdate = () => {
-    if (audio.currentTime >= safeEnd) {
-      audio.pause();
-      audio.currentTime = safeStart;
-    }
-  };
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      audio.removeEventListener("loadedmetadata", play);
+      audio.removeEventListener("canplay", play);
+      audio.removeEventListener("error", fail);
+    };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const fail = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error("浏览器无法解码这段音频，请尝试下载原始音频或让服务器转码为 m4a/mp3。"));
+    };
     const play = () => {
+      if (settled) return;
       try {
         audio.currentTime = safeStart;
       } catch (error) {
         // Some mobile browsers reject seeking before metadata is complete.
       }
-      audio.play().catch(() => {});
-      resolve();
+      const playback = audio.play();
+      if (playback?.then) {
+        playback.then(finish).catch((error) => {
+          if (error?.name === "NotAllowedError") {
+            finish();
+            return;
+          }
+          fail();
+        });
+      } else {
+        finish();
+      }
     };
+    audio.ontimeupdate = () => {
+      if (audio.currentTime >= safeEnd) {
+        audio.pause();
+        audio.currentTime = safeStart;
+      }
+    };
+    audio.addEventListener("error", fail, { once: true });
     if (audio.readyState >= 1) {
       play();
       return;
     }
     audio.addEventListener("loadedmetadata", play, { once: true });
+    audio.addEventListener("canplay", play, { once: true });
     audio.load();
   });
+}
+
+function readAudioDuration(file) {
+  return new Promise((resolve) => {
+    const audio = document.createElement("audio");
+    const objectUrl = URL.createObjectURL(file);
+    let settled = false;
+    const done = (durationMs = 0) => {
+      if (settled) return;
+      settled = true;
+      URL.revokeObjectURL(objectUrl);
+      resolve(durationMs);
+    };
+    audio.preload = "metadata";
+    audio.onloadedmetadata = () => {
+      const durationMs = Math.round(Number(audio.duration || 0) * 1000);
+      done(Number.isFinite(durationMs) ? durationMs : 0);
+    };
+    audio.onerror = () => done(0);
+    window.setTimeout(() => done(0), 3500);
+    audio.src = objectUrl;
+    audio.load();
+  });
+}
+
+async function audioDurationForUpload(file) {
+  const durationMs = await readAudioDuration(file);
+  return Math.max(1000, durationMs || state.recorder.segmentMs || 5 * 60 * 1000);
 }
 
 async function createAndUpload() {
@@ -2383,17 +2501,19 @@ async function createAndUpload() {
             max_sources: 1,
             source_label: sourceLabel,
           }),
-        });
+    });
     meetingId = meeting.meeting.id;
     const sourceId = meeting.joinedSource?.source_id || meeting.recordingSources?.[0]?.source_id || "primary";
+    button.textContent = "正在读取音频时长...";
+    const durationMs = await audioDurationForUpload(file);
     const form = new FormData();
     form.append("segment_no", "1");
     form.append("source_id", sourceId);
     form.append("source_label", sourceLabel);
     form.append("source_segment_no", "1");
     form.append("start_ms", "0");
-    form.append("end_ms", "180000");
-    form.append("duration_ms", "180000");
+    form.append("end_ms", String(durationMs));
+    form.append("duration_ms", String(durationMs));
     form.append("file", file);
     button.textContent = "正在上传音频...";
     const upload = await uploadWithProgress(
@@ -2999,10 +3119,16 @@ function meetingStatusHint(status, audioSegments, transcriptSegments) {
 
 function buildSpeakerStats(segments, actions = [], speakerSamples = new Map()) {
   const stats = new Map();
-  const substantiveSegments = segments.filter((segment) => !isPlaceholderTranscriptFlags(parseFlags(segment.flags)));
+  const substantiveSegments = segments.filter((segment) => {
+    const name = segment.display_name || segment.speaker_id || "";
+    return !isPlaceholderTranscriptFlags(parseFlags(segment.flags))
+      && !isNonPersonSpeakerName(name)
+      && (speakerSamples.has(segment.speaker_id) || speakerSamples.has(segment.display_name));
+  });
   substantiveSegments.forEach((segment) => {
     const id = segment.speaker_id || segment.display_name || "speaker";
     const name = segment.display_name || segment.speaker_id || "发言人";
+    if (isNonPersonSpeakerName(name)) return;
     const key = speakerStatsKey(id, name);
     const item = stats.get(key) || {
       id,
@@ -3020,68 +3146,20 @@ function buildSpeakerStats(segments, actions = [], speakerSamples = new Map()) {
     item.durationMs += Math.max(0, Number(segment.end_ms || 0) - Number(segment.start_ms || 0));
     if (segment.display_name && segment.display_name !== id) item.aliases.push(id);
     item.sample = item.sample || speakerSamples.get(id) || speakerSamples.get(name) || null;
-    stats.set(key, item);
+    if (item.sample) stats.set(key, item);
   });
   actions.forEach((action) => {
     const owner = String(action.owner || "").trim();
-    if (!owner) return;
+    if (!owner || isNonPersonSpeakerName(owner)) return;
     const match = Array.from(stats.values()).find((item) => item.name === owner || item.id === owner);
     if (match) {
       match.actionCount += 1;
-    } else if (owner !== "待确认") {
-      stats.set(`owner:${owner}`, {
-        id: `owner:${owner}`,
-        name: owner,
-        count: 0,
-        durationMs: 0,
-        actionCount: 1,
-        aliases: [],
-        speakerIds: [`owner:${owner}`],
-        sample: null,
-      });
     }
   });
   return Array.from(stats.values())
+    .filter((item) => item.sample && !isNonPersonSpeakerName(item.name))
     .map((item) => ({ ...item, aliases: Array.from(new Set(item.aliases.filter(Boolean))) }))
     .sort((left, right) => right.durationMs - left.durationMs);
-}
-
-function buildSpeakerStatsFromSpeakers(speakers = [], actions = []) {
-  const stats = new Map();
-  speakers.forEach((speaker) => {
-    const id = speaker.speaker_id || speaker.id || speaker.display_name || "speaker";
-    const name = speaker.display_name || speaker.speaker_id || "发言人";
-    stats.set(speakerStatsKey(id, name), {
-      id,
-      name,
-      count: 0,
-      durationMs: 0,
-      actionCount: 0,
-      aliases: id && id !== name ? [id] : [],
-      speakerIds: [id].filter(Boolean),
-      sample: null,
-    });
-  });
-  actions.forEach((action) => {
-    const owner = String(action.owner || "").trim();
-    if (!owner || owner === "待确认") return;
-    const match = Array.from(stats.values()).find((item) => item.name === owner || item.id === owner);
-    if (match) {
-      match.actionCount += 1;
-    } else {
-      stats.set(`owner:${owner}`, {
-        id: `owner:${owner}`,
-        name: owner,
-        count: 0,
-        durationMs: 0,
-        actionCount: 1,
-        aliases: [],
-        speakerIds: [`owner:${owner}`],
-        sample: null,
-      });
-    }
-  });
-  return Array.from(stats.values()).sort((left, right) => right.actionCount - left.actionCount);
 }
 
 function speakerStatsKey(id, name) {
@@ -3096,11 +3174,31 @@ function isGenericSpeakerLabel(name) {
   return !value || value.startsWith("发言人") || value.toLowerCase().startsWith("speaker");
 }
 
+function isNonPersonSpeakerName(name) {
+  const value = String(name || "").replace(/\s+/g, "").trim();
+  if (!value) return true;
+  if (/^owner:/.test(value)) return true;
+  if (value.length === 1 && !["法", "销"].includes(value)) return true;
+  if (/(比如|如果|假如|还是|不是|但是|就是|包括|到时候|然后|其实|刚刚|等于|这边|那个|这个|要不|开始|点击)/.test(value)) return true;
+  if (/(我|你|他|她|它|咱|大家)/.test(value) && value.length <= 6) return true;
+  const pseudoNames = new Set([
+    "给", "包括", "比如", "如果", "还是", "不是", "但是", "要不", "假如", "其实", "就是",
+    "这个是", "一般用户", "开始", "点击", "然后", "还有就是", "到时候", "到时候大家",
+    "第三个呢是", "在我底下", "对我", "嗯让他", "这个是用", "清理", "我大概",
+    "你肯定能", "就刚刚或者", "就等于", "呃事实上就等于",
+  ]);
+  if (pseudoNames.has(value)) return true;
+  if (["模型", "数据", "系统", "客户", "问题", "功能", "页面", "版本"].includes(value)) return true;
+  return false;
+}
+
 function buildSpeakerSamples(segments, audioSegments, meetingId) {
   const samples = new Map();
   const substantiveSegments = segments.filter((segment) => {
     const flags = parseFlags(segment.flags);
-    return !isPlaceholderTranscriptFlags(flags) && (segment.speaker_id || segment.display_name);
+    return !isPlaceholderTranscriptFlags(flags)
+      && !isNonPersonSpeakerName(segment.display_name || segment.speaker_id)
+      && (segment.speaker_id || segment.display_name);
   });
   substantiveSegments.forEach((segment) => {
     const audio = findAudioForTranscriptSegment(segment, audioSegments);
@@ -3144,7 +3242,7 @@ function buildSpeakerSample(segment, audio, meetingId) {
   const segmentEndMs = Math.max(segmentStartMs + 1000, Number(segment.end_ms || segmentStartMs + 10000));
   const availableEndMs = audioEndMs > audioStartMs ? Math.min(segmentEndMs, audioEndMs) : segmentEndMs;
   const availableMs = Math.max(1000, availableEndMs - segmentStartMs);
-  const targetMs = Math.min(20000, Math.max(5000, availableMs));
+  const targetMs = Math.min(15000, Math.max(5000, availableMs));
   const sampleEndMs = audioEndMs > audioStartMs
     ? Math.min(audioEndMs, segmentStartMs + targetMs)
     : segmentStartMs + targetMs;
@@ -3152,6 +3250,7 @@ function buildSpeakerSample(segment, audio, meetingId) {
   const relativeStartSec = Math.max(0, (segmentStartMs - audioStartMs) / 1000);
   const relativeEndSec = Math.max(relativeStartSec + 1, (sampleEndMs - audioStartMs) / 1000);
   const absoluteDurationMs = sampleEndMs - segmentStartMs;
+  if (absoluteDurationMs < 5000 || absoluteDurationMs > 15000) return null;
   const downloadUrl = audio.download_url || `/api/web/meetings/${meetingId}/segments/${audio.segment_no}/audio`;
   return {
     audioUrl: webAudioUrl(downloadUrl),
@@ -3184,7 +3283,7 @@ function formatSampleSeconds(sample) {
 function buildSegmentInsights(segments, actions, audioSegments) {
   const groups = new Map();
   const substantiveSegments = segments.filter((segment) => !isPlaceholderTranscriptFlags(parseFlags(segment.flags)));
-  const speakerTotals = buildSpeakerStats(substantiveSegments);
+  const speakerTotals = buildBasicSpeakerTotals(substantiveSegments);
   segments.forEach((segment) => {
     const isPlaceholder = isPlaceholderTranscriptFlags(parseFlags(segment.flags));
     const key = segment.source_segment_no
@@ -3242,6 +3341,17 @@ function buildSpeakerHint(speakers, speakerTotals, totalSegments) {
     return "整场暂只有一个发言人标签，如本段包含多人，请在时间线拆分并设为新发言人。";
   }
   return "";
+}
+
+function buildBasicSpeakerTotals(segments) {
+  const totals = new Map();
+  segments.forEach((segment) => {
+    const name = segment.display_name || segment.speaker_id || "发言人";
+    const item = totals.get(name) || { name, count: 0 };
+    item.count += 1;
+    totals.set(name, item);
+  });
+  return Array.from(totals.values());
 }
 
 function buildClientQualityReport(segments, actions) {
@@ -3377,12 +3487,11 @@ function buildTranscriptFilters(segments) {
       });
     }
   });
-  buildSpeakerStats(segments).forEach((speaker) => {
-    const speakerIds = Array.isArray(speaker.speakerIds) && speaker.speakerIds.length
-      ? speaker.speakerIds
-      : [speaker.id];
-    filters.push({ value: `speaker:${speakerIds.join("|")}`, label: speaker.name });
-  });
+  buildBasicSpeakerTotals(segments.filter((segment) => !isPlaceholderTranscriptFlags(parseFlags(segment.flags))))
+    .filter((speaker) => !isNonPersonSpeakerName(speaker.name))
+    .forEach((speaker) => {
+      filters.push({ value: `speaker:${speaker.name}`, label: speaker.name });
+    });
   return filters;
 }
 

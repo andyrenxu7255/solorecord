@@ -589,6 +589,12 @@ def test_missing_audio_file_is_hidden_from_playback_controls(tmp_path: Path) -> 
     segment = detail["audioSegments"][0]
     assert segment["audio_available"] is True
     assert segment["download_url"].endswith("/segments/1/audio")
+    audio_response = client.get(
+        f"/api/web/meetings/{meeting_id}/segments/1/audio",
+        headers=headers,
+    )
+    assert audio_response.status_code == 200
+    assert audio_response.headers["content-type"].startswith("audio/")
 
     Path(segment["storage_path"]).unlink()
 
@@ -5823,6 +5829,48 @@ def test_llm_refinement_flags_topic_phrase_as_speaker() -> None:
     assert "speaker_review" in refined[0]["flags"]
 
 
+def test_llm_refinement_replaces_pseudo_phrase_speaker_with_fallback() -> None:
+    import solorecord_server.llm_adapters as llm_adapters
+
+    content = """
+    {
+      "segments": [
+        {
+          "source_index": 1,
+          "speaker": "到时候大家",
+          "speaker_id": "MANUAL_bad",
+          "start_ms": 0,
+          "end_ms": 5000,
+          "text": "这个版本先等测试完成后再发。",
+          "confidence": 0.9,
+          "scenario": "explicit_name",
+          "reason": "模型误把短语当前缀"
+        }
+      ]
+    }
+    """
+    refined = llm_adapters._parse_refined_segments(
+        content,
+        [
+            {
+                "speaker_id": "SPEAKER_01",
+                "display_name": "发言人 1",
+                "source_segment_no": 1,
+                "start_ms": 0,
+                "end_ms": 5000,
+                "text": "到时候大家这个版本先等测试完成后再发。",
+                "flags": ["asr_speaker"],
+            }
+        ],
+    )
+
+    assert refined[0]["display_name"] == "发言人 1"
+    assert refined[0]["speaker_id"] == "SPEAKER_01"
+    assert refined[0]["confidence"] <= 0.6
+    assert "speaker_review" in refined[0]["flags"]
+    assert "speaker_evidence_weak" in refined[0]["flags"]
+
+
 def test_quality_report_flags_weak_speaker_evidence(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)
@@ -6083,6 +6131,8 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "renderDeferredPanel" in app_js
     assert "renderTranscriptSkeleton" in app_js
     assert "正在补全转写和证据检查" in app_js
+    assert "整体转录" in app_js
+    assert "按时间、人和转译内容连续阅读" in app_js
     assert "整理质量与证据" in app_js
     assert "scrollMeetingDetailToTop" in app_js
     assert "detailLoading" in app_js
@@ -6096,8 +6146,9 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     people_index = app_js.index("<h3>人物校对</h3>")
     summary_index = app_js.index("<h3>会议纪要</h3>")
     actions_index = app_js.index("<h3>待办</h3>")
+    transcript_index = app_js.index("<h3>整体转录</h3>")
     quality_index = app_js.index("<h3>整理质量</h3>")
-    assert people_index < summary_index < actions_index < quality_index
+    assert people_index < summary_index < actions_index < transcript_index < quality_index
     assert "ontologyGraph" not in app_js
     assert "renderOntologyGraphSummary" not in app_js
     assert "openOntologyGraph" not in app_js
@@ -6149,7 +6200,16 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "speaker_alias_conflict_count" in app_js
     assert "speaker_over_split_count" in app_js
     assert "buildSpeakerSamples" in app_js
+    assert "isNonPersonSpeakerName" in app_js
+    assert "暂无可试听人物" in app_js
+    assert "只显示有 5-15 秒可试听声音样本的人物" in app_js
+    assert "Math.min(15000" in app_js
     assert "playSpeakerSample" in app_js
+    assert "isPlayableAudioResponse" in app_js
+    assert "audioMimeTypeFromUrl" in app_js
+    assert "video/mp4" in app_js
+    assert "audio/mp4" in app_js
+    assert "浏览器无法解码这段音频" in app_js
     assert "data-sample-audio" in app_js
     assert "data-speakers" in app_js
     assert "speakerStatsKey" in app_js
@@ -6171,6 +6231,8 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "继续显示" in app_js
     assert "已展开全部转写段落，请确认后再次保存" in app_js
     assert "mergeRenderedTranscriptEdits" in app_js
+    assert "transcript-dialogue-list" in app_js
+    assert "transcriptTextRows" in app_js
     assert "findTranscriptEvidenceIndex" in app_js
     assert "声音样本" in app_js
     assert "too_many_speakers" in (Path(__file__).parents[1] / "solorecord_server" / "repository.py").read_text(
@@ -6189,6 +6251,11 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert ".mini-spinner" in styles
     assert ".meeting-card.loading" in styles
     assert ".transcript-more" in styles
+    assert ".transcript-meta" in styles
+    assert ".transcript-speaker-cell" in styles
+    assert ".transcript-text-cell" in styles
+    assert "grid-template-columns: 92px minmax(116px, 150px) minmax(0, 1fr) auto" in styles
+    assert "border-bottom: 1px solid var(--line)" in styles
     assert ".speaker-sample" in styles
     assert ".speaker-evidence" in styles
     assert ".speaker-alias-conflict" in styles
@@ -6220,12 +6287,16 @@ def test_web_upload_requires_login_before_create_or_upload() -> None:
     upload_with_progress = app_js[upload_start:upload_end]
 
     assert "requireLoginForAction(\"请先登录后再上传音频\")" in create_upload
+    assert "audioDurationForUpload(file)" in create_upload
+    assert "form.append(\"end_ms\", String(durationMs))" in create_upload
     assert "登录状态已过期，请重新登录后再次上传" in create_upload
     assert "promptLogin(\"登录状态已过期，请重新登录后再次上传\")" in create_upload
     assert "reject(httpError(401, JSON.stringify({ detail: \"Missing access token\" })))" in upload_with_progress
     assert "reject(httpError(request.status, request.responseText))" in upload_with_progress
     assert "if (isAuthError(error)) return \"请先登录后再继续\"" in app_js
     assert "extractErrorDetail" in app_js
+    assert "function readAudioDuration(file)" in app_js
+    assert "onloadedmetadata" in app_js
 
 
 def test_web_release_page_refreshes_after_login_and_distinguishes_errors() -> None:

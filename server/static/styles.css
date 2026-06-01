@@ -967,9 +967,9 @@ textarea.input {
 
 .meeting-priority-grid {
   display: grid;
-  grid-template-columns: minmax(260px, 0.88fr) minmax(320px, 1.1fr) minmax(320px, 1.02fr);
+  grid-template-columns: minmax(260px, 0.88fr) minmax(320px, 1.14fr) minmax(320px, 1.02fr);
   gap: 12px;
-  min-height: min(54vh, 620px);
+  min-height: 0;
 }
 
 .priority-card {
@@ -1012,6 +1012,7 @@ textarea.input {
   padding: 12px;
   background: var(--surface);
   box-shadow: var(--shadow);
+  margin-top: 12px;
 }
 
 .transcript-skeleton {
@@ -1724,7 +1725,7 @@ textarea.input {
 
 .transcript-list {
   display: grid;
-  gap: 8px;
+  gap: 0;
   margin-top: 12px;
   max-height: none;
   min-height: min(72vh, 820px);
@@ -1747,6 +1748,11 @@ textarea.input {
   box-shadow: var(--shadow-md);
 }
 
+.transcript-list.expanded .segment-text {
+  background: #fff;
+  border-color: var(--line);
+}
+
 .transcript-more {
   justify-self: center;
   margin-top: 10px;
@@ -1754,14 +1760,52 @@ textarea.input {
 
 .transcript-row {
   display: grid;
-  grid-template-columns: 92px 170px minmax(0, 1fr) 132px;
-  gap: 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 10px;
+  grid-template-columns: 92px minmax(116px, 150px) minmax(0, 1fr) auto;
+  gap: 8px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  padding: 8px 4px;
   align-items: start;
   background: #fff;
-  box-shadow: var(--shadow);
+  box-shadow: none;
+}
+
+.transcript-row:first-child {
+  border-top: 1px solid var(--line);
+}
+
+.transcript-row:hover {
+  background: #f8fafc;
+}
+
+.transcript-meta {
+  display: grid;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.transcript-meta b {
+  color: var(--primary-strong);
+  font-size: 13px;
+}
+
+.transcript-meta small {
+  color: var(--subtle);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.transcript-speaker-cell,
+.transcript-text-cell {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.transcript-speaker-input {
+  font-weight: 700;
 }
 
 .speaker-name {
@@ -1796,10 +1840,18 @@ textarea.input {
 }
 
 .segment-text {
-  min-height: clamp(360px, 58vh, 760px);
+  min-height: 76px;
   resize: vertical;
-  line-height: 1.7;
+  line-height: 1.65;
   overflow: auto;
+  border-color: transparent;
+  background: transparent;
+  padding: 4px 6px;
+}
+
+.segment-text:focus {
+  border-color: var(--primary);
+  background: #fff;
 }
 
 .speaker-evidence {
@@ -1844,8 +1896,9 @@ textarea.input {
 
 .transcript-tools {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   align-items: flex-start;
+  min-width: 112px;
 }
 
 .job-item {
@@ -2049,6 +2102,11 @@ textarea.input {
 
   .transcript-row {
     grid-template-columns: 1fr;
+  }
+
+  .transcript-tools {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    min-width: 0;
   }
 
   .progress-strip,

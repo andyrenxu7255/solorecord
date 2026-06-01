@@ -5,6 +5,7 @@ import httpx
 
 from .config import get_settings
 from .owner_terms import ORG_OWNER_TERMS
+from .person_names import is_pseudo_person_name
 
 
 class LlmAdapterError(RuntimeError):
@@ -465,6 +466,8 @@ def _clean_person_name(name: str) -> str:
 def _is_invalid_person_name(name: str) -> bool:
     if not name or len(name) < 2 or len(name) > 8:
         return True
+    if is_pseudo_person_name(name):
+        return True
     lowered = name.lower()
     if lowered.startswith("speaker") or name.startswith("发言人"):
         return True
@@ -477,6 +480,16 @@ def _is_invalid_person_name(name: str) -> bool:
     if _looks_like_topic_or_time_phrase(name):
         return True
     return not re.search(r"[\u4e00-\u9fa5A-Za-z]", name)
+
+
+def _safe_fallback_speaker(fallback: dict) -> dict[str, str]:
+    fallback_speaker_id = str(fallback.get("speaker_id") or "").strip() or "SPEAKER_01"
+    fallback_name = str(fallback.get("display_name") or "").strip()
+    if fallback_name and not is_pseudo_person_name(fallback_name):
+        return {"speaker": fallback_name, "speaker_id": fallback_speaker_id}
+    if fallback_speaker_id and not is_pseudo_person_name(fallback_speaker_id):
+        return {"speaker": fallback_speaker_id, "speaker_id": fallback_speaker_id}
+    return {"speaker": "待确认", "speaker_id": fallback_speaker_id}
 
 
 def _looks_like_topic_or_time_phrase(name: str) -> bool:
@@ -611,6 +624,11 @@ def _parse_refined_segments(content: str, original_segments: list[dict]) -> list
         confidence = _float_value(item.get("confidence"), 0.65)
         flags = _refined_base_flags(fallback)
         invalid_speaker_name = _is_invalid_person_name(speaker)
+        if invalid_speaker_name:
+            fallback_speaker = _safe_fallback_speaker(fallback)
+            speaker = fallback_speaker["speaker"]
+            speaker_id = fallback_speaker["speaker_id"]
+            confidence = min(confidence, 0.6)
         scenario = _scenario_value(item.get("scenario"))
         inferred_speaker = _speaker_differs_from_source(speaker, fallback)
         if _keeps_native_asr_speaker(fallback, speaker_id, scenario, inferred_speaker):
