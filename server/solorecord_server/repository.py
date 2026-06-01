@@ -1304,10 +1304,10 @@ def _is_generic_owner(owner: str) -> bool:
     owner = str(owner or "").strip()
     if not owner:
         return True
-    if owner in ORG_OWNER_TERMS:
-        return False
     if is_pseudo_person_name(owner):
         return True
+    if owner in ORG_OWNER_TERMS:
+        return False
     if _looks_like_due_time_phrase(owner):
         return True
     generic_words = {
@@ -2650,10 +2650,10 @@ def _is_invalid_addressed_owner(owner: str) -> bool:
     value = str(owner or "").strip()
     if not value:
         return True
-    if value in ORG_OWNER_TERMS:
-        return False
     if is_pseudo_person_name(value):
         return True
+    if value in ORG_OWNER_TERMS:
+        return False
     if _is_generic_speaker_label(value) or _is_generic_owner(value):
         return True
     if value in {

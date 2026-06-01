@@ -3477,6 +3477,8 @@ def _infer_owner_from_context(
     for name, hint in context_hints.items():
         if name == excluded_owner or name not in ORG_OWNER_TERMS:
             continue
+        if is_pseudo_person_name(name):
+            continue
         mentions = [str(item) for item in hint.get("mentions") or [] if str(item)]
         if not any(_has_owner_assignment(mention, name) for mention in mentions):
             continue
@@ -3684,10 +3686,10 @@ def _is_generic_owner(owner: str) -> bool:
         return True
     if _is_generic_speaker_name(owner):
         return True
-    if owner in ORG_OWNER_TERMS:
-        return False
     if is_pseudo_person_name(owner):
         return True
+    if owner in ORG_OWNER_TERMS:
+        return False
     if _looks_like_due_time_phrase(owner) or _looks_like_rule_topic_phrase(owner):
         return True
     generic_words = {
