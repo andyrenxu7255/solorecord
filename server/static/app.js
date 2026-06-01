@@ -1,3 +1,6 @@
+const TRANSCRIPT_INITIAL_ROWS = 80;
+const TRANSCRIPT_LOAD_MORE_ROWS = 80;
+
 const state = {
   token: localStorage.getItem("solo_token") || "",
   user: JSON.parse(localStorage.getItem("solo_user") || "null"),
@@ -5,10 +8,14 @@ const state = {
   joinableMeetings: [],
   selectedMeetingId: "",
   loadingMeetingId: "",
+  meetingOverviewController: null,
+  meetingDetailController: null,
+  meetingTranscriptController: null,
   meetingLoadSeq: 0,
   selectedTranscriptVersion: 1,
   selectedDownloadPlatform: "android",
   selectedTranscriptFilter: "all",
+  transcriptRenderLimit: TRANSCRIPT_INITIAL_ROWS,
   currentTranscriptSegments: [],
   recorder: {
     mediaRecorder: null,
@@ -264,7 +271,7 @@ function renderMeetingList() {
     return;
   }
   list.innerHTML = state.meetings.map((meeting) => `
-    <article class="meeting-card ${meeting.id === state.selectedMeetingId ? "active" : ""} ${meeting.id === state.loadingMeetingId ? "loading" : ""}" data-id="${meeting.id}">
+    <article class="meeting-card ${meeting.id === state.selectedMeetingId ? "active" : ""} ${meeting.id === state.loadingMeetingId ? "loading" : ""}" data-id="${meeting.id}" aria-busy="${meeting.id === state.loadingMeetingId ? "true" : "false"}">
       <h3>${escapeHtml(meeting.title)}</h3>
       <div class="meta-row">
         <span>${formatDate(meeting.created_at)}</span>
@@ -272,7 +279,7 @@ function renderMeetingList() {
       </div>
       <div class="meeting-card-foot">
         <span>${formatTime(meeting.duration_ms || 0)}</span>
-        <span>${meeting.id === state.loadingMeetingId ? "加载中..." : `v${meeting.version || 1}`}</span>
+        <span>${meeting.id === state.loadingMeetingId ? "<i class=\"mini-spinner\" aria-hidden=\"true\"></i>打开中" : `v${meeting.version || 1}`}</span>
       </div>
     </article>
   `).join("");
@@ -305,17 +312,27 @@ async function selectMeeting(id) {
   const meeting = state.meetings.find((item) => item.id === id) || null;
   const loadSeq = state.meetingLoadSeq + 1;
   const isCurrentLoad = () => loadSeq === state.meetingLoadSeq && id === state.selectedMeetingId;
+  abortMeetingLoadControllers();
   state.meetingLoadSeq = loadSeq;
   state.selectedMeetingId = id;
   state.loadingMeetingId = id;
   state.selectedTranscriptFilter = "all";
+  state.transcriptRenderLimit = TRANSCRIPT_INITIAL_ROWS;
   state.currentMeetingDetail = null;
   state.currentTranscriptSegments = [];
   renderMeetingList();
   renderMeetingLoading(meeting);
   scrollMeetingDetailToTop();
+  await nextFrame();
+  if (!isCurrentLoad()) return;
   try {
-    const overview = await api(`/api/web/meetings/${id}/overview`);
+    state.meetingOverviewController = new AbortController();
+    state.meetingDetailController = new AbortController();
+    state.meetingTranscriptController = new AbortController();
+    const overviewTask = api(`/api/web/meetings/${id}/overview`, {
+      signal: state.meetingOverviewController.signal,
+    });
+    const overview = await overviewTask;
     if (!isCurrentLoad()) return;
     state.selectedTranscriptVersion = overview.meeting?.version || 1;
     let latestDetail = overview;
@@ -335,7 +352,9 @@ async function selectMeeting(id) {
     };
     renderProgress();
     scrollMeetingDetailToTop();
-    const detailTask = api(`/api/web/meetings/${id}`)
+    const detailTask = api(`/api/web/meetings/${id}`, {
+      signal: state.meetingDetailController.signal,
+    })
       .then((data) => {
         if (!isCurrentLoad()) return;
         latestDetail = data;
@@ -349,7 +368,9 @@ async function selectMeeting(id) {
         detailDone = true;
         renderProgress();
       });
-    const transcriptTask = api(`/api/web/meetings/${id}/transcript`)
+    const transcriptTask = api(`/api/web/meetings/${id}/transcript`, {
+      signal: state.meetingTranscriptController.signal,
+    })
       .then((transcript) => {
         if (!isCurrentLoad()) return;
         state.selectedTranscriptVersion = transcript.version || state.selectedTranscriptVersion;
@@ -367,38 +388,79 @@ async function selectMeeting(id) {
     await Promise.all([detailTask, transcriptTask]);
     if (!isCurrentLoad()) return;
     state.loadingMeetingId = "";
+    clearMeetingLoadControllers();
     renderMeetingList();
     if (detailError || transcriptError) {
       toast("会议已打开，部分内容稍后可刷新重试");
     }
   } catch (error) {
     if (!isCurrentLoad()) return;
+    if (isAbortError(error)) return;
     state.loadingMeetingId = "";
+    clearMeetingLoadControllers();
     renderMeetingList();
     renderMeetingLoadError(meeting, error);
   }
 }
 
 function scrollMeetingDetailToTop() {
+  const scrollBox = $("#meetingDetail .meeting-detail-scroll");
+  if (scrollBox) {
+    scrollBox.scrollTo({ top: 0, left: 0 });
+    return;
+  }
   const panel = $("#meetingDetail")?.closest(".detail-panel");
   if (panel) panel.scrollTo({ top: 0, left: 0 });
 }
 
+function nextFrame() {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+function abortMeetingLoadControllers() {
+  [
+    state.meetingOverviewController,
+    state.meetingDetailController,
+    state.meetingTranscriptController,
+  ].forEach((controller) => controller?.abort?.());
+  clearMeetingLoadControllers();
+}
+
+function clearMeetingLoadControllers() {
+  state.meetingOverviewController = null;
+  state.meetingDetailController = null;
+  state.meetingTranscriptController = null;
+}
+
+function isAbortError(error) {
+  return error?.name === "AbortError" || String(error?.message || "").includes("aborted");
+}
+
 function renderMeetingLoading(meeting) {
   const title = meeting?.title || "会议详情";
+  const status = meeting?.status ? statusLabel(meeting.status) : "准备打开";
+  const duration = formatTime(meeting?.duration_ms || 0);
+  const version = meeting?.version || 1;
   $("#meetingDetail").innerHTML = `
     <div class="detail-loading" role="status" aria-live="polite">
       <div class="loading-head">
         <span class="loading-spinner" aria-hidden="true"></span>
         <div>
-          <b>正在加载会议详情</b>
+          <b>正在打开会议记录</b>
           <span>${escapeHtml(title)}</span>
         </div>
       </div>
+      <div class="loading-meeting-card">
+        <div>
+          <b>${escapeHtml(title)}</b>
+          <span>${escapeHtml(status)} · ${duration} · v${version}</span>
+        </div>
+        <span>已收到点击，正在连接服务器</span>
+      </div>
       <div class="loading-steps">
-        <span>读取会议信息</span>
-        <span>读取转写时间线</span>
-        <span>整理质量与证据</span>
+        <span><i></i>读取会议信息</span>
+        <span><i></i>读取转写时间线</span>
+        <span><i></i>整理质量与证据</span>
       </div>
       <div class="skeleton-stack" aria-hidden="true">
         <span></span>
@@ -459,6 +521,13 @@ function renderMeetingDetail(data, transcriptSegments, options = {}) {
   const transcriptCount = transcriptLoading
     ? Number(transcriptMeta.segment_count || 0)
     : transcriptSegments.length;
+  const visibleTranscriptSegments = transcriptLoading
+    ? []
+    : filteredSegments.slice(0, state.transcriptRenderLimit);
+  const hiddenTranscriptCount = Math.max(0, filteredSegments.length - visibleTranscriptSegments.length);
+  const transcriptResultLabel = transcriptLoading
+    ? `预计 ${transcriptCount} 段`
+    : `${filteredSegments.length} 段${hiddenTranscriptCount ? `，先显示 ${visibleTranscriptSegments.length} 段` : ""}`;
   $("#meetingDetail").innerHTML = `
     <div class="meeting-detail-shell ${isLoadingMore ? "is-loading-more" : ""}">
       <div class="detail-head">
@@ -567,7 +636,7 @@ function renderMeetingDetail(data, transcriptSegments, options = {}) {
             <div class="section-row">
               <div>
                 <h3>转写时间线</h3>
-                <p class="hint">${transcriptLoading ? "正在读取转写时间线，大会议可能需要多等几秒。" : "长段可直接上下滚动；如果一段里有多人说话，先拆分，再把拆出的段落设为新发言人。"}</p>
+                <p class="hint">${transcriptLoading ? "正在读取转写时间线，大会议可能需要多等几秒。" : `当前筛选 ${transcriptResultLabel}。长段可直接上下滚动；如果一段里有多人说话，先拆分，再把拆出的段落设为新发言人。`}</p>
               </div>
               <div class="detail-actions">
                 <select id="transcriptFilter" class="input compact-input" ${transcriptDisabled ? "disabled" : ""}>
@@ -582,8 +651,9 @@ function renderMeetingDetail(data, transcriptSegments, options = {}) {
               </div>
             </div>
             <div id="transcriptList" class="transcript-list">
-              ${transcriptUnavailable ? renderUnavailablePanel("转写未加载成功", "为避免误删服务端转写，当前禁止保存空时间线。请重新打开会议或刷新页面。") : (transcriptLoading ? renderTranscriptSkeleton(transcriptCount) : (filteredSegments.map((segment) => renderTranscriptRow(segment, speakerEvidenceMap)).join("") || "<p class='hint'>当前筛选下暂无转写</p>"))}
+              ${transcriptUnavailable ? renderUnavailablePanel("转写未加载成功", "为避免误删服务端转写，当前禁止保存空时间线。请重新打开会议或刷新页面。") : (transcriptLoading ? renderTranscriptSkeleton(transcriptCount) : (visibleTranscriptSegments.map((segment) => renderTranscriptRow(segment, speakerEvidenceMap)).join("") || "<p class='hint'>当前筛选下暂无转写</p>"))}
             </div>
+            ${hiddenTranscriptCount ? `<button id="loadMoreTranscript" class="button secondary transcript-more">继续显示 ${Math.min(TRANSCRIPT_LOAD_MORE_ROWS, hiddenTranscriptCount)} 段</button>` : ""}
             <button id="saveTranscript" class="button primary" ${transcriptDisabled ? "disabled" : ""}>保存转写修改</button>
           </section>
           <div class="summary-box">
@@ -604,10 +674,19 @@ function renderMeetingDetail(data, transcriptSegments, options = {}) {
   $("#copyActions").addEventListener("click", copyActionsToClipboard);
   $("#applyAllSuggestedOwners").addEventListener("click", applyAllSuggestedActionOwners);
   $("#expandTranscript")?.addEventListener("click", toggleTranscriptExpanded);
+  $("#loadMoreTranscript")?.addEventListener("click", () => {
+    const mergedSegments = mergeRenderedTranscriptEdits(transcriptSegments);
+    state.currentTranscriptSegments = mergedSegments;
+    state.transcriptRenderLimit += TRANSCRIPT_LOAD_MORE_ROWS;
+    renderMeetingDetail(data, mergedSegments);
+  });
   $("#copyTranscript")?.addEventListener("click", copyTranscriptToClipboard);
   $("#transcriptFilter")?.addEventListener("change", (event) => {
+    const mergedSegments = mergeRenderedTranscriptEdits(transcriptSegments);
+    state.currentTranscriptSegments = mergedSegments;
     state.selectedTranscriptFilter = event.target.value;
-    renderMeetingDetail(data, transcriptSegments);
+    state.transcriptRenderLimit = TRANSCRIPT_INITIAL_ROWS;
+    renderMeetingDetail(data, mergedSegments);
   });
   $$(".quality-shortcut").forEach((button) => {
     button.addEventListener("click", () => {
@@ -1556,7 +1635,18 @@ async function processSelectedMeeting() {
 }
 
 async function saveTranscript() {
-  const editedRows = $$("#transcriptList .transcript-row").map(readTranscriptRow);
+  const renderedRows = $$("#transcriptList .transcript-row");
+  const filteredRows = filteredTranscriptSegments(state.currentTranscriptSegments);
+  if (state.selectedTranscriptFilter === "all" && filteredRows.length > renderedRows.length) {
+    state.transcriptRenderLimit = Math.max(
+      state.transcriptRenderLimit,
+      filteredRows.length,
+    );
+    renderMeetingDetail(state.currentMeetingDetail, state.currentTranscriptSegments);
+    toast("已展开全部转写段落，请确认后再次保存");
+    return;
+  }
+  const editedRows = renderedRows.map(readTranscriptRow);
   const editedById = new Map(editedRows.filter((segment) => segment.id).map((segment) => [segment.id, segment]));
   const newRows = editedRows.filter((segment) => !segment.id);
   const base = state.currentTranscriptSegments.map((segment) => ({
@@ -1598,6 +1688,26 @@ function readTranscriptRow(row) {
     text: row.querySelector(".segment-text").value,
     flags: [],
   };
+}
+
+function mergeRenderedTranscriptEdits(segments) {
+  const renderedRows = $$("#transcriptList .transcript-row");
+  if (!renderedRows.length) return segments;
+  const editedRows = renderedRows.map(readTranscriptRow);
+  const editedById = new Map(editedRows.filter((segment) => segment.id).map((segment) => [segment.id, segment]));
+  const editedBySource = new Map(
+    editedRows
+      .filter((segment) => !segment.id && segment.source_segment_no)
+      .map((segment) => [sourceKey(segment.source_id, segment.source_segment_no), segment]),
+  );
+  const newRows = editedRows.filter((segment) => !segment.id && !segment.source_segment_no);
+  const merged = (segments || []).map((segment) => {
+    if (segment.id && editedById.has(segment.id)) return editedById.get(segment.id);
+    const key = sourceKey(segment.source_id, segment.source_segment_no);
+    if (!segment.id && editedBySource.has(key)) return editedBySource.get(key);
+    return segment;
+  });
+  return [...merged, ...newRows].sort((left, right) => (left.start_ms - right.start_ms) || (left.end_ms - right.end_ms));
 }
 
 function addActionRow() {
@@ -1672,6 +1782,17 @@ function jumpToTranscriptEvidence(button) {
       ? $(`#transcriptList .transcript-row[data-source-id="${cssEscape(sourceId)}"][data-source-segment="${cssEscape(sourceSegment)}"]`)
       : $(`#transcriptList .transcript-row[data-source-segment="${cssEscape(sourceSegment)}"]`);
   if (!target) {
+    const matchingIndex = findTranscriptEvidenceIndex(segmentId, sourceId, sourceSegment);
+    if (
+      matchingIndex >= state.transcriptRenderLimit
+      && state.currentMeetingDetail
+      && state.currentTranscriptSegments
+    ) {
+      state.transcriptRenderLimit = matchingIndex + TRANSCRIPT_LOAD_MORE_ROWS;
+      renderMeetingDetail(state.currentMeetingDetail, state.currentTranscriptSegments);
+      requestAnimationFrame(() => jumpToTranscriptEvidence(button));
+      return;
+    }
     $("#transcriptWorkspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
     toast(sourceSegment ? "该音频分段暂缺可定位转写，请回听录音或重新转写" : "未找到对应转写段落");
     return;
@@ -1679,6 +1800,19 @@ function jumpToTranscriptEvidence(button) {
   target.scrollIntoView({ behavior: "smooth", block: "center" });
   target.classList.add("highlight");
   window.setTimeout(() => target.classList.remove("highlight"), 1800);
+}
+
+function findTranscriptEvidenceIndex(segmentId, sourceId, sourceSegment) {
+  const rows = filteredTranscriptSegments(state.currentTranscriptSegments || []);
+  return rows.findIndex((segment) => {
+    if (segmentId && String(segment.id || "") === String(segmentId)) return true;
+    if (sourceSegment && sourceId) {
+      return String(segment.source_id || "") === String(sourceId)
+        && String(segment.source_segment_no || "") === String(sourceSegment);
+    }
+    if (sourceSegment) return String(segment.source_segment_no || "") === String(sourceSegment);
+    return false;
+  });
 }
 
 function cssEscape(value) {
@@ -1717,12 +1851,18 @@ function buildActionCopyText(items) {
 }
 
 async function copyTranscriptToClipboard() {
-  const rows = $$("#transcriptList .transcript-row");
-  const text = rows.map((row) => {
-    const time = row.querySelector("b")?.textContent?.trim() || "";
-    const speaker = row.querySelector(".speaker-name")?.value?.trim() || "发言人";
-    const body = row.querySelector(".segment-text")?.value?.trim() || "";
-    return `[${time}] ${speaker}：${body}`;
+  const renderedRows = $$("#transcriptList .transcript-row");
+  const renderedById = new Map(renderedRows.map((row) => [row.dataset.id || "", row]));
+  const filteredRows = filteredTranscriptSegments(state.currentTranscriptSegments || []);
+  const text = filteredRows.map((segment) => {
+    const row = renderedById.get(segment.id || "");
+    if (row) {
+      const time = row.querySelector("b")?.textContent?.trim() || "";
+      const speaker = row.querySelector(".speaker-name")?.value?.trim() || "发言人";
+      const body = row.querySelector(".segment-text")?.value?.trim() || "";
+      return `[${time}] ${speaker}：${body}`;
+    }
+    return `[${formatTime(segment.start_ms)}] ${segment.display_name || segment.speaker_id || "发言人"}：${segment.text || ""}`;
   }).filter(Boolean).join("\n");
   if (!text) {
     toast("暂无可复制的转写");
@@ -1808,7 +1948,7 @@ function autoSplitSpeakers(row) {
     };
   });
   const wrapper = document.createElement("template");
-  wrapper.innerHTML = segments.map(renderTranscriptRow).join("");
+  wrapper.innerHTML = segments.map((segment) => renderTranscriptRow(segment)).join("");
   const rows = Array.from(wrapper.content.querySelectorAll(".transcript-row"));
   rows.forEach(bindTranscriptRowEvents);
   row.replaceWith(wrapper.content);

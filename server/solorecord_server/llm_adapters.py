@@ -33,21 +33,6 @@ def refine_segments_with_llm(segments: list[dict], options: dict) -> list[dict]:
     raise LlmAdapterError(f"Unsupported LLM provider: {provider}")
 
 
-def extract_ontology_with_llm(
-    segments: list[dict],
-    action_items: list[dict],
-    options: dict,
-) -> dict:
-    provider = str(options.get("llm_provider") or "mock")
-    if provider in {"mock", ""}:
-        raise LlmAdapterError("LLM provider is not configured")
-    if provider == "ollama":
-        return _extract_ontology_with_ollama(segments, action_items, options)
-    if provider in {"openai-compatible", "internal", "remote-qwen"}:
-        return _extract_ontology_with_openai_compatible(segments, action_items, options)
-    raise LlmAdapterError(f"Unsupported LLM provider: {provider}")
-
-
 def _summarize_with_openai_compatible(segments: list[dict], options: dict) -> tuple[str, str, list[dict]]:
     endpoint = _chat_endpoint(str(options.get("llm_endpoint") or ""))
     model = str(options.get("llm_model") or "")
@@ -136,58 +121,6 @@ def _refine_segments_with_ollama(segments: list[dict], options: dict) -> list[di
     return _parse_refined_segments(content, segments)
 
 
-def _extract_ontology_with_openai_compatible(
-    segments: list[dict],
-    action_items: list[dict],
-    options: dict,
-) -> dict:
-    endpoint = _chat_endpoint(str(options.get("llm_endpoint") or ""))
-    model = str(options.get("llm_model") or "")
-    if not endpoint or not model:
-        raise LlmAdapterError("LLM endpoint/model is missing")
-    headers = {"Content-Type": "application/json"}
-    api_key = str(options.get("llm_api_key") or "")
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    payload = {
-        "model": model,
-        "temperature": 0.1,
-        "messages": [
-            {"role": "system", "content": _ontology_system_prompt()},
-            {"role": "user", "content": _ontology_user_prompt(segments, action_items)},
-        ],
-    }
-    with httpx.Client(timeout=180) as client:
-        response = client.post(endpoint, headers=headers, json=payload)
-        response.raise_for_status()
-    content = response.json()["choices"][0]["message"]["content"]
-    return _parse_ontology(content)
-
-
-def _extract_ontology_with_ollama(
-    segments: list[dict],
-    action_items: list[dict],
-    options: dict,
-) -> dict:
-    base = str(options.get("llm_endpoint") or "http://127.0.0.1:11434").rstrip("/")
-    model = str(options.get("llm_model") or "")
-    if not model:
-        raise LlmAdapterError("Ollama model is missing")
-    payload = {
-        "model": model,
-        "stream": False,
-        "messages": [
-            {"role": "system", "content": _ontology_system_prompt()},
-            {"role": "user", "content": _ontology_user_prompt(segments, action_items)},
-        ],
-    }
-    with httpx.Client(timeout=180) as client:
-        response = client.post(f"{base}/api/chat", json=payload)
-        response.raise_for_status()
-    content = response.json().get("message", {}).get("content", "")
-    return _parse_ontology(content)
-
-
 def _chat_endpoint(endpoint: str) -> str:
     endpoint = endpoint.rstrip("/")
     if not endpoint:
@@ -259,32 +192,6 @@ def _segment_refine_system_prompt() -> str:
         "不要凭空发明真实姓名；无法判断时使用原始发言人或'待确认'。"
         "每段 text 要去掉明显的'某某说/某某：'前缀，但保留业务内容。"
         "不要改写事实，不要新增转写中没有的信息。"
-    )
-
-
-def _ontology_system_prompt() -> str:
-    return (
-        "你是企业会议知识图谱本体抽槽助手。只输出 JSON，不要 Markdown。"
-        "目标是从转写和待办中抽取实体与关系，实体类型只能是 person、place、time、matter、action。"
-        "person 是人员或明确团队；place 是地点、会议室、客户现场或工作区；time 是时间、日期、截止时间；"
-        "matter 是议题、事项、项目、问题或业务对象；action 是可执行待办。"
-        "图谱必须服务真实使用场景：用户点开后应能看到某个人围绕某事项承担了什么待办，"
-        "待办发生或截止在什么时间、关联什么地点，并能追溯到转写或待办证据。"
-        "relations 数组表达实体关系，type 优先使用 responsible_for、due_at、located_at、scheduled_at、"
-        "discussed、related_to、depends_on、mentioned。"
-        "每个 entity 必须包含 id、type、label、confidence、evidence；"
-        "每个 relation 必须包含 source、target、type、label、confidence、evidence。"
-        "id 可以用 p1/m1/a1 这类短 ID，但 relation 的 source/target 必须引用这些 id。"
-        "evidence 要尽量包含 segment_id、source_id、source_segment_no、start_ms、end_ms、text 或 action_id。"
-        "不要编造转写或待办中没有出现、也无法从上下文支持的实体。"
-        "如果一个人负责一件事，并且这件事有地点和时间，要分别建立 person->action、action->time、"
-        "action->place 或 matter->action 的关系。"
-        "matter 不要只做关键词，要尽量抽成业务对象，例如'报价明细'、'合同条款'、'客户名单'；"
-        "action 是可执行动作，例如'补充报价明细'、'复核合同条款'。"
-        "尽量避免孤立节点；如果一个实体没有关系边，除非它是确实重要但关系不明的事实，否则不要输出。"
-        "同一事项有多个待办时，用 matter->action 的 related_to 关系把它们挂到同一事项上；"
-        "待办之间存在先后或依赖时，用 action->action 的 depends_on 关系。"
-        "输出格式：{\"entities\": [...], \"relations\": [...]}。"
     )
 
 
@@ -400,51 +307,6 @@ def _segment_refine_user_prompt(segments: list[dict]) -> str:
         "8. 只输出 JSON：{\"segments\": [...]}。\n\n"
         "原始 ASR 段落：\n"
         + "\n".join(lines)
-    )
-
-
-def _ontology_user_prompt(segments: list[dict], action_items: list[dict]) -> str:
-    transcript_rows = []
-    for segment in segments[:160]:
-        transcript_rows.append(
-            json.dumps(
-                {
-                    "segment_id": segment.get("id", ""),
-                    "source_id": segment.get("source_id", ""),
-                    "source_segment_no": segment.get("source_segment_no"),
-                    "speaker_id": segment.get("speaker_id", ""),
-                    "speaker": segment.get("display_name") or segment.get("speaker_id") or "",
-                    "start_ms": int(segment.get("start_ms") or 0),
-                    "end_ms": int(segment.get("end_ms") or 0),
-                    "text": segment.get("text", ""),
-                },
-                ensure_ascii=False,
-            )
-        )
-    action_rows = []
-    for item in action_items[:80]:
-        action_rows.append(
-            json.dumps(
-                {
-                    "action_id": item.get("id", ""),
-                    "owner": item.get("owner", ""),
-                    "task": item.get("task", ""),
-                    "due": item.get("due", ""),
-                    "status": item.get("status", ""),
-                },
-                ensure_ascii=False,
-            )
-        )
-    return (
-        "请基于以下会议资料抽取本体实体和关系。\n"
-        "重点场景：人员在某事项上承担待办，待办关联地点与时间，事项之间有关联或依赖。\n"
-        "请优先输出可被力导向图展示的关系链，例如：人员 -> 待办 -> 时间/地点，事项 -> 待办，人员 -> 事项。\n"
-        "如果同一语义既能作为事项又能作为待办，事项用业务对象名，待办用动作短语，避免事项和待办完全同名。\n"
-        "如果信息来自待办，也要尽量回连到转写证据；没有转写证据时 evidence 至少包含 action_id。\n\n"
-        "转写：\n"
-        + "\n".join(transcript_rows)
-        + "\n\n待办：\n"
-        + "\n".join(action_rows or ["[]"])
     )
 
 
@@ -782,15 +644,6 @@ def _parse_refined_segments(content: str, original_segments: list[dict]) -> list
     if not refined:
         raise LlmAdapterError("LLM returned no refined transcript segments")
     return refined
-
-
-def _parse_ontology(content: str) -> dict:
-    payload = _extract_json(content)
-    entities = payload.get("entities") or payload.get("nodes") or []
-    relations = payload.get("relations") or payload.get("edges") or []
-    if not isinstance(entities, list) or not isinstance(relations, list):
-        raise LlmAdapterError("LLM ontology response must contain entities and relations arrays")
-    return {"entities": entities, "relations": relations}
 
 
 def _refined_base_flags(fallback: dict) -> list[str]:

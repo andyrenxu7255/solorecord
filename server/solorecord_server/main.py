@@ -378,7 +378,7 @@ def discover_joinable_meetings(
 @app.get("/api/web/meetings/{meeting_id}")
 def get_meeting(meeting_id: str, user: CurrentUser) -> dict:
     _assert_access(meeting_id, user)
-    document = meeting_document(meeting_id, include_graphs=False)
+    document = meeting_document(meeting_id)
     if not document:
         raise HTTPException(status_code=404, detail="Meeting not found")
     with get_db() as db:
@@ -951,7 +951,7 @@ def external_meetings(client: ExternalClient, limit: int = 100, offset: int = 0)
 
 @app.get("/api/external/meetings/{meeting_id}")
 def external_meeting(meeting_id: str, client: ExternalClient) -> dict:
-    document = meeting_document(meeting_id, include_graphs=False)
+    document = meeting_document(meeting_id)
     if not document:
         raise HTTPException(status_code=404, detail="Meeting not found")
     return {"client": client["client"], **document}
@@ -1212,8 +1212,8 @@ def retry_job(job_id: str, user: CurrentUser) -> dict:
         job = db.execute("SELECT * FROM processing_jobs WHERE id = ?", (job_id,)).fetchone()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if job["type"] == "knowledge_graph":
-        raise HTTPException(status_code=410, detail="Knowledge graph jobs are disabled")
+    if job["type"] != "transcribe":
+        raise HTTPException(status_code=410, detail="This job type has been removed")
     new_job = _enqueue_background_transcription(job["meeting_id"], job["asr_provider"])
     audit(user["id"], "job.retry", "job", job_id, {"new_job": new_job})
     return {"jobId": new_job}

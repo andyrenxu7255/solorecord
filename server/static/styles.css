@@ -356,6 +356,16 @@ p {
   border-color: var(--primary);
   background: #eef6ff;
   cursor: progress;
+  position: relative;
+}
+
+.meeting-card.loading::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  border-radius: var(--radius) 0 0 var(--radius);
+  background: var(--primary);
 }
 
 .meeting-card h3 {
@@ -366,11 +376,28 @@ p {
 
 .meeting-card-foot {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
   margin-top: 8px;
   color: var(--subtle);
   font-size: 12px;
+}
+
+.meeting-card-foot span:last-child {
+  align-items: center;
+  display: inline-flex;
+  gap: 5px;
+}
+
+.mini-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #bfdbfe;
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex: 0 0 auto;
 }
 
 .meta-row {
@@ -705,6 +732,9 @@ textarea.input {
   height: 100%;
   align-content: start;
   color: var(--muted);
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
 }
 
 .meeting-detail-shell {
@@ -741,6 +771,31 @@ textarea.input {
   font-size: 13px;
 }
 
+.loading-meeting-card {
+  align-items: center;
+  border: 1px solid #bfdbfe;
+  border-radius: var(--radius);
+  background: #eef6ff;
+  color: var(--primary-strong);
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.loading-meeting-card b,
+.loading-meeting-card span {
+  display: block;
+}
+
+.loading-meeting-card b {
+  color: var(--text);
+}
+
+.loading-meeting-card span {
+  font-size: 13px;
+}
+
 .loading-spinner {
   width: 22px;
   height: 22px;
@@ -770,9 +825,21 @@ textarea.input {
 }
 
 .loading-steps span {
+  align-items: center;
+  display: flex;
+  gap: 8px;
   padding: 9px 10px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.loading-steps i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.10);
+  flex: 0 0 auto;
 }
 
 .skeleton-stack {
@@ -1461,184 +1528,6 @@ textarea.input {
   line-height: 1.45;
 }
 
-.ontology-summary {
-  display: grid;
-  gap: 10px;
-  padding: 10px 0 14px;
-  border-bottom: 1px solid var(--line);
-}
-
-.ontology-counts {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.ontology-counts span {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface-soft);
-  padding: 6px 9px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.graph-page {
-  min-height: 100vh;
-  overflow: hidden;
-}
-
-.graph-app {
-  height: 100vh;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
-.graph-toolbar {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: center;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
-}
-
-.graph-toolbar h1 {
-  margin: 0;
-  font-size: 22px;
-}
-
-.graph-stage-shell {
-  min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-}
-
-.ontology-stage {
-  width: 100%;
-  height: 100%;
-  background: #f8fafc;
-  cursor: grab;
-  touch-action: none;
-}
-
-.ontology-edge {
-  stroke: #94a3b8;
-  stroke-width: 1.4;
-  opacity: 0.72;
-}
-
-.ontology-edge-label {
-  fill: #475569;
-  font-size: 12px;
-  paint-order: stroke;
-  stroke: #f8fafc;
-  stroke-width: 5px;
-  stroke-linejoin: round;
-  cursor: pointer;
-}
-
-.ontology-node {
-  cursor: grab;
-}
-
-.ontology-node circle {
-  stroke: #fff;
-  stroke-width: 2;
-  filter: drop-shadow(0 4px 10px rgba(15, 23, 42, 0.14));
-}
-
-.ontology-node text {
-  text-anchor: middle;
-  fill: #0f172a;
-  font-size: 12px;
-  font-weight: 700;
-  paint-order: stroke;
-  stroke: rgba(255, 255, 255, 0.84);
-  stroke-width: 4px;
-  stroke-linejoin: round;
-  pointer-events: none;
-}
-
-.ontology-node.node-person circle {
-  fill: #bfdbfe;
-}
-
-.ontology-node.node-action circle {
-  fill: #bbf7d0;
-}
-
-.ontology-node.node-matter circle {
-  fill: #fde68a;
-}
-
-.ontology-node.node-time circle {
-  fill: #fed7aa;
-}
-
-.ontology-node.node-place circle {
-  fill: #ddd6fe;
-}
-
-.graph-empty {
-  fill: var(--muted);
-  font-size: 15px;
-}
-
-.graph-inspector {
-  min-width: 0;
-  overflow: auto;
-  padding: 18px;
-  border-left: 1px solid var(--line);
-  background: var(--surface);
-}
-
-.graph-inspector h2 {
-  margin: 0 0 10px;
-  font-size: 18px;
-}
-
-.inspector-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-
-.inspector-tags span {
-  border-radius: var(--radius-sm);
-  background: var(--surface-soft);
-  border: 1px solid var(--line);
-  padding: 4px 7px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.inspector-evidence {
-  display: grid;
-  gap: 8px;
-}
-
-.inspector-evidence article {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  padding: 9px;
-  background: var(--surface-soft);
-}
-
-.inspector-evidence b {
-  display: block;
-  margin-bottom: 4px;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.inspector-evidence p {
-  margin: 0;
-  font-size: 13px;
-}
-
 .speaker-stat span,
 .audio-segment span:not(.status-pill) {
   color: var(--muted);
@@ -1852,6 +1741,11 @@ textarea.input {
   box-shadow: var(--shadow-md);
 }
 
+.transcript-more {
+  justify-self: center;
+  margin-top: 10px;
+}
+
 .transcript-row {
   display: grid;
   grid-template-columns: 92px 170px minmax(0, 1fr) 132px;
@@ -2043,21 +1937,6 @@ textarea.input {
 }
 
 @media (max-width: 920px) {
-  .graph-toolbar {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .graph-stage-shell {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) 240px;
-  }
-
-  .graph-inspector {
-    border-left: 0;
-    border-top: 1px solid var(--line);
-  }
-
   .app-shell {
     grid-template-columns: 1fr;
   }
@@ -2162,9 +2041,15 @@ textarea.input {
   .action-row,
   .form-grid,
   .segment-insight-grid,
+  .loading-meeting-card,
   .loading-steps,
   .transcript-skeleton-row {
     grid-template-columns: 1fr;
+  }
+
+  .loading-meeting-card {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .action-row .action-task {

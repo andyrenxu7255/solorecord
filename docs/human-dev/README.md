@@ -70,7 +70,6 @@ server/solorecord_server/
 ├── processing.py        处理任务：ASR、纪要、转发、索引
 ├── asr_adapters.py      本地 ASR 命令适配器
 ├── llm_adapters.py      LLM/Ollama/OpenAI 兼容适配器
-├── ontology.py          本体抽槽、图谱节点/关系持久化
 ├── publisher.py         Hermes/Webhook 转发
 ├── repository.py        聚合会议文档
 ├── search_index.py      ES/OpenSearch 索引
@@ -94,8 +93,6 @@ server/solorecord_server/
 - `transcript_segments`
 - `speakers`
 - `action_items`
-- `ontology_entities`
-- `ontology_relations`
 - `exports`
 - `apk_releases`
 - `app_config`
@@ -247,7 +244,7 @@ Android 录音和上传采用连续录音、重叠分段、分段级断点续传
 
 转写是企业知识平台的原始证据层。服务端使用 `transcript_segment_history` 归档被重处理或人工替换前的旧行。非 admin 用户更新转写时不能减少段落数；admin 可以删除段落，但删除前同样归档。知识平台 Agent 应通过 `/api/external/meetings/{meetingId}/transcript?include_history=true` 拉取当前转写和历史，不要直接读 SQLite。待办事项通过 `/api/web/meetings/{meetingId}/actions` 或 `/api/mobile/meetings/{meetingId}/actions` 更新，字段为 `owner`、`task`、`due`、`status`，更新后会出现在同步、导出、外部 API 和可选 ES/OpenSearch 索引中。
 
-`/api/web/meetings/{meetingId}/overview` 和移动端同名接口是轻量详情概要，用于让历史会议详情页先显示标题、纪要、待办、录音分段和任务状态；完整转写、人物声音样本和质量证据再通过详情与转写接口补齐。不要把图谱或本体抽槽放回会议详情首屏加载路径。旧的 `ontology_entities`、`ontology_relations` 和 `ontology.py` 可保留用于历史兼容或离线研究，但会议最终处理不再自动创建 `knowledge_graph` 任务，Web/外部 API 也不再暴露 `/ontology` 读取和重建入口。外部知识平台应消费 `/api/external/meetings/{meetingId}`、`/transcript?include_history=true`、`qualityReport`、`knowledgeReadiness`、`actionItems` 和 ES/OpenSearch 索引。
+`/api/web/meetings/{meetingId}/overview` 和移动端同名接口是轻量详情概要，用于让历史会议详情页先显示标题、人物校对、纪要、待办、录音分段和任务状态；完整转写、人物声音样本和质量证据再通过详情与转写接口补齐。本体抽槽、服务端图谱构建和独立图谱页面已移除，不要放回会议详情首屏加载路径。外部知识平台应消费 `/api/external/meetings/{meetingId}`、`/transcript?include_history=true`、`qualityReport`、`knowledgeReadiness`、`actionItems` 和 ES/OpenSearch 索引。
 
 `/segments-json` 仍保留作兼容和简单测试入口，Android 主流程不再使用它上传长会议音频。
 
@@ -317,8 +314,7 @@ server/solorecord_server/llm_adapters.py
 - `repository.build_quality_report()` 会检查单一发言人、长段落、需人工确认的发言人、发言人是否缺少原文证据、原始音频分段是否被最终转写覆盖、泛化待办负责人、负责人过度集中、候选人名未成为发言人，以及待办是否能在转写文本中找到证据。
 - `speaker_evidence_weak_count` 用于发现模型把议题、时间短语或误听词当成真实人名。`llm_adapters._parse_refined_segments()` 会在这类分段上降低 `confidence` 并写入 `speaker_review`、`speaker_evidence_weak` flags。即使人名有上下文证据，只要它不是原始 speaker/display_name，而是通过 `context_bridge`、`dialogue_logic` 或 `task_ownership` 推断出来，也会保留 `speaker_review` 并限制置信度，因为这不是声纹确认。
 - `qualityReport.speakerEvidence` 会列出需要校对的发言人段落，包含 `segment_id`、`speaker`、`scenario_label`、`reason`、`risk` 和相邻上下文。Web 时间线用它展示“推断依据”，外部 Agent 可以用它决定是否等待人工校对。
-- `speaker_alias_conflict_count` 用于发现同一个 `display_name` 对应多个 `speaker_id` 的情况。知识图谱会按非泛化姓名合并展示同一人员节点，并在节点上保留 `speaker_ids` 追溯原始标签。
-- `knowledgeGraph` 现在包含 `topic` 节点。服务端从转写和待办里抽取轻量业务主题，连接“人员讨论主题”“主题产生待办”“待办截止时间”，用于缓解分段上下文断裂；topic 节点的 `evidence` 会保留 `segment_id`、`source_id`、`source_segment_no`、`start_ms`、`end_ms` 和原文片段。主题节点是辅助索引，不替代原始转写证据。
+- `speaker_alias_conflict_count` 用于发现同一个 `display_name` 对应多个 `speaker_id` 的情况。Web 人物校对会让用户试听声音样本并合并标签，外部知识系统应以校对后的 `speakers`、转写证据和待办证据为准。
 - `unsupported_action_count` 和 `action_evidence_coverage` 用于发现模型补写的待办。判定使用中文 2-4 字 ngram、英文 token 和 owner 线索做弱匹配，不要求逐字相同，但不能完全脱离转写原文。LLM 新生成的待办在保存前会删除 `unsupported` 项；若全部生成待办都缺证据，服务端保留一条带原文片段的“按转写原文复核待办”，作为人工复核入口，而不是可自动督办事项。LLM 不可用时，如果 ASR 已产生真实转写，`processing._summarize()` 只保存保守纪要并返回空待办列表；只有 `mock_asr`、`empty_asr` 或 `missing_audio` 占位转写才通过 `_llm_unavailable_fallback_actions()` 生成“检查转写结果并补充真实会议纪要”提醒。上述复核入口在 `qualityReport.actionEvidence` 中应输出 `status=system_review`、`action_kind=system_review`、`auto_actionable=false`、`reminder_safe=false`，并在 `actionItems` 中输出 `actionKind=system_review`、`autoActionable=false`、`reminderSafe=false`；`system_review_action_count` 不应计入 `generic_owner_count`、`unsupported_action_count` 或 `action_evidence_coverage` 分母。用户手工新增或编辑后的待办不被静默删除，仍通过质量报告暴露证据风险。已经判定为 `unsupported` 的待办不要再进入 `weakActionOwners`，否则前端会把一个“缺转写证据”问题重复展示成两个风险。
 - 待办 owner 如果是“我、我们、他、这边、大家”等代词，`processing._normalize_action_owners()` 会先尝试从第一人称转写和任务关键词推断真实发言人；无法推断时降级为 `待确认`。`repository._is_generic_owner()` 也会把残留代词负责人视为泛化 owner，`qualityReport.actionEvidence` 应显示为 `weak_owner` 而不是 `supported`。
 - LLM 返回的待办 owner 如果是“负责人、相关负责人、主持人、前端开发、某某负责人”等泛化角色，`llm_adapters._normalize_owner()` 会先降级为 `待确认`；后续 `processing._normalize_action_owners()` 只有在转写中找到明确人名、团队或任务归属证据时才会补回具体 owner。明确的组织 owner（如销售、法务、前端）仍可保留。
@@ -329,7 +325,7 @@ server/solorecord_server/llm_adapters.py
 - `weak_action_owner_count` 用于发现“任务内容有证据，但负责人和该任务缺少上下文关联”的情况。例如文本中出现了李娜，也出现了错误样例任务，但只有翼天被点名负责错误样例时，李娜不能被视为有证据的负责人。
 - `qualityReport.actionEvidence` 会为每条待办输出 `supported`、`majority`、`system_review`、`conflict`、`contradiction`、`weak_owner` 或 `unsupported`，并附带相关转写片段。证据片段必须带 `segment_id`、`source_id` 和 `source_segment_no`，便于 Web 的“定位转写”和外部 Agent 追溯原文。`majority` 表示待办由 `multi_source_majority` 主结果支撑，且 owner 不是泛化/待确认，`knowledgeSafe=true` 但 `requiresReview=true`，外部督办 Agent 可以作为主证据使用，同时保留抽查回听提示；`system_review` 表示该行只是系统复核入口，必须保持 `autoActionable=false`、`reminderSafe=false`、`knowledgeSafe=false`，Web 复制待办时会跳过，Android 离线记录页和 Markdown/Word/PDF/JSON 导出也必须显示为系统复核提醒；`conflict` 表示待办只由 `multi_source_conflict` 片段支撑，必须视为需人工回听，不能自动发送提醒或写入确定知识；`contradiction` 表示待办把同主题转写里的“先不要、暂缓、不能、取消”等阻止执行语义反写成了执行动作，必须 `knowledgeSafe=false` 并加入 `action_evidence_contradiction` 阻塞项。若 owner 是 `待确认`、代词、时间短语或泛化角色，应优先输出 `weak_owner`，即使任务文本有多数源证据也不能自动督办。若能从任务关键词和责任表述中找到更接近的人，还会输出 `suggested_owner`、`suggested_owner_reason` 和 `suggested_owner_evidence`。`actionItems` 同步带有驼峰命名的 `evidenceStatus`、`evidence`、`suggestedOwner`、`actionKind`、`autoActionable`、`reminderSafe`、`knowledgeSafe` 和 `requiresReview`，方便只消费待办列表的外部督办 Agent 使用。Web 待办区用这些证据展示“有转写依据”“多数源确认”“系统复核提醒”“多源冲突待核对”“待办与原文相反”“负责人证据弱”或“缺转写证据”，并提供“应用建议”按钮；复制待办时不包含证据文本，也不包含系统复核提醒。
 - 对于 `actionEvidence` 和 `summaryEvidence`，一条证据如果带 `segment_id`，冲突/多数源状态只继承该转写行的 flags；不能因为同一 `source_id/source_segment_no` 里另有冲突行，就把当前证据也标成 `conflict`。这是多源 5 分钟分段内存在多个议题时的关键保护。
-- `qualityReport.sourceCoverage` 会按 `(source_id, source_segment_no)` 检查当前转写是否覆盖每个音频分段。`mock_asr`、`empty_asr`、`missing_audio` 和 `source_coverage_gap` 只算复核占位，不算有效覆盖。最终 `/finish` 如果发现已上传音频完全没有对应转写行，会补一条 `source_coverage_gap` + `missing_audio` 的“系统复核”转写行，方便 Web 定位和外部 Agent 阻断入库；如果已有空语音/占位行，则不会重复补行。复核占位行只能进入覆盖率、复核入口和入库阻断，不得参与 `speakerEvidence`、候选人名、纪要证据、待办证据、说话人统计、LLM/规则分段统计或 `knowledgeGraph` 主题抽取。`source_segment_coverage_weak` 是知识入库阻塞项，通常说明 LLM 后处理丢段、分段重传缺失或 ASR 空结果，应先回听/重转写。
+- `qualityReport.sourceCoverage` 会按 `(source_id, source_segment_no)` 检查当前转写是否覆盖每个音频分段。`mock_asr`、`empty_asr`、`missing_audio` 和 `source_coverage_gap` 只算复核占位，不算有效覆盖。最终 `/finish` 如果发现已上传音频完全没有对应转写行，会补一条 `source_coverage_gap` + `missing_audio` 的“系统复核”转写行，方便 Web 定位和外部 Agent 阻断入库；如果已有空语音/占位行，则不会重复补行。复核占位行只能进入覆盖率、复核入口和入库阻断，不得参与 `speakerEvidence`、候选人名、纪要证据、待办证据、说话人统计、LLM/规则分段统计或外部知识入库。`source_segment_coverage_weak` 是知识入库阻塞项，通常说明 LLM 后处理丢段、分段重传缺失或 ASR 空结果，应先回听/重转写。
 - `qualityReport.multiSourceConflicts` 会列出多源冲突片段明细，包含 `segment_id`、`source_id`、`source_segment_no`、发言人、时间、文本、flags 和同时间附近的其它冲突来源。Web 质量区会展示这些明细并提供“定位转写”，外部知识 Agent 应优先消费该字段做回听清单，而不是只看 `multi_source_conflict_count` 数量。
 - `knowledgeReadiness.reviewEvidence` 会从质量报告中抽取外部 Agent 最需要复核的证据，包括 `multiSourceConflicts`、`sourceCoverageWeakSegments`、`speakerEvidence`、`speakerAliasConflicts`、`summaryClaims` 和 `actionEvidence`。它是入库门禁的复核入口，不能替代转写原文成为新的事实来源。Web“整理质量”区会渲染“知识入库复核”，展示 `ready/review_first/hold`、阻塞项、复核标签、说明和可定位的证据条目；覆盖不足分段如果暂缺转写，只提示回听或重转写，避免误导为已有原文。
 - `processing._normalize_action_owners()` 会保留协作关系：如果主责人已经明确，但其他发言人说“我这边配合/协同/补充”且任务关键词匹配，会在 task 末尾追加 `协同：姓名`，避免后续 IM 督办漏掉配合人。
@@ -664,7 +660,6 @@ server/solorecord_server/
 ├── processing.py        ASR, summary, forwarding, indexing workflow
 ├── asr_adapters.py      local ASR command adapter
 ├── llm_adapters.py      LLM/Ollama/OpenAI-compatible adapters
-├── ontology.py          ontology slot extraction and persisted graph storage
 ├── publisher.py         Hermes/Webhook forwarding
 ├── repository.py        full meeting document aggregation
 ├── search_index.py      ES/OpenSearch indexing
@@ -688,8 +683,6 @@ Core tables:
 - `transcript_segments`
 - `speakers`
 - `action_items`
-- `ontology_entities`
-- `ontology_relations`
 - `exports`
 - `apk_releases`
 - `app_config`
@@ -825,12 +818,7 @@ Knowledge agents should pull
 reading SQLite directly. The overview endpoint
 `/api/web/meetings/{meetingId}/overview` exists for fast detail-page feedback:
 it returns title, summary, actions, audio segments, and job status before the
-full transcript and quality evidence finish loading. Do not add graph or
-ontology extraction back to the meeting-detail first-load path. Legacy
-`ontology.py`, `ontology_entities`, and `ontology_relations` may remain for
-historical compatibility or offline experiments, but final processing no longer
-queues `knowledge_graph` jobs automatically and Web/external APIs no longer
-expose `/ontology` read or rebuild routes. Downstream knowledge systems should
+full transcript and quality evidence finish loading. Server-side graph building, ontology extraction, and the standalone graph page have been removed. Do not add them back to the meeting-detail first-load path. Downstream knowledge systems should
 use `/api/external/meetings/{meetingId}`, `/transcript?include_history=true`,
 `qualityReport`, `knowledgeReadiness`, `actionItems`, and optional
 ES/OpenSearch indexing.
@@ -913,7 +901,6 @@ Quality checks:
 - `repository.build_quality_report()` detects single-speaker meetings, long transcript rows, speaker-review rows, speakers that lack source evidence, generic action owners, over-concentrated owners, candidate people that are not represented as speakers, and action items that lack transcript evidence.
 - `speaker_evidence_weak_count` catches cases where the model turns topics, time phrases, or misheard words into apparent names. `llm_adapters._parse_refined_segments()` lowers confidence and writes `speaker_review` plus `speaker_evidence_weak` flags for these rows.
 - `speaker_alias_conflict_count` catches one `display_name` mapped to multiple `speaker_id` values. The knowledge graph merges non-generic display names into one person node and keeps `speaker_ids` for traceability.
-- `knowledgeGraph` now includes `topic` nodes. The server extracts lightweight business topics from transcripts and action items, then links speakers to topics, topics to actions, and actions to due dates. Topic-node `evidence` keeps `segment_id`, `source_id`, `source_segment_no`, `start_ms`, `end_ms`, and the transcript snippet. Topic nodes are an auxiliary context layer, not a replacement for transcript evidence.
 - `unsupported_action_count` and `action_evidence_coverage` help catch hallucinated action items. Matching uses Chinese 2-4 character ngrams, English tokens, and owner hints, so it is tolerant of wording changes but still grounded in the transcript. Newly generated LLM actions with `unsupported` evidence are removed before saving. If every generated action is unsupported, the server keeps one transcript-referenced review action as a human-review entry point, not as an auto-reminder item. When no LLM is available but ASR produced real transcript text, `processing._summarize()` saves the conservative summary and returns no actions; `_llm_unavailable_fallback_actions()` creates the "check transcript result" reminder only for `mock_asr`, `empty_asr`, or `missing_audio` placeholder rows. These review entries should appear as `status=system_review`, `action_kind=system_review`, `auto_actionable=false`, and `reminder_safe=false` in `qualityReport.actionEvidence`, and as camelCase `actionKind`, `autoActionable`, and `reminderSafe` in `actionItems`. They do not count toward generic-owner risk, unsupported-action risk, or action-evidence coverage. User-edited action items are not silently deleted; they remain visible with quality-report evidence risk. Once an action is classified as `unsupported`, do not also include it in `weakActionOwners`; the UI should show one clear missing-evidence risk instead of two overlapping risks.
 - If an action owner is a pronoun such as “I”, “we”, “he”, “this side”, or “everyone”, `processing._normalize_action_owners()` first tries to infer the real speaker from first-person transcript evidence and task keywords. If it cannot, the owner is downgraded to `待确认`; `repository._is_generic_owner()` treats any remaining pronoun owner as generic, and `qualityReport.actionEvidence` should mark the item as `weak_owner` rather than `supported`.
 - If the LLM returns a generic action owner such as "owner", "related owner", "host", "frontend developer", or a label ending with "owner", `llm_adapters._normalize_owner()` first downgrades it to `待确认`. `processing._normalize_action_owners()` may then restore a concrete owner only when transcript evidence supports a person, team, or assignment. Clear organizational owners such as sales, legal, or frontend may still be preserved.
@@ -923,7 +910,7 @@ Quality checks:
 - Organizational roles such as sales, legal, frontend, and QA may be action owners, but only when the same short phrase contains an explicit assignment or action, such as "sales follows up by Friday" or "frontend updates the page by Wednesday". Task phrases such as automated testing, test coverage, or data source must not be treated as team owners by themselves.
 - `qualityReport.actionEvidence` can report `supported`, `majority`, `system_review`, `conflict`, `contradiction`, `weak_owner`, or `unsupported`. `majority` means the action is grounded in a `multi_source_majority` primary row and the owner is not generic or unknown, so `knowledgeSafe=true` while `requiresReview=true`; downstream reminder agents may use it as primary evidence while preserving the replay hint. `system_review` means the row is only a human-review entry; keep `autoActionable=false`, `reminderSafe=false`, and `knowledgeSafe=false`, and skip it when copying or syncing reminders. Android local records and Markdown/Word/PDF/JSON exports must keep the system-review label so users do not mistake it for a normal meeting task. `conflict` means the action is only backed by `multi_source_conflict` rows; downstream reminder agents must require human replay and must not send reminders or store the action as confirmed knowledge automatically. `contradiction` means the action turns same-topic transcript blockers such as "do not send yet", "pause", or "cannot publish" into an executable task; it is a hard ingestion blocker and must stay `knowledgeSafe=false`. Review tasks such as "confirm whether to send" should not be treated as contradictory send commands. If the owner is unknown, a pronoun, a time phrase, or a generic role, `weak_owner` takes precedence even when the task text has majority-source evidence. Evidence references must include `segment_id`, `source_id`, and `source_segment_no`. `qualityReport.actionEvidence` can also include `suggested_owner`, `suggested_owner_reason`, and `suggested_owner_evidence` when another speaker is better supported by task keywords and assignment wording. `actionItems` also carries camelCase `evidenceStatus`, `evidence`, `suggestedOwner`, `actionKind`, `autoActionable`, `reminderSafe`, `knowledgeSafe`, and `requiresReview` fields for downstream action agents that only consume the action list. Web shows an "apply suggestion" button, but users still save the action list explicitly.
 - For `actionEvidence` and `summaryEvidence`, evidence with a `segment_id` inherits conflict or majority status only from that exact transcript row. Do not mark it as `conflict` merely because another row in the same `source_id/source_segment_no` is conflicting; a five-minute source segment can contain multiple unrelated topics.
-- `qualityReport.sourceCoverage` checks effective transcript coverage for every audio segment by `(source_id, source_segment_no)`. `mock_asr`, `empty_asr`, `missing_audio`, and `source_coverage_gap` are review placeholders, not effective coverage. Final `/finish` may add a `source_coverage_gap` + `missing_audio` "system review" transcript row when an uploaded audio segment has no transcript row at all; this keeps the segment locatable while still blocking knowledge ingestion. Placeholder rows must only feed coverage, review navigation, and ingestion blocking; they must not feed `speakerEvidence`, candidate people, summary evidence, action evidence, speaker counts, LLM/rule segment counts, or `knowledgeGraph` topic extraction. If an empty-speech placeholder already exists, do not add a duplicate review row.
+- `qualityReport.sourceCoverage` checks effective transcript coverage for every audio segment by `(source_id, source_segment_no)`. `mock_asr`, `empty_asr`, `missing_audio`, and `source_coverage_gap` are review placeholders, not effective coverage. Final `/finish` may add a `source_coverage_gap` + `missing_audio` "system review" transcript row when an uploaded audio segment has no transcript row at all; this keeps the segment locatable while still blocking knowledge ingestion. Placeholder rows must only feed coverage, review navigation, and ingestion blocking; they must not feed `speakerEvidence`, candidate people, summary evidence, action evidence, speaker counts, LLM/rule segment counts, or downstream knowledge ingestion. If an empty-speech placeholder already exists, do not add a duplicate review row.
 - LLM prompts must tell the model not to turn pause/blocker language into executable actions, and `processing._grounded_summary_result()` must drop contradictory executable action items before saving generated summaries. It must also drop newly generated unsupported actions before saving. If every generated action is contradictory or unsupported, keep a transcript-referenced review fallback action instead of saving unsafe reminders.
 - Condition phrases such as "wait for legal approval before sending" are prerequisites, not owner assignments. Keep tests for both sides: do not infer legal as owner from the condition phrase, but still infer legal from explicit assignments such as "legal approves the contract attachment".
 - `qualityReport.multiSourceConflicts` lists concrete multi-source conflict rows with `segment_id`, `source_id`, `source_segment_no`, speaker, time range, text, flags, and nearby conflicting source snippets. The Web quality panel renders this list with "jump to transcript" links. External knowledge agents should use this field as the replay checklist instead of relying only on `multi_source_conflict_count`.

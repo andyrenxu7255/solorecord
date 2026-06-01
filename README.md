@@ -164,7 +164,7 @@ ASR 返回原生说话人字段时，服务端会优先使用；如果只返回�
 
 系统复核提醒不是会议待办。Web 复制待办、Android 离线记录页和 Markdown/Word/PDF/JSON 导出都会保留“系统复核提醒”标记；外部督办系统必须同时检查 `actionKind=system_review`、`autoActionable=false` 和 `reminderSafe=false`，并跳过自动提醒。
 
-复核占位转写不是会议事实。`mock_asr`、`empty_asr`、`missing_audio` 和 `source_coverage_gap` 行只用于定位需要回听或重转写的音频分段，并阻断自动入库；它们不会进入发言人统计、人物校对证据、纪要证据、待办证据或知识图谱主题。
+复核占位转写不是会议事实。`mock_asr`、`empty_asr`、`missing_audio` 和 `source_coverage_gap` 行只用于定位需要回听或重转写的音频分段，并阻断自动入库；它们不会进入发言人统计、人物校对证据、纪要证据、待办证据或外部知识事实。
 
 语义重分段会把每个模型输出段继续关联回 `source_index`/`source_segment_no`，所以 UI、导出和外部知识平台都能追溯到原始音频分段。如果 LLM 只是把同一个 ASR 原生 speaker 的长段拆成多段，并且仍使用同一个 `speaker_id` 与 `native_speaker` 场景，最终段会保留 `asr_speaker`，表示它仍来自 ASR 原生说话人证据。通过上下文、任务归属或议题延续推断出的发言人会保留 `speaker_review`、`scenario:*` 和 `reason:*` 标记，但不会伪装成 `asr_speaker`；这表示“可用的会议上下文推断”，不是声纹确认。若 ASR 已经返回多个原生 speaker，但仍存在“李波后面看登录界面”“围城负责外接数据源”等未落到具体人物的线索，服务端也会触发语义后处理，而不是简单相信 ASR 粗分段。
 

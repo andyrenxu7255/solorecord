@@ -178,42 +178,6 @@ CREATE TABLE IF NOT EXISTS action_items (
     FOREIGN KEY(meeting_id) REFERENCES meetings(id)
 );
 
-CREATE TABLE IF NOT EXISTS ontology_entities (
-    id TEXT PRIMARY KEY,
-    meeting_id TEXT NOT NULL,
-    entity_type TEXT NOT NULL,
-    label TEXT NOT NULL,
-    normalized_label TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    confidence REAL,
-    evidence TEXT NOT NULL DEFAULT '[]',
-    metadata TEXT NOT NULL DEFAULT '{}',
-    source TEXT NOT NULL DEFAULT 'rule',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    UNIQUE(meeting_id, entity_type, normalized_label),
-    FOREIGN KEY(meeting_id) REFERENCES meetings(id)
-);
-
-CREATE TABLE IF NOT EXISTS ontology_relations (
-    id TEXT PRIMARY KEY,
-    meeting_id TEXT NOT NULL,
-    source_entity_id TEXT NOT NULL,
-    target_entity_id TEXT NOT NULL,
-    relation_type TEXT NOT NULL,
-    label TEXT NOT NULL,
-    confidence REAL,
-    evidence TEXT NOT NULL DEFAULT '[]',
-    metadata TEXT NOT NULL DEFAULT '{}',
-    source TEXT NOT NULL DEFAULT 'rule',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    UNIQUE(meeting_id, source_entity_id, target_entity_id, relation_type),
-    FOREIGN KEY(meeting_id) REFERENCES meetings(id),
-    FOREIGN KEY(source_entity_id) REFERENCES ontology_entities(id),
-    FOREIGN KEY(target_entity_id) REFERENCES ontology_entities(id)
-);
-
 CREATE TABLE IF NOT EXISTS exports (
     id TEXT PRIMARY KEY,
     meeting_id TEXT NOT NULL,
@@ -254,11 +218,6 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     created_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_ontology_entities_meeting
-    ON ontology_entities(meeting_id, entity_type);
-
-CREATE INDEX IF NOT EXISTS idx_ontology_relations_meeting
-    ON ontology_relations(meeting_id);
 """
 
 

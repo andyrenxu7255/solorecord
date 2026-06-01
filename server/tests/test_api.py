@@ -2510,48 +2510,15 @@ def test_system_review_placeholder_is_not_meeting_fact_evidence() -> None:
     assert report["summaryEvidence"]["unsupported_count"] == 1
 
 
-def test_knowledge_graph_excludes_system_review_placeholder_topics() -> None:
-    import solorecord_server.processing as processing
+
+def test_graph_builders_are_removed_from_meeting_evidence_path() -> None:
+    import importlib.util
+    import solorecord_server.llm_adapters as llm_adapters
     import solorecord_server.repository as repository
 
-    meeting = {"id": "mtg_graph_placeholder", "title": "占位图谱检查"}
-    segments = [
-        processing._segment_row_like(
-            {
-                "speaker_id": "MANUAL_renxu",
-                "display_name": "任旭",
-                "source_id": "front",
-                "source_segment_no": 1,
-                "start_ms": 0,
-                "end_ms": 60000,
-                "text": "客户名单今天定版。",
-                "confidence": 0.9,
-                "flags": ["semantic_final"],
-            }
-        ),
-        processing._segment_row_like(
-            {
-                "speaker_id": "SYSTEM_REVIEW",
-                "display_name": "系统复核",
-                "source_id": "front",
-                "source_segment_no": 2,
-                "start_ms": 60000,
-                "end_ms": 120000,
-                "text": "音频分段 2 已上传，但最终转写没有覆盖该来源分段。请回听音频或重新转写后再入库。",
-                "confidence": 0,
-                "flags": ["missing_audio", "source_coverage_gap", "speaker_review", "system_review"],
-            }
-        ),
-    ]
-
-    graph = repository.build_meeting_graph(meeting, [], [], segments)
-    labels = {node["label"] for node in graph["nodes"]}
-
-    assert "任旭" in labels
-    assert "客户名单" in labels
-    assert "系统复核" not in labels
-    assert "覆盖" not in labels
-    assert "重新转写" not in labels
+    assert not hasattr(repository, "build_meeting_graph")
+    assert not hasattr(llm_adapters, "extract_ontology_with_llm")
+    assert importlib.util.find_spec("solorecord_server.ontology") is None
 
 
 def test_final_processing_keeps_called_person_followup_commitments(tmp_path: Path) -> None:
@@ -5670,58 +5637,20 @@ def test_quality_report_flags_too_many_speaker_tags(tmp_path: Path) -> None:
     assert any("声音样本" in item for item in report["recommendations"])
 
 
-def test_knowledge_graph_links_speakers_topics_actions_and_times(tmp_path: Path) -> None:
+
+def test_graph_and_ontology_product_files_are_removed() -> None:
+    static_dir = Path(__file__).parents[1] / "static"
+    server_dir = Path(__file__).parents[1] / "solorecord_server"
+
+    assert not (static_dir / "graph.html").exists()
+    assert not (static_dir / "graph.js").exists()
+    assert not (server_dir / "ontology.py").exists()
+
+
+def test_external_meeting_uses_transcript_evidence_not_graph_payload(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)
-    create = client.post("/api/web/meetings", json={"title": "主题图谱"}, headers=headers)
-    meeting_id = create.json()["meeting"]["id"]
-    import solorecord_server.db as db
-
-    with db.get_db() as conn:
-        conn.execute(
-            """
-            INSERT INTO transcript_segments
-            (id, meeting_id, version, source_segment_no, speaker_id, display_name,
-             start_ms, end_ms, text, confidence, flags, created_at)
-            VALUES
-            ('seg_topic_1', ?, 1, 1, 'MANUAL_yitian', '翼天', 0, 5000,
-             '我这边补充错误样例和自动测试覆盖，明天给大家看结果。',
-             0.82, '["semantic_llm"]', 'now'),
-            ('seg_topic_2', ?, 1, 1, 'MANUAL_weicheng', '围城', 6000, 12000,
-             '外接数据源这块 MySQL、PostgreSQL、Oracle 都要确认。',
-             0.82, '["semantic_llm"]', 'now')
-            """,
-            (meeting_id, meeting_id),
-        )
-        conn.execute(
-            """
-            INSERT INTO action_items (id, meeting_id, owner, task, due, status, created_at, updated_at)
-            VALUES
-            ('act_topic_1', ?, '翼天', '补充错误样例和自动测试覆盖', '明天', 'open', 'now', 'now')
-            """,
-            (meeting_id,),
-        )
-
-    import solorecord_server.repository as repository
-
-    graph = repository.meeting_document(meeting_id, include_graphs=True)["knowledgeGraph"]
-    graph_nodes = {(node["type"], node["label"]) for node in graph["nodes"]}
-    graph_edges = {
-        (edge["source_label"], edge["target_label"], edge["label"])
-        for edge in graph["edges"]
-    }
-
-    assert any(node_type == "topic" and "错误" in label for node_type, label in graph_nodes)
-    assert any(node_type == "topic" and "测试" in label for node_type, label in graph_nodes)
-    assert any(source == "翼天" and label == "讨论" for source, _target, label in graph_edges)
-    assert any(target == "补充错误样例和自动测试覆盖" and label == "产生待办" for _source, target, label in graph_edges)
-    assert ("补充错误样例和自动测试覆盖", "明天", "截止") in graph_edges
-
-
-def test_knowledge_graph_topic_evidence_preserves_source_refs(tmp_path: Path) -> None:
-    client = make_client(tmp_path)
-    headers = login(client)
-    create = client.post("/api/web/meetings", json={"title": "图谱证据源"}, headers=headers)
+    create = client.post("/api/web/meetings", json={"title": "外部证据接口"}, headers=headers)
     meeting_id = create.json()["meeting"]["id"]
     import solorecord_server.db as db
 
@@ -5732,149 +5661,40 @@ def test_knowledge_graph_topic_evidence_preserves_source_refs(tmp_path: Path) ->
             (id, meeting_id, version, source_id, source_segment_no, speaker_id, display_name,
              start_ms, end_ms, text, confidence, flags, created_at)
             VALUES
-            ('seg_graph_source_1', ?, 1, 'front', 2, 'MANUAL_renxu', '任旭', 120000, 180000,
+            ('seg_external_evidence_1', ?, 1, 'front', 2, 'MANUAL_renxu', '任旭', 120000, 180000,
              '客户名单今天定版，销售工作区后续同步。',
              0.82, '["semantic_llm"]', 'now')
             """,
             (meeting_id,),
         )
-
-    import solorecord_server.repository as repository
-
-    graph = repository.meeting_document(meeting_id, include_graphs=True)["knowledgeGraph"]
-    topic = next(node for node in graph["nodes"] if node["type"] == "topic" and node["label"] == "客户名单")
-    evidence = topic["evidence"][0]
-
-    assert evidence["segment_id"] == "seg_graph_source_1"
-    assert evidence["source_id"] == "front"
-    assert evidence["source_segment_no"] == 2
-    assert evidence["start_ms"] == 120000
-    assert evidence["end_ms"] == 180000
-
-
-def test_ontology_extraction_persists_entities_relations_and_external_api(tmp_path: Path) -> None:
-    client = make_client(tmp_path)
-    headers = login(client)
-    create = client.post("/api/web/meetings", json={"title": "本体图谱"}, headers=headers)
-    meeting_id = create.json()["meeting"]["id"]
-    import solorecord_server.db as db
-    import solorecord_server.ontology as ontology
-
-    with db.get_db() as conn:
-        conn.execute(
-            """
-            INSERT INTO transcript_segments
-            (id, meeting_id, version, source_id, source_segment_no, speaker_id, display_name,
-             start_ms, end_ms, text, confidence, flags, created_at)
-            VALUES
-            ('seg_ontology_1', ?, 1, 'front', 1, 'MANUAL_renxu', '任旭', 0, 5000,
-             '任旭在上海会议室确认客户名单，要求张三周三前补充报价明细。',
-             0.9, '["semantic_llm"]', 'now'),
-            ('seg_ontology_2', ?, 1, 'front', 1, 'MANUAL_lisi', '李四', 6000, 12000,
-             '李四负责合同条款复核，下周一同步到销售工作区。',
-             0.9, '["semantic_llm"]', 'now')
-            """,
-            (meeting_id, meeting_id),
-        )
         conn.execute(
             """
             INSERT INTO action_items (id, meeting_id, owner, task, due, status, created_at, updated_at)
             VALUES
-            ('act_ontology_1', ?, '张三', '补充报价明细', '周三', 'open', 'now', 'now'),
-            ('act_ontology_2', ?, '李四', '复核合同条款并同步销售工作区', '下周一', 'open', 'now', 'now')
+            ('act_external_evidence_1', ?, '任旭', '同步销售工作区客户名单', '今天', 'open', 'now', 'now')
             """,
-            (meeting_id, meeting_id),
+            (meeting_id,),
         )
 
-    graph = ontology.extract_and_store_ontology(meeting_id)
-    node_pairs = {(node["type"], node["label"]) for node in graph["nodes"]}
-    edge_pairs = {(edge["source_label"], edge["target_label"], edge["type"]) for edge in graph["edges"]}
-
-    assert ("person", "张三") in node_pairs
-    assert ("person", "李四") in node_pairs
-    assert ("place", "上海会议室") in node_pairs
-    assert ("time", "周三") in node_pairs
-    assert ("action", "补充报价明细") in node_pairs
-    assert ("张三", "补充报价明细", "responsible_for") in edge_pairs
-    assert ("补充报价明细", "周三", "due_at") in edge_pairs
-    assert ("报价明细", "补充报价明细", "related_to") in edge_pairs
-    assert ("客户名单", "上海会议室", "located_at") in edge_pairs
-    assert ("合同条款", "复核合同条款并同步销售工作区", "related_to") in edge_pairs
-    assert ("复核合同条款并同步销售工作区", "销售工作区", "located_at") in edge_pairs
-    assert any(node["evidence"] for node in graph["nodes"] if node["label"] == "上海会议室")
-
-    with db.get_db() as conn:
-        entity_count = conn.execute(
-            "SELECT COUNT(*) AS count FROM ontology_entities WHERE meeting_id=?",
-            (meeting_id,),
-        ).fetchone()["count"]
-        relation_count = conn.execute(
-            "SELECT COUNT(*) AS count FROM ontology_relations WHERE meeting_id=?",
-            (meeting_id,),
-        ).fetchone()["count"]
-    assert entity_count == len(graph["nodes"])
-    assert relation_count == len(graph["edges"])
-
-    detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers)
-    assert detail.status_code == 200
-    assert "ontologyGraph" not in detail.json()
-
-    external = client.get(
-        f"/api/external/meetings/{meeting_id}/transcript",
+    detail = client.get(f"/api/external/meetings/{meeting_id}", headers={"Authorization": "Bearer test-token"})
+    transcript = client.get(
+        f"/api/external/meetings/{meeting_id}/transcript?include_history=true",
         headers={"Authorization": "Bearer test-token"},
     )
-    assert external.status_code == 200
-    assert "transcript" in external.json()
-    assert "ontologyGraph" not in external.json()
+
+    assert detail.status_code == 200
+    assert transcript.status_code == 200
+    detail_json = detail.json()
+    transcript_json = transcript.json()
+    assert "knowledgeGraph" not in detail_json
+    assert "ontologyGraph" not in detail_json
+    assert "knowledgeGraph" not in transcript_json
+    assert "ontologyGraph" not in transcript_json
+    assert transcript_json["transcript"]["segments"][0]["id"] == "seg_external_evidence_1"
+    assert transcript_json["actionItems"][0]["owner"] == "任旭"
 
 
-def test_ontology_rule_extractor_builds_contextual_action_chains(tmp_path: Path) -> None:
-    client = make_client(tmp_path)
-    headers = login(client)
-    create = client.post("/api/web/meetings", json={"title": "抽槽链路"}, headers=headers)
-    meeting_id = create.json()["meeting"]["id"]
-    import solorecord_server.db as db
-    import solorecord_server.ontology as ontology
-
-    with db.get_db() as conn:
-        conn.execute(
-            """
-            INSERT INTO transcript_segments
-            (id, meeting_id, version, source_id, source_segment_no, speaker_id, display_name,
-             start_ms, end_ms, text, confidence, flags, created_at)
-            VALUES
-            ('seg_chain_1', ?, 1, 'front', 1, 'MANUAL_renxu', '任旭', 0, 9000,
-             '任旭在北京客户现场讨论外接数据源，安排王五明天下午到客户现场完成接口联调。',
-             0.91, '[]', 'now'),
-            ('seg_chain_2', ?, 1, 'front', 2, 'MANUAL_wangwu', '王五', 9000, 15000,
-             '王五确认接口联调依赖李四先提供测试账号，李四今天晚上发过来。',
-             0.9, '[]', 'now')
-            """,
-            (meeting_id, meeting_id),
-        )
-
-    graph = ontology.extract_and_store_ontology(meeting_id)
-    node_pairs = {(node["type"], node["label"]) for node in graph["nodes"]}
-    edge_pairs = {(edge["source_label"], edge["target_label"], edge["type"]) for edge in graph["edges"]}
-
-    assert ("person", "王五") in node_pairs
-    assert ("person", "李四") in node_pairs
-    assert ("place", "北京客户现场") in node_pairs
-    assert ("time", "明天下午") in node_pairs
-    assert ("matter", "外接数据源") in node_pairs
-    assert ("王五", "到客户现场完成接口联调", "responsible_for") in edge_pairs
-    assert ("到客户现场完成接口联调", "明天下午", "due_at") in edge_pairs
-    assert ("到客户现场完成接口联调", "北京客户现场", "located_at") in edge_pairs
-    assert ("外接数据源", "北京客户现场", "located_at") in edge_pairs
-    assert (
-        "到客户现场完成接口联调",
-        "提供测试账号",
-        "depends_on",
-    ) in edge_pairs
-    assert any(edge[0] == "李四" and edge[2] == "responsible_for" for edge in edge_pairs)
-
-
-def test_ontology_api_is_removed_from_meeting_workflow(tmp_path: Path) -> None:
+def test_ontology_api_and_schema_are_removed_from_meeting_workflow(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     owner_headers = login(client)
     user_headers = login_user(client)
@@ -5890,8 +5710,17 @@ def test_ontology_api_is_removed_from_meeting_workflow(tmp_path: Path) -> None:
     )
     assert response.status_code in {404, 405}
 
-    denied_post = client.post(f"/api/web/meetings/{meeting_id}/ontology/extract", headers=user_headers)
-    assert denied_post.status_code in {404, 405}
+    import solorecord_server.db as db
+
+    with db.get_db() as conn:
+        tables = {
+            row["name"]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+    assert "ontology_entities" not in tables
+    assert "ontology_relations" not in tables
 
 
 def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
@@ -5981,7 +5810,6 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert ".meeting-detail-scroll" in styles
     assert ".meeting-priority-grid" in styles
     assert ".priority-card" in styles
-    assert ".graph-inspector" in styles
     assert "detailRoleNotes" in app_js
     assert "分角色整理" in app_js
     assert "role_notes" in app_js
@@ -6027,7 +5855,18 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "renderMeetingLoadError" in app_js
     assert "meetingLoadSeq" in app_js
     assert "Promise.all" in app_js
-    assert "正在加载会议详情" in app_js
+    assert "正在打开会议记录" in app_js
+    assert "已收到点击，正在连接服务器" in app_js
+    assert "aria-busy" in app_js
+    assert "打开中" in app_js
+    assert "AbortController" in app_js
+    assert "nextFrame" in app_js
+    assert "TRANSCRIPT_INITIAL_ROWS" in app_js
+    assert "transcriptRenderLimit" in app_js
+    assert "继续显示" in app_js
+    assert "已展开全部转写段落，请确认后再次保存" in app_js
+    assert "mergeRenderedTranscriptEdits" in app_js
+    assert "findTranscriptEvidenceIndex" in app_js
     assert "声音样本" in app_js
     assert "too_many_speakers" in (Path(__file__).parents[1] / "solorecord_server" / "repository.py").read_text(
         encoding="utf-8"
@@ -6040,8 +5879,11 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "matchesTranscriptFilter" in app_js
     assert ".quality-shortcut" in styles
     assert ".detail-loading" in styles
+    assert ".loading-meeting-card" in styles
     assert ".loading-spinner" in styles
+    assert ".mini-spinner" in styles
     assert ".meeting-card.loading" in styles
+    assert ".transcript-more" in styles
     assert ".speaker-sample" in styles
     assert ".speaker-evidence" in styles
     assert ".speaker-alias-conflict" in styles
