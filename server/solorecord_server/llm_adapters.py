@@ -134,6 +134,11 @@ def _system_prompt() -> str:
     return (
         "你是企业内部会议纪要助手。只输出 JSON，不要 Markdown。"
         "JSON 字段必须包含 summary、role_notes、action_items。"
+        "summary 必须是会议纪要，不是逐字转写、对话摘录或按发言人流水账；"
+        "要归纳主题、结论、风险、待确认事项和下一步。"
+        "role_notes 必须按真实人名、明确团队或岗位归纳观点和承诺，"
+        "每行建议为'姓名/团队：观点或承诺'；不要把一整句对话、转写片段、时间戳、"
+        "议题句、任务描述或'Speaker 1'这类标签当作角色名。"
         "action_items 是数组，每项包含 owner、task、due、status。"
         "生成待办时必须先阅读全文上下文，识别每个说话人、被点名的人、部门或岗位与任务之间的关系。"
         "owner 优先填写明确的人名、发言人显示名、部门或岗位；只有整场上下文都无法推断时才写待确认。"
@@ -240,7 +245,8 @@ def _user_prompt(segments: list[dict]) -> str:
         "2. 待办 owner 尽量绑定到人、角色、部门或明确发言人，避免无依据地写待确认。\n"
         "3. 不要把 owner 写成负责人、相关负责人、前端开发、UI讨论者、主持人这类泛化词。\n"
         "4. 如果责任人与任务跨分段出现，也要关联。\n"
-        "5. role_notes 按人/角色归纳观点和承诺。\n"
+        "5. role_notes 按真实人名、明确团队或岗位归纳观点和承诺；"
+        "不要把对话内容、议题句、时间戳或 Speaker 标签当作角色。\n"
         "6. 检查转写后半段，不能遗漏后半段新出现的人员、任务和风险。\n\n"
         "7. 多源同录场景中，multi_source_complemented 表示多个拾音源互补后的证据；"
         "multi_source_majority 表示至少两个录音源一致，可作为主证据，"
@@ -568,7 +574,7 @@ def _parse_summary(content: str, segments: list[dict]) -> tuple[str, str, list[d
     if not summary:
         summary = "模型已返回结果，但未给出明确纪要，请人工检查转写。"
     if not role_notes:
-        role_notes = "\n".join(f"{item['display_name']}：{item['text']}" for item in segments)
+        role_notes = ""
     return summary, role_notes, actions
 
 

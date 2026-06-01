@@ -2242,8 +2242,10 @@ def _is_summary_boilerplate(text: str) -> bool:
         "暂无",
         "本次会议已完成基础整理",
         "基于转写原文的保守整理",
+        "基于转写原文的会议要点",
         "请人工检查转写",
         "请在配置本地asrllm后重新生成正式纪要",
+        "会议音频已保存但有效转写内容不足",
     }
     return any(item in compact for item in boilerplates)
 

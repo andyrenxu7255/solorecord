@@ -30,7 +30,7 @@ from .auth import (
 from .config import get_settings
 from .db import get_db, init_db
 from .exports import create_export
-from .processing import enqueue_transcription, process_uploaded_segment
+from .processing import enqueue_transcription, mark_stale_running_jobs, process_uploaded_segment
 from .processing import process_transcription_job
 from .repository import (
     list_documents_for_external,
@@ -685,6 +685,7 @@ def upload_segment_json(meeting_id: str, request: SegmentJsonUpload, user: Curre
 @app.post("/api/mobile/meetings/{meeting_id}/finish")
 def finish_meeting(meeting_id: str, user: CurrentUser) -> dict:
     _assert_access(meeting_id, user, write=True)
+    mark_stale_running_jobs()
     with get_db() as db:
         existing_job = db.execute(
             """
@@ -714,6 +715,7 @@ def finish_meeting(meeting_id: str, user: CurrentUser) -> dict:
 @app.post("/api/web/meetings/{meeting_id}/process")
 def process_meeting(meeting_id: str, user: CurrentUser) -> dict:
     _assert_access(meeting_id, user, write=True)
+    mark_stale_running_jobs()
     job_id = _enqueue_background_transcription(meeting_id)
     audit(user["id"], "meeting.process", "meeting", meeting_id, {"job_id": job_id})
     return {"jobId": job_id}
@@ -723,6 +725,7 @@ def process_meeting(meeting_id: str, user: CurrentUser) -> dict:
 @app.get("/api/web/meetings/{meeting_id}/status")
 def meeting_status(meeting_id: str, user: CurrentUser) -> dict:
     _assert_access(meeting_id, user)
+    mark_stale_running_jobs()
     with get_db() as db:
         meeting = db.execute("SELECT id, status, updated_at FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
         job = db.execute(
@@ -1230,6 +1233,7 @@ def update_providers(request: ProviderConfig, user: CurrentUser) -> dict:
 @app.get("/api/admin/jobs")
 def admin_jobs(user: CurrentUser) -> dict:
     require_admin(user)
+    mark_stale_running_jobs()
     with get_db() as db:
         rows = db.execute("SELECT * FROM processing_jobs ORDER BY created_at DESC LIMIT 100").fetchall()
     return {"items": [row_to_dict(row) for row in rows]}

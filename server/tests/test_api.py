@@ -2627,7 +2627,7 @@ def test_llm_unavailable_does_not_create_review_action_for_real_transcript(
     processing.process_transcription_job("job_real_no_llm")
 
     detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
-    assert "基于转写原文的保守整理" in detail["meeting"]["summary"]
+    assert "基于转写原文的会议要点" in detail["meeting"]["summary"]
     assert detail["actionItems"] == []
     assert detail["qualityReport"]["metrics"]["unsupported_action_count"] == 0
     assert detail["qualityReport"]["metrics"]["generic_owner_count"] == 0
@@ -3691,8 +3691,9 @@ def test_quality_probe_postprocess_grounds_conflict_summary_read_only(
     post_metrics = post["quality_report"]["metrics"]
 
     assert source_metrics["summary_unqualified_conflict_count"] == 1
-    assert "多源冲突待确认：翼天：错误样例周三前补三类" in post["summary_preview"]
-    assert "多源冲突待确认：错误样例周五前补五类" in post["role_notes_preview"]
+    assert "多源冲突待确认：错误样例周三前补三类" in post["summary_preview"]
+    assert "多源冲突待确认：错误样例周五前补五类" in post["summary_preview"]
+    assert "翼天：" in post["role_notes_preview"]
     assert post_metrics["summary_conflict_count"] > 0
     assert post_metrics["summary_unqualified_conflict_count"] == 0
 
@@ -4962,8 +4963,9 @@ def test_llm_summary_falls_back_when_not_grounded() -> None:
     )
 
     assert "海外法务审批" not in summary
-    assert "基于转写原文的保守整理" in summary
-    assert "翼天：错误样例今天补三类" in summary
+    assert "基于转写原文的会议要点" in summary
+    assert "错误样例今天补三类" in summary
+    assert "翼天：错误样例今天补三类" not in summary
     assert "围城：MySQL、PostgreSQL、Oracle 外接数据源要确认" in role_notes
     assert actions[0]["owner"] == "翼天"
     assert actions[1]["owner"] == "围城"
@@ -4976,6 +4978,82 @@ def test_llm_summary_falls_back_when_not_grounded() -> None:
     )
     assert report["metrics"]["summary_evidence_coverage"] == 1
     assert report["metrics"]["summary_unsupported_count"] == 0
+
+
+def test_llm_summary_rejects_transcript_dump_as_meeting_minutes() -> None:
+    import solorecord_server.processing as processing
+
+    segments = [
+        {
+            "speaker_id": "SPEAKER_01",
+            "display_name": "发言人 1",
+            "source_segment_no": 1,
+            "start_ms": 0,
+            "end_ms": 30000,
+            "text": "翼天这边把错误样例今天补三类，自动测试明天补完。",
+            "confidence": 0.82,
+            "flags": ["semantic_final"],
+        },
+        {
+            "speaker_id": "SPEAKER_02",
+            "display_name": "发言人 2",
+            "source_segment_no": 1,
+            "start_ms": 30000,
+            "end_ms": 60000,
+            "text": "围城负责确认 MySQL、PostgreSQL、Oracle 外接数据源。",
+            "confidence": 0.82,
+            "flags": ["semantic_final"],
+        },
+    ]
+
+    summary, role_notes, _ = processing._grounded_summary_result(
+        "发言人 1：翼天这边把错误样例今天补三类，自动测试明天补完。\n"
+        "发言人 2：围城负责确认 MySQL、PostgreSQL、Oracle 外接数据源。",
+        "翼天这边把错误样例今天补三类，自动测试明天补完：发言人 1\n"
+        "发言人 2：围城负责确认 MySQL、PostgreSQL、Oracle 外接数据源。",
+        [],
+        segments,
+    )
+
+    assert "基于转写原文的会议要点" in summary
+    assert "发言人 1：" not in summary
+    assert "发言人 2：" not in summary
+    assert "翼天这边把错误样例今天补三类" in summary
+    assert role_notes == "暂无可归纳的角色观点或承诺。"
+
+
+def test_grounded_summary_does_not_turn_noise_into_minutes() -> None:
+    import solorecord_server.processing as processing
+
+    summary, role_notes = processing._grounded_summary_from_segments(
+        [
+            {
+                "speaker_id": "SPEAKER_01",
+                "display_name": "SPEAKER_01",
+                "source_segment_no": 1,
+                "start_ms": 0,
+                "end_ms": 1000,
+                "text": "嗯",
+                "confidence": 0.4,
+                "flags": ["semantic_final"],
+            },
+            {
+                "speaker_id": "SYS_REVIEW",
+                "display_name": "系统复核",
+                "source_segment_no": 2,
+                "start_ms": 1000,
+                "end_ms": 2000,
+                "text": "音频分段 2 已上传，但最终转写没有覆盖该来源分段。请回听音频或重新转写后再入库。",
+                "confidence": 0.0,
+                "flags": ["missing_audio", "source_coverage_gap"],
+            },
+        ]
+    )
+
+    assert summary == "会议音频已保存，但有效转写内容不足，暂不能生成可靠会议纪要。请回听录音或重新转写后再整理。"
+    assert role_notes == "暂无可归纳的角色观点或承诺。"
+    assert "嗯" not in summary
+    assert "系统复核" not in role_notes
 
 
 def test_llm_summary_falls_back_when_summary_contradicts_transcript() -> None:
@@ -5011,7 +5089,7 @@ def test_llm_summary_falls_back_when_summary_contradicts_transcript() -> None:
 
     assert "客户名单已定版" not in summary
     assert "下午发送客户通知" not in summary
-    assert "基于转写原文的保守整理" in summary
+    assert "基于转写原文的会议要点" in summary
     assert "客户名单还没定版" in summary
     assert "先不要发客户通知" in role_notes
     assert actions[0]["owner"] == "李娜"
@@ -5116,7 +5194,7 @@ def test_llm_summary_drops_unsupported_action_items_before_saving() -> None:
     assert "同步客户名单到销售工作区" in tasks
     assert "启动海外法务审批" not in tasks
     assert "海外法务审批" not in summary
-    assert "基于转写原文的保守整理" in summary
+    assert "基于转写原文的会议要点" in summary
     report = repository.build_quality_report(
         [processing._segment_row_like(item) for item in segments],
         [processing._action_row_like(item) for item in actions],
@@ -5349,13 +5427,15 @@ def test_llm_summary_falls_back_when_multisource_conflict_is_definite() -> None:
     )
 
     assert "会议确认错误样例周三前补三类" not in summary
-    assert "基于转写原文的保守整理" in summary
-    assert "多源冲突待确认：翼天：错误样例周三前补三类" in summary
-    assert "多源冲突待确认：翼天：错误样例周五前补五类" in summary
+    assert "基于转写原文的会议要点" in summary
+    assert "多源冲突待确认：错误样例周三前补三类" in summary
+    assert "多源冲突待确认：错误样例周五前补五类" in summary
     assert "错误样例周三前补三类" in summary
     assert "错误样例周五前补五类" in summary
+    assert role_notes.startswith("翼天：")
+    assert "错误样例周三前补三类" in role_notes
+    assert "错误样例周五前补五类" in role_notes
     assert "多源冲突待确认：错误样例周三前补三类" in role_notes
-    assert "多源冲突待确认：错误样例周五前补五类" in role_notes
     assert actions[0]["owner"] == "翼天"
     report = repository.build_quality_report(
         [processing._segment_row_like(item) for item in segments],
@@ -7103,3 +7183,62 @@ def test_finish_returns_before_background_transcription_completes(tmp_path: Path
     assert retry.status_code == 200
     assert retry.json()["jobId"] == finish_data["jobId"]
     assert retry.json()["reused"] is True
+
+
+def test_stale_running_job_is_marked_failed_and_finish_requeues(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "陈旧任务恢复"}, headers=headers)
+    assert create.status_code == 200
+    meeting_id = create.json()["meeting"]["id"]
+
+    import solorecord_server.db as db
+    import solorecord_server.main as main
+
+    old_time = "2026-01-01T00:00:00+00:00"
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO processing_jobs
+            (id, meeting_id, type, status, current_stage, progress, asr_provider,
+             created_at, updated_at, started_at)
+            VALUES ('job_stale', ?, 'transcribe', 'running', 'preprocessing', 10,
+                    'funasr', ?, ?, ?)
+            """,
+            (meeting_id, old_time, old_time, old_time),
+        )
+        conn.execute(
+            "UPDATE meetings SET status='preprocessing', updated_at=? WHERE id=?",
+            (old_time, meeting_id),
+        )
+
+    submitted: list[str] = []
+
+    class DelayedExecutor:
+        def submit(self, fn, job_id):
+            submitted.append(job_id)
+            return None
+
+    original_executor = main.job_executor
+    main.job_executor = DelayedExecutor()
+    try:
+        finish = client.post(f"/api/mobile/meetings/{meeting_id}/finish", headers=headers)
+    finally:
+        main.job_executor = original_executor
+
+    assert finish.status_code == 200
+    payload = finish.json()
+    assert payload["reused"] is False
+    assert payload["jobId"] != "job_stale"
+    assert submitted == [payload["jobId"]]
+    with db.get_db() as conn:
+        stale = conn.execute(
+            "SELECT status, error_code FROM processing_jobs WHERE id='job_stale'"
+        ).fetchone()
+        new_job = conn.execute(
+            "SELECT status FROM processing_jobs WHERE id=?",
+            (payload["jobId"],),
+        ).fetchone()
+    assert stale["status"] == "failed"
+    assert stale["error_code"] == "JOB_STALE_TIMEOUT"
+    assert new_job["status"] == "queued"

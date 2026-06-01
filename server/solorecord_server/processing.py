@@ -1,5 +1,6 @@
 import json
 import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .asr_adapters import transcribe_with_command, transcribe_with_openai_compatible
@@ -45,6 +46,59 @@ def enqueue_transcription(
     if run_inline:
         process_transcription_job(job_id)
     return job_id
+
+
+def mark_stale_running_jobs(timeout_seconds: int | None = None) -> int:
+    settings = get_settings()
+    timeout = timeout_seconds or max(900, int(settings.asr_timeout_seconds or 3600) + 300)
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=timeout)
+    cutoff_iso = cutoff.isoformat()
+    with get_db() as db:
+        rows = db.execute(
+            """
+            SELECT * FROM processing_jobs
+            WHERE status IN ('queued', 'running')
+              AND COALESCE(started_at, updated_at, created_at) < ?
+            """,
+            (cutoff_iso,),
+        ).fetchall()
+        for row in rows:
+            db.execute(
+                """
+                UPDATE processing_jobs
+                SET status='failed', current_stage='failed',
+                    error_code='JOB_STALE_TIMEOUT',
+                    error_message=?,
+                    finished_at=?, updated_at=?
+                WHERE id=?
+                """,
+                (
+                    f"处理任务超过 {timeout} 秒没有完成或更新，已标记为可重试。",
+                    now_iso(),
+                    now_iso(),
+                    row["id"],
+                ),
+            )
+            active_sibling = db.execute(
+                """
+                SELECT 1 FROM processing_jobs
+                WHERE meeting_id = ?
+                  AND id <> ?
+                  AND status IN ('queued', 'running')
+                LIMIT 1
+                """,
+                (row["meeting_id"], row["id"]),
+            ).fetchone()
+            if not active_sibling:
+                db.execute(
+                    """
+                    UPDATE meetings
+                    SET status='failed', updated_at=?
+                    WHERE id=? AND status IN ('queued', 'preprocessing', 'transcribing', 'summarizing')
+                    """,
+                    (now_iso(), row["meeting_id"]),
+                )
+    return len(rows)
 
 
 def _current_asr_provider(default: str) -> str:
@@ -2493,6 +2547,8 @@ def _summary_is_grounded(
 ) -> bool:
     if not segments:
         return True
+    if not _summary_has_meeting_minutes_shape(summary, role_notes, segments):
+        return False
     report = build_quality_report(
         [_segment_row_like(item) for item in segments],
         [_action_row_like(item) for item in actions],
@@ -2515,19 +2571,22 @@ def _summary_is_grounded(
 def _grounded_summary_from_segments(segments: list[dict]) -> tuple[str, str]:
     if not segments:
         return "", ""
-    topic_lines = _grounded_topic_lines(segments)
+    substantive_segments = _substantive_summary_segments(segments)
+    if not substantive_segments:
+        return (
+            "会议音频已保存，但有效转写内容不足，暂不能生成可靠会议纪要。请回听录音或重新转写后再整理。",
+            "暂无可归纳的角色观点或承诺。",
+        )
+    topic_lines = _grounded_topic_lines(substantive_segments)
     if topic_lines:
-        summary = "基于转写原文的保守整理：\n" + "\n".join(
+        summary = "基于转写原文的会议要点：\n" + "\n".join(
             f"- {line}" for line in topic_lines[:8]
         )
     else:
-        summary = "基于转写原文的保守整理：\n" + "\n".join(
-            f"- {_summary_line_for_segment(item)}" for item in _speaker_segments(segments)[:8]
+        summary = "基于转写原文的会议要点：\n" + "\n".join(
+            f"- {_summary_fact_line(item)}" for item in _speaker_segments(substantive_segments)[:8]
         )
-    role_notes = "\n".join(
-        f"{speaker}：{'；'.join(texts[:4])}"
-        for speaker, texts in _group_text_by_speaker(segments).items()
-    )
+    role_notes = _grounded_role_notes(substantive_segments)
     return summary, role_notes
 
 
@@ -2535,18 +2594,195 @@ def _grounded_topic_lines(segments: list[dict]) -> list[str]:
     lines: list[str] = []
     for item in _speaker_segments(segments):
         text = item["text"]
-        speaker = item["speaker"]
         if not text:
             continue
-        if speaker and not _is_generic_speaker_name(speaker):
-            line = f"{speaker}：{text}"
-        else:
-            line = text
+        line = _summary_fact_line(item)
         if item["is_conflict"]:
             line = f"多源冲突待确认：{line}"
         if line not in lines:
             lines.append(line)
     return lines
+
+
+def _summary_has_meeting_minutes_shape(
+    summary: str,
+    role_notes: str,
+    segments: list[dict],
+) -> bool:
+    summary_text = str(summary or "").strip()
+    if not summary_text:
+        return False
+    if _looks_like_transcript_dump(summary_text):
+        return False
+    if _summary_is_mostly_copied_transcript(summary_text, segments):
+        return False
+    if str(role_notes or "").strip() and not _role_notes_have_valid_subjects(role_notes):
+        return False
+    return True
+
+
+def _looks_like_transcript_dump(text: str) -> bool:
+    value = str(text or "").strip()
+    if not value:
+        return False
+    timestamp_lines = len(re.findall(r"\[\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?", value))
+    speaker_lines = len(
+        re.findall(
+            r"(^|\n)\s*(?:[-*]\s*)?(?:SPEAKER[_\s-]?\d+|Speaker\s*\d+|发言人\s*\d+|系统复核)\s*[:：]",
+            value,
+            flags=re.IGNORECASE,
+        )
+    )
+    dialogue_lines = len(
+        re.findall(
+            r"(^|\n)\s*(?:[-*]\s*)?[\u4e00-\u9fa5A-Za-z][\u4e00-\u9fa5A-Za-z0-9·]{1,12}\s*[:：]",
+            value,
+        )
+    )
+    lines = [line.strip() for line in value.splitlines() if line.strip()]
+    if timestamp_lines:
+        return True
+    if len(lines) >= 2 and speaker_lines >= max(1, len(lines) // 2):
+        return True
+    return len(lines) >= 4 and dialogue_lines >= max(3, len(lines) - 1)
+
+
+def _summary_is_mostly_copied_transcript(summary: str, segments: list[dict]) -> bool:
+    compact_summary = _compact_summary_compare_text(summary)
+    if len(compact_summary) < 16:
+        return False
+    for segment in segments:
+        compact_segment = _compact_summary_compare_text(str(segment.get("text") or ""))
+        if len(compact_segment) >= 16 and compact_summary in compact_segment:
+            return True
+    transcript_text = _compact_summary_compare_text(
+        "".join(str(item.get("text") or "") for item in segments)
+    )
+    if len(transcript_text) < 30:
+        return False
+    overlap = _longest_common_substring_length(compact_summary[:600], transcript_text[:4000])
+    return overlap >= min(80, max(30, int(len(compact_summary) * 0.72)))
+
+
+def _compact_summary_compare_text(text: str) -> str:
+    value = re.sub(r"基于转写原文的(?:保守整理|会议要点)", "", str(text or ""))
+    value = re.sub(r"多源冲突待确认", "", value)
+    value = re.sub(r"[\s\n\r\-*•·、:：，,。！？!?；;\[\]\(\)（）]+", "", value)
+    return value.lower()
+
+
+def _longest_common_substring_length(left: str, right: str) -> int:
+    if not left or not right:
+        return 0
+    previous = [0] * (len(right) + 1)
+    best = 0
+    for left_char in left:
+        current = [0] * (len(right) + 1)
+        for index, right_char in enumerate(right, start=1):
+            if left_char == right_char:
+                current[index] = previous[index - 1] + 1
+                if current[index] > best:
+                    best = current[index]
+        previous = current
+    return best
+
+
+def _role_notes_have_valid_subjects(role_notes: str) -> bool:
+    lines = [line.strip(" -*•·\t") for line in str(role_notes or "").splitlines() if line.strip()]
+    if not lines:
+        return True
+    valid = 0
+    checked = 0
+    for line in lines:
+        subject, sep, _ = line.partition("：")
+        if not sep:
+            subject, sep, _ = line.partition(":")
+        if not sep:
+            continue
+        checked += 1
+        if _valid_role_note_subject(subject):
+            valid += 1
+    return checked == 0 or valid / checked >= 0.7
+
+
+def _valid_role_note_subject(subject: str) -> bool:
+    value = re.sub(r"\s+", "", str(subject or "").strip())
+    if not value:
+        return False
+    if re.search(r"\d{1,2}:\d{2}|SPEAKER|Speaker|发言人\d|系统复核", value, flags=re.IGNORECASE):
+        return False
+    if len(value) > 16:
+        return False
+    if any(punctuation in value for punctuation in "，,。！？!?；;[]【】（）()"):
+        return False
+    if _is_generic_speaker_name(value):
+        return False
+    if _looks_like_due_time_phrase(value) or _looks_like_rule_topic_phrase(value):
+        return False
+    return True
+
+
+def _substantive_summary_segments(segments: list[dict]) -> list[dict]:
+    return [
+        item
+        for item in segments
+        if _is_substantive_summary_segment(item)
+    ]
+
+
+def _is_substantive_summary_segment(segment: dict) -> bool:
+    flags = set(_flags(segment))
+    if {"mock_asr", "empty_asr", "missing_audio", "source_coverage_gap"} & flags:
+        return False
+    text = _clean_summary_text(str(segment.get("text") or ""), limit=500)
+    if not text:
+        return False
+    compact = re.sub(r"[\s，,。！？!?；;、]+", "", text)
+    if len(compact) < 4:
+        return False
+    low_information = {
+        "嗯",
+        "啊",
+        "哦",
+        "好的",
+        "好",
+        "可以",
+        "收到",
+        "明白",
+        "谢谢",
+        "先这样",
+        "没问题",
+    }
+    if compact in low_information:
+        return False
+    if re.fullmatch(r"(?:\[?\d{2}:\d{2}[:.\d\s-]*\]?)?(?:SPEAKER|Speaker|发言人)\s*\d*[:：]?", text, re.IGNORECASE):
+        return False
+    return True
+
+
+def _grounded_role_notes(segments: list[dict]) -> str:
+    lines = []
+    for speaker, texts in _group_text_by_speaker(segments).items():
+        if not _valid_role_note_subject(speaker):
+            continue
+        concise = _role_note_text(texts)
+        if concise:
+            lines.append(f"{speaker}：{concise}")
+    return "\n".join(lines) if lines else "暂无可归纳的角色观点或承诺。"
+
+
+def _role_note_text(texts: list[str]) -> str:
+    cleaned = []
+    for text in texts:
+        value = _clean_summary_text(text, limit=90)
+        if not value:
+            continue
+        value = _strip_dialogue_prefix(value)
+        if value not in cleaned:
+            cleaned.append(value)
+        if len(cleaned) >= 3:
+            break
+    return "；".join(cleaned)
 
 
 def _speaker_segments(segments: list[dict]) -> list[dict]:
@@ -2587,6 +2823,30 @@ def _summary_line_for_segment(item: dict) -> str:
     if item.get("is_conflict"):
         return f"多源冲突待确认：{line}"
     return line
+
+
+def _summary_fact_line(item: dict) -> str:
+    text = _strip_dialogue_prefix(str(item.get("text") or "").strip())
+    return text
+
+
+def _strip_dialogue_prefix(text: str) -> str:
+    value = str(text or "").strip()
+    if value.startswith("多源冲突待确认：") or value.startswith("多源冲突待确认:"):
+        return value
+    value = re.sub(
+        r"^(?:SPEAKER[_\s-]?\d+|Speaker\s*\d+|发言人\s*\d+|系统复核)\s*[:：]\s*",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+    value = re.sub(
+        r"^[\u4e00-\u9fa5A-Za-z][\u4e00-\u9fa5A-Za-z0-9·]{1,12}\s*[:：]\s*",
+        "",
+        value,
+        count=1,
+    )
+    return value.strip()
 
 
 def _clean_summary_text(text: str, limit: int = 120) -> str:
