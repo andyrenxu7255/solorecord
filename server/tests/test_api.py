@@ -5022,6 +5022,47 @@ def test_llm_summary_rejects_transcript_dump_as_meeting_minutes() -> None:
     assert role_notes == "暂无可归纳的角色观点或承诺。"
 
 
+def test_bad_role_notes_do_not_force_good_minutes_to_fallback() -> None:
+    import solorecord_server.processing as processing
+
+    segments = [
+        {
+            "speaker_id": "MANUAL_yitian",
+            "display_name": "翼天",
+            "source_segment_no": 1,
+            "start_ms": 0,
+            "end_ms": 30000,
+            "text": "错误样例今天补三类，自动测试明天补完。",
+            "confidence": 0.82,
+            "flags": ["semantic_final"],
+        },
+        {
+            "speaker_id": "MANUAL_weicheng",
+            "display_name": "围城",
+            "source_segment_no": 1,
+            "start_ms": 30000,
+            "end_ms": 60000,
+            "text": "MySQL、PostgreSQL、Oracle 外接数据源要确认。",
+            "confidence": 0.82,
+            "flags": ["semantic_final"],
+        },
+    ]
+
+    summary, role_notes, _ = processing._grounded_summary_result(
+        "会议围绕错误样例补充、自动测试收尾和外接数据源确认展开，明确翼天补样例与测试，围城确认 MySQL、PostgreSQL、Oracle 数据源。",
+        "错误样例今天补三类，自动测试明天补完：翼天\n"
+        "MySQL、PostgreSQL、Oracle 外接数据源要确认：围城",
+        [],
+        segments,
+    )
+
+    assert summary.startswith("会议围绕错误样例补充")
+    assert "基于转写原文的会议要点" not in summary
+    assert "错误样例今天补三类，自动测试明天补完：翼天" not in role_notes
+    assert "翼天：" in role_notes
+    assert "围城：" in role_notes
+
+
 def test_grounded_summary_does_not_turn_noise_into_minutes() -> None:
     import solorecord_server.processing as processing
 

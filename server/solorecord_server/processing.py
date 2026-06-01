@@ -2533,28 +2533,35 @@ def _grounded_summary_result(
     grounded_actions = _prefer_suggested_action_owners(normalized_actions, segments)
     grounded_actions = _drop_contradictory_action_items(grounded_actions, segments)
     grounded_actions = _drop_unsupported_action_items(grounded_actions, segments)
-    if _summary_is_grounded(summary, role_notes, grounded_actions, segments):
-        return summary, role_notes, grounded_actions
     fallback_summary, fallback_role_notes = _grounded_summary_from_segments(segments)
-    return fallback_summary, fallback_role_notes, grounded_actions
+    final_summary = (
+        summary
+        if _summary_is_grounded(summary, grounded_actions, segments)
+        else fallback_summary
+    )
+    final_role_notes = (
+        role_notes
+        if _role_notes_are_grounded(role_notes)
+        else fallback_role_notes
+    )
+    return final_summary, final_role_notes, grounded_actions
 
 
 def _summary_is_grounded(
     summary: str,
-    role_notes: str,
     actions: list[dict],
     segments: list[dict],
 ) -> bool:
     if not segments:
         return True
-    if not _summary_has_meeting_minutes_shape(summary, role_notes, segments):
+    if not _summary_has_meeting_minutes_shape(summary, segments):
         return False
     report = build_quality_report(
         [_segment_row_like(item) for item in segments],
         [_action_row_like(item) for item in actions],
         [],
         summary,
-        role_notes,
+        "",
     )
     metrics = report.get("metrics") or {}
     coverage = float(metrics.get("summary_evidence_coverage") or 0)
@@ -2566,6 +2573,13 @@ def _summary_is_grounded(
     if unqualified_conflicts:
         return False
     return unsupported == 0 and coverage >= 0.6
+
+
+def _role_notes_are_grounded(role_notes: str) -> bool:
+    value = str(role_notes or "").strip()
+    if not value:
+        return False
+    return _role_notes_have_valid_subjects(value)
 
 
 def _grounded_summary_from_segments(segments: list[dict]) -> tuple[str, str]:
@@ -2606,7 +2620,6 @@ def _grounded_topic_lines(segments: list[dict]) -> list[str]:
 
 def _summary_has_meeting_minutes_shape(
     summary: str,
-    role_notes: str,
     segments: list[dict],
 ) -> bool:
     summary_text = str(summary or "").strip()
@@ -2615,8 +2628,6 @@ def _summary_has_meeting_minutes_shape(
     if _looks_like_transcript_dump(summary_text):
         return False
     if _summary_is_mostly_copied_transcript(summary_text, segments):
-        return False
-    if str(role_notes or "").strip() and not _role_notes_have_valid_subjects(role_notes):
         return False
     return True
 
@@ -2702,7 +2713,7 @@ def _role_notes_have_valid_subjects(role_notes: str) -> bool:
         checked += 1
         if _valid_role_note_subject(subject):
             valid += 1
-    return checked == 0 or valid / checked >= 0.7
+    return checked > 0 and valid / checked >= 0.7
 
 
 def _valid_role_note_subject(subject: str) -> bool:
