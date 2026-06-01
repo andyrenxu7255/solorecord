@@ -1129,6 +1129,34 @@ textarea.input {
   font-size: 13px;
 }
 
+.speaker-sample {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+}
+
+.speaker-sample b {
+  font-size: 13px;
+}
+
+.speaker-sample audio {
+  display: none;
+  width: 100%;
+  height: 34px;
+}
+
+.speaker-sample audio.ready {
+  display: block;
+}
+
+.speaker-sample small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 .segment-insight-list,
 .export-list {
   display: grid;

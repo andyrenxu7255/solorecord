@@ -381,6 +381,14 @@ def build_quality_report(
             if str(flag).startswith("scenario:"):
                 scenario = str(flag).split(":", 1)[1] or "unknown"
                 scenario_counts[scenario] = scenario_counts.get(scenario, 0) + 1
+    expected_speaker_ceiling = max(8, len(candidate_people) + 4)
+    too_many_speakers = (
+        len(unique_speakers) >= 16
+        or (
+            len(unique_speakers) >= 10
+            and len(unique_speakers) > expected_speaker_ceiling
+        )
+    )
 
     issues: list[dict] = []
     if not segments:
@@ -411,6 +419,19 @@ def build_quality_report(
                 "single_speaker",
                 "整场只有一个发言人标签",
                 "如果这是多人会议，建议先检查时间线中较长段落并拆分发言人。",
+            )
+        )
+    if too_many_speakers:
+        severity = "high" if len(unique_speakers) >= 24 else "medium"
+        issues.append(
+            _quality_issue(
+                severity,
+                "too_many_speakers",
+                "发言人标签异常偏多",
+                (
+                    f"当前识别出 {len(unique_speakers)} 个发言人标签，"
+                    "明显偏多时通常是同一人被拆成多个 speaker。"
+                ),
             )
         )
     if review_segments:
@@ -642,6 +663,11 @@ def build_quality_report(
             "speaker_review_count": len(review_segments),
             "speaker_evidence_weak_count": len(weak_speaker_evidence_segments),
             "speaker_alias_conflict_count": len(speaker_alias_conflicts),
+            "speaker_over_split_count": (
+                max(0, len(unique_speakers) - expected_speaker_ceiling)
+                if too_many_speakers
+                else 0
+            ),
             "long_segment_count": len(long_segments),
             "mixed_marker_segment_count": len(possible_mixed_segments),
             "llm_segment_count": llm_segments,
@@ -710,6 +736,7 @@ def _quality_recommendations(issues: list[dict]) -> list[str]:
         "empty_transcript": "先完成转写，再生成纪要和待办。",
         "placeholder_transcript": "占位转写不能作为会议证据，先重新转写或回听校正。",
         "single_speaker": "优先检查最长的转写段，使用“按人名拆分”和“设为新发言人”。",
+        "too_many_speakers": "优先播放人物校对区的声音样本，把同一人的多个 speaker_id 统一为真实姓名。",
         "speaker_review": "在人人物校对区把模型推断的人名统一成真实姓名。",
         "speaker_evidence_weak": "优先播放对应音频，确认模型没有把角色、议题或误听词当成人名。",
         "speaker_alias_conflict": "同名多标签通常来自模型保留 ASR 原始 speaker_id，确认后用人物校对统一。",

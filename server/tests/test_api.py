@@ -5631,6 +5631,49 @@ def test_quality_report_flags_same_name_multiple_speaker_ids(tmp_path: Path) -> 
     assert set(yitian_nodes[0]["speaker_ids"]) == {"SPEAKER_02", "MANUAL_翼天"}
 
 
+def test_quality_report_flags_too_many_speaker_tags(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "发言人过度拆分"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+
+    rows = [
+        (
+            f"seg_many_speaker_{index}",
+            meeting_id,
+            1,
+            1,
+            f"SPEAKER_{index:02d}",
+            f"发言人 {index}",
+            index * 5000,
+            index * 5000 + 4000,
+            "这个交付项今天继续推进。",
+            0.78,
+            '["asr_speaker"]',
+            "now",
+        )
+        for index in range(1, 25)
+    ]
+    with db.get_db() as conn:
+        conn.executemany(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+
+    report = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()["qualityReport"]
+    issue_types = {item["type"] for item in report["issues"]}
+    assert report["metrics"]["speaker_count"] == 24
+    assert report["metrics"]["speaker_over_split_count"] > 0
+    assert "too_many_speakers" in issue_types
+    assert any("声音样本" in item for item in report["recommendations"])
+
+
 def test_knowledge_graph_links_speakers_topics_actions_and_times(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)
@@ -5965,6 +6008,16 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "speakerEvidence" in app_js
     assert "speakerAliasConflicts" in app_js
     assert "speaker_alias_conflict_count" in app_js
+    assert "speaker_over_split_count" in app_js
+    assert "buildSpeakerSamples" in app_js
+    assert "playSpeakerSample" in app_js
+    assert "data-sample-audio" in app_js
+    assert "data-speakers" in app_js
+    assert "speakerStatsKey" in app_js
+    assert "声音样本" in app_js
+    assert "too_many_speakers" in (Path(__file__).parents[1] / "solorecord_server" / "repository.py").read_text(
+        encoding="utf-8"
+    )
     assert "同名多标签" in app_js
     assert "buildSpeakerEvidenceMap" in app_js
     assert "renderSpeakerEvidenceHint" in app_js
@@ -5972,6 +6025,7 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "查看证据弱段落" in app_js
     assert "matchesTranscriptFilter" in app_js
     assert ".quality-shortcut" in styles
+    assert ".speaker-sample" in styles
     assert ".speaker-evidence" in styles
     assert ".speaker-alias-conflict" in styles
     assert ".action-risk-line" in styles

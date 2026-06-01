@@ -322,7 +322,8 @@ function renderMeetingDetail(data, transcriptSegments) {
   const uploadedAudio = audioSegments.filter((segment) => segment.upload_status === "uploaded").length;
   const recordingSources = data.recordingSources || [];
   const statusHint = meetingStatusHint(meeting.status, audioSegments, transcriptSegments);
-  const speakerStats = buildSpeakerStats(transcriptSegments, actions);
+  const speakerSamples = buildSpeakerSamples(transcriptSegments, audioSegments, meeting.id);
+  const speakerStats = buildSpeakerStats(transcriptSegments, actions, speakerSamples);
   const segmentInsights = buildSegmentInsights(transcriptSegments, actions, audioSegments);
   const actionRiskMap = buildActionRiskMap(qualityReport);
   const speakerEvidenceMap = buildSpeakerEvidenceMap(qualityReport);
@@ -477,6 +478,9 @@ function renderMeetingDetail(data, transcriptSegments) {
   });
   $$(".person-save").forEach((button) => {
     button.addEventListener("click", () => savePersonAlias(button.closest(".person-card")));
+  });
+  $$(".speaker-sample-play").forEach((button) => {
+    button.addEventListener("click", () => playSpeakerSample(button));
   });
   $$(".transcript-row").forEach(bindTranscriptRowEvents);
   $$(".export-download").forEach((button) => {
@@ -745,11 +749,37 @@ function renderEvidenceJumpButton(item) {
 }
 
 function renderPersonCard(person) {
+  const sample = person.sample;
+  const speakerIds = Array.isArray(person.speakerIds) && person.speakerIds.length
+    ? person.speakerIds
+    : [person.id];
+  const sampleHint = sample
+    ? `${sample.sourceLabel} · ${formatTime(sample.absoluteStartMs)}-${formatTime(sample.absoluteEndMs)}`
+    : "暂无可试听样本";
   return `
-    <article class="person-card" data-speaker="${escapeAttr(person.id)}" data-original-name="${escapeAttr(person.name)}">
+    <article class="person-card"
+      data-speaker="${escapeAttr(person.id)}"
+      data-speakers="${escapeAttr(speakerIds.join("|"))}"
+      data-original-name="${escapeAttr(person.name)}">
       <div>
         <b>${escapeHtml(person.name)}</b>
-        <span>${person.count} 段发言 · ${formatTime(person.durationMs)} · ${person.actionCount} 个待办</span>
+        <span>${person.count} 段发言 · ${formatTime(person.durationMs)} · ${person.actionCount} 个待办${speakerIds.length > 1 ? ` · 已归并 ${speakerIds.length} 个标签` : ""}</span>
+      </div>
+      <div class="speaker-sample">
+        <div>
+          <b>声音样本</b>
+          <span>${escapeHtml(sampleHint)}</span>
+        </div>
+        ${sample ? `
+          <button type="button" class="button secondary speaker-sample-play"
+            data-sample-audio="${escapeAttr(sample.audioUrl)}"
+            data-sample-start="${escapeAttr(sample.startSec)}"
+            data-sample-end="${escapeAttr(sample.endSec)}">
+            试听 ${escapeHtml(formatSampleSeconds(sample))}
+          </button>
+          <audio class="speaker-sample-audio" controls preload="none"></audio>
+          <small>${escapeHtml(sample.text)}</small>
+        ` : "<small>转写段落还没有对应的可播放音频。</small>"}
       </div>
       <label>正确姓名</label>
       <input class="input person-name" value="${escapeAttr(person.name)}">
@@ -1748,6 +1778,10 @@ function bestSplitPosition(text, cursor) {
 async function savePersonAlias(card) {
   if (!card) return;
   const speakerId = card.dataset.speaker || "";
+  const speakerIds = (card.dataset.speakers || speakerId)
+    .split("|")
+    .map((item) => item.trim())
+    .filter(Boolean);
   const displayName = card.querySelector(".person-name").value.trim();
   const aliases = card.querySelector(".person-aliases").value
     .split(/[,，、\n]/)
@@ -1763,15 +1797,17 @@ async function savePersonAlias(card) {
     toast("请填写正确姓名");
     return;
   }
-  await api(`/api/web/meetings/${state.selectedMeetingId}/speakers/rename`, {
-    method: "POST",
-    body: JSON.stringify({
-      speaker_id: speakerId,
-      display_name: displayName,
-      aliases,
-      replace_text: replaceText,
-    }),
-  });
+  for (const id of speakerIds) {
+    await api(`/api/web/meetings/${state.selectedMeetingId}/speakers/rename`, {
+      method: "POST",
+      body: JSON.stringify({
+        speaker_id: id,
+        display_name: displayName,
+        aliases,
+        replace_text: replaceText,
+      }),
+    });
+  }
   toast("人物名称和正文已统一处理");
   await selectMeeting(state.selectedMeetingId);
 }
@@ -1870,6 +1906,65 @@ async function loadAuthorizedAudio(button) {
       textContent: "音频加载失败，请确认权限或稍后重试",
     }));
   }
+}
+
+async function playSpeakerSample(button) {
+  const url = button.dataset.sampleAudio || "";
+  const start = Number(button.dataset.sampleStart || 0);
+  const end = Number(button.dataset.sampleEnd || 0);
+  const sampleBox = button.closest(".speaker-sample");
+  const audio = sampleBox?.querySelector(".speaker-sample-audio");
+  if (!url || !audio) return;
+  try {
+    button.disabled = true;
+    button.textContent = "加载中";
+    if (audio.dataset.objectUrl) {
+      URL.revokeObjectURL(audio.dataset.objectUrl);
+      audio.dataset.objectUrl = "";
+    }
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${state.token}` } });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const objectUrl = URL.createObjectURL(await response.blob());
+    audio.dataset.objectUrl = objectUrl;
+    audio.dataset.sampleEnd = String(end);
+    audio.src = objectUrl;
+    audio.classList.add("ready");
+    await seekAndPlayAudio(audio, start, end);
+    button.textContent = "重新试听";
+  } catch (error) {
+    button.textContent = "试听失败";
+    toast("声音样本加载失败，请确认权限或稍后重试");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function seekAndPlayAudio(audio, start, end) {
+  const safeStart = Math.max(0, Number(start || 0));
+  const safeEnd = Math.max(safeStart + 1, Number(end || safeStart + 10));
+  audio.ontimeupdate = () => {
+    if (audio.currentTime >= safeEnd) {
+      audio.pause();
+      audio.currentTime = safeStart;
+    }
+  };
+  return new Promise((resolve) => {
+    const play = () => {
+      try {
+        audio.currentTime = safeStart;
+      } catch (error) {
+        // Some mobile browsers reject seeking before metadata is complete.
+      }
+      audio.play().catch(() => {});
+      resolve();
+    };
+    if (audio.readyState >= 1) {
+      play();
+      return;
+    }
+    audio.addEventListener("loadedmetadata", play, { once: true });
+    audio.load();
+  });
 }
 
 async function createAndUpload() {
@@ -2467,18 +2562,30 @@ function meetingStatusHint(status, audioSegments, transcriptSegments) {
   return "音频已保存后会进入转写和整理流程。";
 }
 
-function buildSpeakerStats(segments, actions = []) {
+function buildSpeakerStats(segments, actions = [], speakerSamples = new Map()) {
   const stats = new Map();
   const substantiveSegments = segments.filter((segment) => !isPlaceholderTranscriptFlags(parseFlags(segment.flags)));
   substantiveSegments.forEach((segment) => {
     const id = segment.speaker_id || segment.display_name || "speaker";
     const name = segment.display_name || segment.speaker_id || "发言人";
-    const item = stats.get(id) || { id, name, count: 0, durationMs: 0, actionCount: 0, aliases: [] };
-    item.name = name;
+    const key = speakerStatsKey(id, name);
+    const item = stats.get(key) || {
+      id,
+      name,
+      count: 0,
+      durationMs: 0,
+      actionCount: 0,
+      aliases: [],
+      speakerIds: [],
+      sample: null,
+    };
+    item.name = name || item.name;
+    if (id && !item.speakerIds.includes(id)) item.speakerIds.push(id);
     item.count += 1;
     item.durationMs += Math.max(0, Number(segment.end_ms || 0) - Number(segment.start_ms || 0));
     if (segment.display_name && segment.display_name !== id) item.aliases.push(id);
-    stats.set(id, item);
+    item.sample = item.sample || speakerSamples.get(id) || speakerSamples.get(name) || null;
+    stats.set(key, item);
   });
   actions.forEach((action) => {
     const owner = String(action.owner || "").trim();
@@ -2487,12 +2594,117 @@ function buildSpeakerStats(segments, actions = []) {
     if (match) {
       match.actionCount += 1;
     } else if (owner !== "待确认") {
-      stats.set(`owner:${owner}`, { id: `owner:${owner}`, name: owner, count: 0, durationMs: 0, actionCount: 1, aliases: [] });
+      stats.set(`owner:${owner}`, {
+        id: `owner:${owner}`,
+        name: owner,
+        count: 0,
+        durationMs: 0,
+        actionCount: 1,
+        aliases: [],
+        speakerIds: [`owner:${owner}`],
+        sample: null,
+      });
     }
   });
   return Array.from(stats.values())
     .map((item) => ({ ...item, aliases: Array.from(new Set(item.aliases.filter(Boolean))) }))
     .sort((left, right) => right.durationMs - left.durationMs);
+}
+
+function speakerStatsKey(id, name) {
+  const displayName = String(name || "").trim();
+  const speakerId = String(id || "").trim();
+  if (displayName && !isGenericSpeakerLabel(displayName)) return `name:${displayName}`;
+  return `id:${speakerId || displayName || "speaker"}`;
+}
+
+function isGenericSpeakerLabel(name) {
+  const value = String(name || "").trim();
+  return !value || value.startsWith("发言人") || value.toLowerCase().startsWith("speaker");
+}
+
+function buildSpeakerSamples(segments, audioSegments, meetingId) {
+  const samples = new Map();
+  const substantiveSegments = segments.filter((segment) => {
+    const flags = parseFlags(segment.flags);
+    return !isPlaceholderTranscriptFlags(flags) && (segment.speaker_id || segment.display_name);
+  });
+  substantiveSegments.forEach((segment) => {
+    const audio = findAudioForTranscriptSegment(segment, audioSegments);
+    if (!audio) return;
+    const sample = buildSpeakerSample(segment, audio, meetingId);
+    if (!sample) return;
+    [segment.speaker_id, segment.display_name].filter(Boolean).forEach((key) => {
+      const current = samples.get(key);
+      if (!current || sample.rank > current.rank) samples.set(key, sample);
+    });
+  });
+  return samples;
+}
+
+function findAudioForTranscriptSegment(segment, audioSegments) {
+  if (!Array.isArray(audioSegments) || !audioSegments.length) return null;
+  const sourceId = String(segment.source_id || "primary").trim() || "primary";
+  const sourceSegmentNo = Number(segment.source_segment_no || 0);
+  if (sourceSegmentNo) {
+    const exact = audioSegments.find((audio) => (
+      String(audio.source_id || "primary") === sourceId
+      && Number(audio.source_segment_no || audio.segment_no || 0) === sourceSegmentNo
+    ));
+    if (exact) return exact;
+  }
+  const start = Number(segment.start_ms || 0);
+  const end = Number(segment.end_ms || start);
+  return audioSegments.find((audio) => {
+    const audioStart = Number(audio.start_ms || 0);
+    const audioEnd = Number(audio.end_ms || audioStart + Number(audio.duration_ms || 0));
+    return start < audioEnd && end > audioStart;
+  }) || null;
+}
+
+function buildSpeakerSample(segment, audio, meetingId) {
+  const audioStartMs = Number(audio.start_ms || 0);
+  const audioDurationMs = Number(audio.duration_ms || Math.max(0, Number(audio.end_ms || 0) - audioStartMs));
+  const audioEndMs = audioDurationMs ? audioStartMs + audioDurationMs : Number(audio.end_ms || 0);
+  const segmentStartMs = Math.max(audioStartMs, Number(segment.start_ms || audioStartMs));
+  const segmentEndMs = Math.max(segmentStartMs + 1000, Number(segment.end_ms || segmentStartMs + 10000));
+  const availableEndMs = audioEndMs > audioStartMs ? Math.min(segmentEndMs, audioEndMs) : segmentEndMs;
+  const availableMs = Math.max(1000, availableEndMs - segmentStartMs);
+  const targetMs = Math.min(20000, Math.max(5000, availableMs));
+  const sampleEndMs = audioEndMs > audioStartMs
+    ? Math.min(audioEndMs, segmentStartMs + targetMs)
+    : segmentStartMs + targetMs;
+  if (sampleEndMs <= segmentStartMs) return null;
+  const relativeStartSec = Math.max(0, (segmentStartMs - audioStartMs) / 1000);
+  const relativeEndSec = Math.max(relativeStartSec + 1, (sampleEndMs - audioStartMs) / 1000);
+  const absoluteDurationMs = sampleEndMs - segmentStartMs;
+  const downloadUrl = audio.download_url || `/api/web/meetings/${meetingId}/segments/${audio.segment_no}/audio`;
+  return {
+    audioUrl: webAudioUrl(downloadUrl),
+    startSec: relativeStartSec.toFixed(2),
+    endSec: relativeEndSec.toFixed(2),
+    absoluteStartMs: segmentStartMs,
+    absoluteEndMs: sampleEndMs,
+    durationMs: absoluteDurationMs,
+    sourceLabel: `${audio.source_label || sourceDisplayLabel(audio)} · 分段 ${audio.source_segment_no || audio.segment_no}`,
+    text: summarizeSegmentText(segment.text || ""),
+    rank: speakerSampleRank(segment, absoluteDurationMs),
+  };
+}
+
+function webAudioUrl(url) {
+  return String(url || "").replace("/api/mobile/", "/api/web/");
+}
+
+function speakerSampleRank(segment, durationMs) {
+  const textLength = String(segment.text || "").trim().length;
+  const durationScore = durationMs >= 5000 && durationMs <= 20000 ? 100 : Math.min(80, durationMs / 200);
+  return durationScore + Math.min(60, textLength);
+}
+
+function formatSampleSeconds(sample) {
+  const seconds = Math.max(1, Math.round(Number(sample?.durationMs || 0) / 1000));
+  return `${seconds} 秒`;
 }
 
 function buildSegmentInsights(segments, actions, audioSegments) {
@@ -2582,6 +2794,11 @@ function buildClientQualityReport(segments, actions) {
   if (speakerCount <= 1 && substantiveSegments.length >= 2) {
     issues.push({ severity: "medium", title: "整场只有一个发言人标签", detail: "多人会议建议检查长段并拆分发言人。" });
   }
+  if (speakerCount >= 16) {
+    issues.push({ severity: "high", title: "发言人标签异常偏多", detail: `${speakerCount} 个发言人标签可能是同一人被拆成多个 speaker。` });
+  } else if (speakerCount >= 10) {
+    issues.push({ severity: "medium", title: "发言人标签偏多", detail: "建议在人物校对区试听声音样本并合并同一人标签。" });
+  }
   if (speakerReviewCount) {
     issues.push({ severity: "medium", title: "存在需要校对的发言人", detail: `${speakerReviewCount} 个段落建议人工抽查。` });
   }
@@ -2600,6 +2817,7 @@ function buildClientQualityReport(segments, actions) {
       candidate_people_count: 0,
       speaker_review_count: speakerReviewCount,
       speaker_evidence_weak_count: 0,
+      speaker_over_split_count: speakerCount >= 10 ? speakerCount : 0,
       action_count: actions.length,
       actionable_action_count: actionableActions.length,
       system_review_action_count: systemReviewActionCount,
@@ -2686,7 +2904,10 @@ function buildTranscriptFilters(segments) {
     }
   });
   buildSpeakerStats(segments).forEach((speaker) => {
-    filters.push({ value: `speaker:${speaker.id}`, label: speaker.name });
+    const speakerIds = Array.isArray(speaker.speakerIds) && speaker.speakerIds.length
+      ? speaker.speakerIds
+      : [speaker.id];
+    filters.push({ value: `speaker:${speakerIds.join("|")}`, label: speaker.name });
   });
   return filters;
 }
@@ -2708,8 +2929,8 @@ function matchesTranscriptFilter(segment, filter) {
     return Number(segment.source_segment_no || 0) === parsed.sourceSegmentNo;
   }
   if (filter.startsWith("speaker:")) {
-    const speakerId = filter.slice("speaker:".length);
-    return String(segment.speaker_id || "") === speakerId;
+    const speakerIds = filter.slice("speaker:".length).split("|").filter(Boolean);
+    return speakerIds.includes(String(segment.speaker_id || ""));
   }
   if (filter.startsWith("flag:")) {
     const wanted = filter.slice("flag:".length);

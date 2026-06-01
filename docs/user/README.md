@@ -102,9 +102,11 @@ Windows 版本下载后解压，运行 `SoloRecord.exe`。iOS、macOS 和 Harmon
 
 例如把 `发言人 1` 改成 `张三`，后面所有 `发言人 1` 都会显示为 `张三`。
 
+Web 端“人物校对”会给每个发言人显示一段 5-20 秒的声音样本。校对名字前，先点击“试听”，确认这张卡片对应谁，再填写真实姓名。若多个卡片其实是同一个人，把它们改成同一个真实姓名后，人物区会按姓名合并展示；系统仍会在底层保留原始 `speaker_id` 供追溯。
+
 如果系统已经根据上下文拆出了“任旭”“李娜”这类名字，但旁边标记了“需确认”，说明这是模型推断结果，建议你重点看这一段原文和音频。Web 时间线还可能显示“大模型分段”或“规则分段”，它们表示系统在 ASR 之后又做了一次对话轮次整理。
 
-Web 详情页的“整理质量”会提示候选人名、需要校对的段落、发言人证据风险、分段覆盖率和待办证据率。待办证据率不是最终评分，而是提醒你：待办是否能在转写原文里找到依据。分段覆盖率用于发现某个音频分段在最终转写里过短或缺失；如果系统补出“系统复核”转写行，表示这段音频已上传但缺少有效转写，需要回听或重新转写。这类行只是定位复核入口，不会被当成发言人、纪要依据、待办依据或图谱事实。若出现“发言人缺少原文证据”“音频分段待核对”“待办缺少转写证据”或“待办与原文相反”，建议先回看对应转写或录音，再复制给 IM 或外部系统。
+Web 详情页的“整理质量”会提示候选人名、需要校对的段落、发言人证据风险、分段覆盖率和待办证据率。如果识别出十几个甚至几十个发言人标签，而实际参会人很少，系统会提示“发言人标签异常偏多”。这通常不是参会人真的很多，而是 ASR 或后处理把同一人的声音拆成了多个标签，建议优先到“人物校对”试听声音样本并合并同一人。待办证据率不是最终评分，而是提醒你：待办是否能在转写原文里找到依据。分段覆盖率用于发现某个音频分段在最终转写里过短或缺失；如果系统补出“系统复核”转写行，表示这段音频已上传但缺少有效转写，需要回听或重新转写。这类行只是定位复核入口，不会被当成发言人、纪要依据、待办依据或图谱事实。若出现“发言人缺少原文证据”“音频分段待核对”“待办缺少转写证据”或“待办与原文相反”，建议先回看对应转写或录音，再复制给 IM 或外部系统。
 
 如果开启了多源同录，“整理质量”还会显示“多源合并”“多源互补”和“多源冲突”。多源合并表示系统发现多个录音源在同一时间记录了相近内容，并保留了更完整的一条；多源互补表示不同录音源各自漏掉了部分短语，系统把原始转写里能互相印证、且没有事实冲突的短语补到同一条记录中；多源冲突表示同一时间不同来源差异较大，或日期、数量、负责人等关键事实不一致，建议回听对应录音后再对外发送纪要。
 
@@ -137,7 +139,7 @@ Web 详情页的“整理质量”会提示候选人名、需要校对的段落�
 
 1. 看顶部状态和分段数量，确认没有待上传分段。
 2. 播放关键录音分段，确认音频可用。
-3. 修改说话人名称。
+3. 在人物校对区试听声音样本，合并同一人的多个发言人标签。
 4. 检查会议纪要是否符合真实结论。
 5. 检查待办的负责人、任务、截止时间和状态。
 6. 用说话人或音频分段筛选转写，校对关键原文。
@@ -352,6 +354,10 @@ If you know who a speaker is:
 
 The same speaker id is updated everywhere. For example, changing `Speaker 1` to `Alice` updates all matching transcript rows.
 
+On the Web, each speaker card includes a 5-20 second voice sample. Play the sample before renaming the card so you can confirm who it belongs to. If several cards are actually the same person, rename them to the same real name; the people panel will group them by name while keeping the original `speaker_id` values for traceability.
+
+The Web quality panel warns when speaker labels are unusually high. If it shows ten or dozens of speaker tags but the real meeting had only a few people, treat that as over-splitting by ASR or post-processing. Start with the voice samples in the people panel and merge same-person labels before sending summaries or action items downstream.
+
 ### Summaries And Action Items
 
 The system generates:
@@ -395,7 +401,7 @@ Recommended review flow:
 
 1. Check the top status and segment counts to confirm nothing is pending upload.
 2. Play key audio segments to confirm audio availability.
-3. Rename speakers.
+3. Play speaker samples in the people panel and merge same-person labels.
 4. Check whether the summary matches the actual meeting decisions.
 5. Check action owners, tasks, due dates, and status.
 6. Filter the transcript by speaker or audio segment to review key evidence.
