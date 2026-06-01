@@ -250,7 +250,7 @@ Android 录音和上传采用连续录音、重叠分段、分段级断点续传
 
 转写是企业知识平台的原始证据层。服务端使用 `transcript_segment_history` 归档被重处理或人工替换前的旧行。非 admin 用户更新转写时不能减少段落数；admin 可以删除段落，但删除前同样归档。知识平台 Agent 应通过 `/api/external/meetings/{meetingId}/transcript?include_history=true` 拉取当前转写和历史，不要直接读 SQLite。待办事项通过 `/api/web/meetings/{meetingId}/actions` 或 `/api/mobile/meetings/{meetingId}/actions` 更新，字段为 `owner`、`task`、`due`、`status`，更新后会出现在同步、导出、外部 API、持久化本体图谱和可选 ES/OpenSearch 索引中。
 
-本体图谱由 `ontology.py` 维护，实体表是 `ontology_entities`，关系表是 `ontology_relations`。实体类型固定为 `person`、`place`、`time`、`matter`、`action`；关系优先使用 `responsible_for`、`due_at`、`located_at`、`scheduled_at`、`discussed`、`related_to`、`depends_on`、`mentioned`。会议最终转写整理成功后会自动创建 `knowledge_graph` 任务并落库；也可以调用 `/api/web/meetings/{meetingId}/ontology/extract` 或移动端同名接口单独重建，不需要重跑 ASR。图谱结果通过 `ontologyGraph` 返回，外部知识平台可单独拉取 `/api/external/meetings/{meetingId}/ontology`。`knowledgeGraph` 仍保留为轻量主题图，`ontologyGraph` 才是面向“人员-地点-时间-事项-待办”对象抽槽和关系查询的持久化图谱。
+本体图谱由 `ontology.py` 维护，实体表是 `ontology_entities`，关系表是 `ontology_relations`。实体类型固定为 `person`、`place`、`time`、`matter`、`action`；关系优先使用 `responsible_for`、`due_at`、`located_at`、`scheduled_at`、`discussed`、`related_to`、`depends_on`、`mentioned`。规则兜底抽槽也会根据“依赖、等待、需要、先”等上下文建立 `action -> action` 的 `depends_on` 关系，例如“接口联调依赖测试账号”应形成“完成接口联调 -> 提供测试账号”的边，并保留转写/待办证据。会议最终转写整理成功后会自动创建 `knowledge_graph` 任务并落库；也可以调用 `/api/web/meetings/{meetingId}/ontology/extract` 或移动端同名接口单独重建，不需要重跑 ASR。图谱结果通过 `ontologyGraph` 返回，外部知识平台可单独拉取 `/api/external/meetings/{meetingId}/ontology`。`knowledgeGraph` 仍保留为轻量主题图，`ontologyGraph` 才是面向“人员-地点-时间-事项-待办”对象抽槽和关系查询的持久化图谱。
 
 `/segments-json` 仍保留作兼容和简单测试入口，Android 主流程不再使用它上传长会议音频。
 
@@ -833,11 +833,16 @@ persisted ontology graph. `ontology.py` stores entities in
 `ontology_entities` and relations in `ontology_relations`. Entity types are
 limited to `person`, `place`, `time`, `matter`, and `action`; relation types
 prefer `responsible_for`, `due_at`, `located_at`, `scheduled_at`, `discussed`,
-`related_to`, `depends_on`, and `mentioned`. Final meeting processing queues a
-`knowledge_graph` job automatically, and clients may rebuild only the graph via
-`/api/web/meetings/{meetingId}/ontology/extract` without rerunning ASR. The old
-`knowledgeGraph` field remains a lightweight topic graph; `ontologyGraph` is
-the durable object-slot graph for people, places, times, matters, and actions.
+`related_to`, `depends_on`, and `mentioned`. The rule fallback also builds
+`action -> action` `depends_on` edges from context markers such as "depends on",
+"wait for", "need", or "first", for example "interface integration depends on
+the test account" becomes "finish interface integration -> provide test
+account" with transcript/action evidence attached. Final meeting processing
+queues a `knowledge_graph` job automatically, and clients may rebuild only the
+graph via `/api/web/meetings/{meetingId}/ontology/extract` without rerunning
+ASR. The old `knowledgeGraph` field remains a lightweight topic graph;
+`ontologyGraph` is the durable object-slot graph for people, places, times,
+matters, and actions.
 Knowledge agents should pull `/api/external/meetings/{meetingId}/transcript?include_history=true`
 instead of reading SQLite directly.
 

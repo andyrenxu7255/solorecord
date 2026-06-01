@@ -337,6 +337,7 @@ def _rule_extract_ontology(segments: list[dict], actions: list[dict]) -> dict:
     entities: list[dict] = []
     relations: list[dict] = []
     entity_by_key: dict[tuple[str, str], dict] = {}
+    action_records: list[dict] = []
 
     def add_entity(
         entity_type: str,
@@ -397,6 +398,28 @@ def _rule_extract_ontology(segments: list[dict], actions: list[dict]) -> dict:
             }
         )
 
+    def remember_action(
+        action_entity: dict | None,
+        *,
+        task: str,
+        matters: list[str],
+        evidence: list[dict],
+        source_text: str = "",
+        source: str = "rule",
+    ) -> None:
+        if not action_entity:
+            return
+        action_records.append(
+            {
+                "entity": action_entity,
+                "task": _clean_label(task),
+                "matters": [_normalize_label(item) for item in matters if _clean_label(item)],
+                "evidence": evidence,
+                "source_text": source_text,
+                "source": source,
+            }
+        )
+
     speakers: dict[str, dict] = {}
     for segment in segments:
         if _non_substantive(segment):
@@ -452,6 +475,13 @@ def _rule_extract_ontology(segments: list[dict], actions: list[dict]) -> dict:
                 place_entity = add_entity("place", place, evidence=evidence, confidence=0.64)
                 add_relation(action_entity, place_entity, "located_at", evidence=evidence, confidence=0.62)
             frame_matters = frame.get("matters", []) or _extract_matters(frame["task"])
+            remember_action(
+                action_entity,
+                task=frame["task"],
+                matters=frame_matters,
+                evidence=evidence,
+                source_text=text,
+            )
             for matter in frame_matters:
                 if _normalize_label(matter) == _normalize_label(frame["task"]):
                     continue
@@ -495,11 +525,34 @@ def _rule_extract_ontology(segments: list[dict], actions: list[dict]) -> dict:
             place_entity = add_entity("place", place, evidence=evidence, confidence=0.74)
             add_relation(action_entity, place_entity, "located_at", label="地点", evidence=evidence, confidence=0.72)
         task_matters = _infer_action_matters(task)
+        remember_action(
+            action_entity,
+            task=task,
+            matters=task_matters,
+            evidence=evidence,
+            source_text=task,
+        )
         for matter in task_matters:
             if _normalize_label(matter) == _normalize_label(task):
                 continue
             matter_entity = add_entity("matter", matter, evidence=evidence, confidence=0.72)
             add_relation(matter_entity, action_entity, "related_to", label="关联待办", evidence=evidence, confidence=0.7)
+    for dependent, prerequisite in _infer_action_dependencies(action_records):
+        add_relation(
+            dependent["entity"],
+            prerequisite["entity"],
+            "depends_on",
+            label="依赖",
+            evidence=_merge_evidence(
+                dependent.get("evidence", []),
+                prerequisite.get("evidence", []),
+            )[:4],
+            confidence=0.68,
+            metadata={
+                "dependent_task": dependent.get("task", ""),
+                "prerequisite_task": prerequisite.get("task", ""),
+            },
+        )
     return {"entities": entities, "relations": _dedupe_relations(relations)}
 
 
@@ -837,6 +890,80 @@ def _dedupe_action_frames(frames: list[dict]) -> list[dict]:
         seen.add(key)
         result.append({**frame, "owner": owner, "task": task})
     return result[:8]
+
+
+def _infer_action_dependencies(action_records: list[dict]) -> list[tuple[dict, dict]]:
+    pairs: list[tuple[dict, dict]] = []
+    for context in action_records:
+        text = _normalize_label(str(context.get("source_text") or ""))
+        marker_index = _dependency_marker_index(text)
+        if marker_index < 0:
+            continue
+        before_marker = text[:marker_index]
+        after_marker = text[marker_index:]
+        for left in action_records:
+            if left is context and not _record_mentioned_in_text(left, before_marker):
+                continue
+            if not _record_mentioned_in_text(left, before_marker):
+                continue
+            for right in action_records:
+                if right is left:
+                    continue
+                if _record_mentioned_in_text(right, after_marker):
+                    pairs.append((left, right))
+    pairs.extend(_infer_dependency_fallbacks(action_records))
+    return _dedupe_dependency_pairs(pairs)
+
+
+def _dependency_marker_index(value: str) -> int:
+    positions = [
+        position
+        for marker in ("依赖", "需要", "等待", "先", "等")
+        if (position := value.find(marker)) >= 0
+    ]
+    return min(positions) if positions else -1
+
+
+def _record_mentioned_in_text(record: dict, text: str) -> bool:
+    value = _normalize_label(text)
+    if not value:
+        return False
+    task = _normalize_label(record.get("task", ""))
+    if task and task in value:
+        return True
+    for matter in record.get("matters") or []:
+        if matter and matter in value:
+            return True
+    return False
+
+
+def _infer_dependency_fallbacks(action_records: list[dict]) -> list[tuple[dict, dict]]:
+    pairs: list[tuple[dict, dict]] = []
+    for dependent in action_records:
+        dependent_text = _normalize_label(
+            f"{dependent.get('task', '')} {dependent.get('source_text', '')}"
+        )
+        marker_index = _dependency_marker_index(dependent_text)
+        if marker_index < 0:
+            continue
+        for prerequisite in action_records:
+            if prerequisite is dependent:
+                continue
+            if _record_mentioned_in_text(prerequisite, dependent_text[marker_index:]):
+                pairs.append((dependent, prerequisite))
+    return pairs
+
+
+def _dedupe_dependency_pairs(pairs: list[tuple[dict, dict]]) -> list[tuple[dict, dict]]:
+    result: list[tuple[dict, dict]] = []
+    seen: set[tuple[str, str]] = set()
+    for dependent, prerequisite in pairs:
+        key = (dependent["entity"]["id"], prerequisite["entity"]["id"])
+        if key in seen or key[0] == key[1]:
+            continue
+        seen.add(key)
+        result.append((dependent, prerequisite))
+    return result[:12]
 
 
 def _is_generic_action_task(task: str) -> bool:

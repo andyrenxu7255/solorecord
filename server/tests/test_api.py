@@ -5823,6 +5823,11 @@ def test_ontology_rule_extractor_builds_contextual_action_chains(tmp_path: Path)
     assert ("到客户现场完成接口联调", "明天下午", "due_at") in edge_pairs
     assert ("到客户现场完成接口联调", "北京客户现场", "located_at") in edge_pairs
     assert ("外接数据源", "北京客户现场", "located_at") in edge_pairs
+    assert (
+        "到客户现场完成接口联调",
+        "提供测试账号",
+        "depends_on",
+    ) in edge_pairs
     assert any(edge[0] == "李四" and edge[2] == "responsible_for" for edge in edge_pairs)
 
 
