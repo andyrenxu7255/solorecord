@@ -6014,6 +6014,11 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "data-sample-audio" in app_js
     assert "data-speakers" in app_js
     assert "speakerStatsKey" in app_js
+    assert "renderMeetingLoading" in app_js
+    assert "renderMeetingLoadError" in app_js
+    assert "meetingLoadSeq" in app_js
+    assert "Promise.all" in app_js
+    assert "正在加载会议详情" in app_js
     assert "声音样本" in app_js
     assert "too_many_speakers" in (Path(__file__).parents[1] / "solorecord_server" / "repository.py").read_text(
         encoding="utf-8"
@@ -6025,6 +6030,9 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "查看证据弱段落" in app_js
     assert "matchesTranscriptFilter" in app_js
     assert ".quality-shortcut" in styles
+    assert ".detail-loading" in styles
+    assert ".loading-spinner" in styles
+    assert ".meeting-card.loading" in styles
     assert ".speaker-sample" in styles
     assert ".speaker-evidence" in styles
     assert ".speaker-alias-conflict" in styles

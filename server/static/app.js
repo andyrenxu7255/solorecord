@@ -4,6 +4,8 @@ const state = {
   meetings: [],
   joinableMeetings: [],
   selectedMeetingId: "",
+  loadingMeetingId: "",
+  meetingLoadSeq: 0,
   selectedTranscriptVersion: 1,
   selectedDownloadPlatform: "android",
   selectedTranscriptFilter: "all",
@@ -262,7 +264,7 @@ function renderMeetingList() {
     return;
   }
   list.innerHTML = state.meetings.map((meeting) => `
-    <article class="meeting-card ${meeting.id === state.selectedMeetingId ? "active" : ""}" data-id="${meeting.id}">
+    <article class="meeting-card ${meeting.id === state.selectedMeetingId ? "active" : ""} ${meeting.id === state.loadingMeetingId ? "loading" : ""}" data-id="${meeting.id}">
       <h3>${escapeHtml(meeting.title)}</h3>
       <div class="meta-row">
         <span>${formatDate(meeting.created_at)}</span>
@@ -270,7 +272,7 @@ function renderMeetingList() {
       </div>
       <div class="meeting-card-foot">
         <span>${formatTime(meeting.duration_ms || 0)}</span>
-        <span>v${meeting.version || 1}</span>
+        <span>${meeting.id === state.loadingMeetingId ? "加载中..." : `v${meeting.version || 1}`}</span>
       </div>
     </article>
   `).join("");
@@ -299,13 +301,73 @@ function renderMeetingSummaryStrip() {
 }
 
 async function selectMeeting(id) {
+  if (!id) return;
+  const meeting = state.meetings.find((item) => item.id === id) || null;
+  const loadSeq = state.meetingLoadSeq + 1;
+  state.meetingLoadSeq = loadSeq;
   state.selectedMeetingId = id;
+  state.loadingMeetingId = id;
   state.selectedTranscriptFilter = "all";
+  state.currentMeetingDetail = null;
+  state.currentTranscriptSegments = [];
   renderMeetingList();
-  const data = await api(`/api/web/meetings/${id}`);
-  const transcript = await api(`/api/web/meetings/${id}/transcript`);
-  state.selectedTranscriptVersion = transcript.version;
-  renderMeetingDetail(data, transcript.segments || []);
+  renderMeetingLoading(meeting);
+  try {
+    const [data, transcript] = await Promise.all([
+      api(`/api/web/meetings/${id}`),
+      api(`/api/web/meetings/${id}/transcript`),
+    ]);
+    if (loadSeq !== state.meetingLoadSeq || id !== state.selectedMeetingId) return;
+    state.selectedTranscriptVersion = transcript.version;
+    state.loadingMeetingId = "";
+    renderMeetingList();
+    renderMeetingDetail(data, transcript.segments || []);
+  } catch (error) {
+    if (loadSeq !== state.meetingLoadSeq || id !== state.selectedMeetingId) return;
+    state.loadingMeetingId = "";
+    renderMeetingList();
+    renderMeetingLoadError(meeting, error);
+  }
+}
+
+function renderMeetingLoading(meeting) {
+  const title = meeting?.title || "会议详情";
+  $("#meetingDetail").innerHTML = `
+    <div class="detail-loading" role="status" aria-live="polite">
+      <div class="loading-head">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <div>
+          <b>正在加载会议详情</b>
+          <span>${escapeHtml(title)}</span>
+        </div>
+      </div>
+      <div class="loading-steps">
+        <span>读取会议信息</span>
+        <span>读取转写时间线</span>
+        <span>整理质量与图谱</span>
+      </div>
+      <div class="skeleton-stack" aria-hidden="true">
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+    </div>
+  `;
+}
+
+function renderMeetingLoadError(meeting, error) {
+  const title = meeting?.title || "会议详情";
+  $("#meetingDetail").innerHTML = `
+    <div class="empty-state detail-error">
+      <div>
+        <b>${escapeHtml(title)} 加载失败</b>
+        <p>${escapeHtml(friendlyError(error))}</p>
+        <button type="button" id="retryMeetingLoad" class="button secondary">重新加载</button>
+      </div>
+    </div>
+  `;
+  $("#retryMeetingLoad")?.addEventListener("click", () => selectMeeting(state.selectedMeetingId));
+  toast("会议详情加载失败，请稍后重试");
 }
 
 function renderMeetingDetail(data, transcriptSegments) {

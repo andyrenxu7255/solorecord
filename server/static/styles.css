@@ -349,6 +349,12 @@ p {
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.10);
 }
 
+.meeting-card.loading {
+  border-color: var(--primary);
+  background: #eef6ff;
+  cursor: progress;
+}
+
 .meeting-card h3 {
   margin: 0 0 8px;
   font-size: 15px;
@@ -679,6 +685,104 @@ textarea.input {
   min-height: 260px;
   color: var(--muted);
   text-align: center;
+}
+
+.detail-loading {
+  display: grid;
+  gap: 16px;
+  min-height: 360px;
+  align-content: start;
+  color: var(--muted);
+}
+
+.loading-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.loading-head b {
+  display: block;
+  color: var(--text);
+}
+
+.loading-head span:not(.loading-spinner) {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+}
+
+.loading-spinner {
+  width: 22px;
+  height: 22px;
+  border: 3px solid #bfdbfe;
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex: 0 0 auto;
+}
+
+.loading-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.loading-steps span,
+.skeleton-stack span {
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+}
+
+.loading-steps span {
+  padding: 9px 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.skeleton-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.skeleton-stack span {
+  height: 86px;
+  overflow: hidden;
+  position: relative;
+}
+
+.skeleton-stack span::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.72), transparent);
+  animation: skeleton 1.2s ease-in-out infinite;
+}
+
+.detail-error b {
+  color: var(--danger);
+}
+
+.detail-error p {
+  max-width: 520px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes skeleton {
+  to {
+    transform: translateX(100%);
+  }
 }
 
 .status-banner {
@@ -1949,7 +2053,8 @@ textarea.input {
   .progress-strip,
   .action-row,
   .form-grid,
-  .segment-insight-grid {
+  .segment-insight-grid,
+  .loading-steps {
     grid-template-columns: 1fr;
   }
 
