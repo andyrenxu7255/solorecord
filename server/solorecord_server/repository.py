@@ -7,7 +7,7 @@ from .db import get_db
 from .llm_adapters import mentioned_people_candidates
 from .owner_terms import ORG_OWNER_TERMS
 from .person_names import is_pseudo_person_name
-from .utils import row_to_dict
+from .utils import resolve_existing_file, row_to_dict
 
 PLACEHOLDER_ASR_FLAGS = {"mock_asr", "empty_asr", "missing_audio"}
 NON_SUBSTANTIVE_TRANSCRIPT_FLAGS = {*PLACEHOLDER_ASR_FLAGS, "source_coverage_gap"}
@@ -289,8 +289,13 @@ def _audio_segment_items(meeting_id: str, rows) -> list[dict]:
     audio_segments = []
     for row in rows:
         item = row_to_dict(row)
+        audio_path = resolve_existing_file(item.get("storage_path"))
+        item["audio_available"] = audio_path is not None
+        item["missing_reason"] = "" if audio_path else "audio_file_missing"
         item["download_url"] = (
             f"/api/mobile/meetings/{meeting_id}/segments/{item['segment_no']}/audio"
+            if audio_path
+            else ""
         )
         audio_segments.append(item)
     return audio_segments

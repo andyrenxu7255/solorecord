@@ -841,6 +841,7 @@ function applyTranscriptFilter(filter, data, transcriptSegments) {
 function renderAudioSegment(segment) {
   const sourceLabel = segment.source_label || segment.source_id || "primary";
   const sourceSegment = segment.source_segment_no || segment.segment_no;
+  const audioAvailable = segment.audio_available !== false && Boolean(segment.download_url);
   return `
     <div class="audio-segment">
       <div>
@@ -848,7 +849,9 @@ function renderAudioSegment(segment) {
         <span>${formatTime(segment.start_ms || 0)} - ${formatTime(segment.end_ms || 0)}</span>
       </div>
       <div class="audio-controls">
-        <button type="button" class="button secondary" data-audio-load="${escapeAttr(segment.download_url || "")}">加载播放</button>
+        ${audioAvailable
+          ? `<button type="button" class="button secondary" data-audio-load="${escapeAttr(segment.download_url || "")}">加载播放</button>`
+          : `<span class="hint">原始音频缺失</span>`}
         <span class="status-pill">${segment.upload_status === "uploaded" ? "已上传" : "待上传"}</span>
       </div>
     </div>
@@ -2238,16 +2241,24 @@ async function loadAuthorizedAudio(button) {
     button.disabled = true;
     button.textContent = "加载中";
     const response = await fetch(url, { headers: { Authorization: `Bearer ${state.token}` } });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) {
+      const text = await response.text();
+      throw httpError(response.status, text);
+    }
     const blob = await response.blob();
     const audio = document.createElement("audio");
     audio.controls = true;
     audio.src = URL.createObjectURL(blob);
     button.replaceWith(audio);
   } catch (error) {
+    const message = isAuthError(error)
+      ? "登录状态已过期，请重新登录后播放"
+      : Number(error?.status) === 404
+        ? "原始音频文件不在服务器，无法播放"
+        : `音频加载失败：${friendlyError(error)}`;
     button.replaceWith(Object.assign(document.createElement("span"), {
       className: "hint",
-      textContent: "音频加载失败，请确认权限或稍后重试",
+      textContent: message,
     }));
   }
 }
@@ -2259,6 +2270,10 @@ async function playSpeakerSample(button) {
   const sampleBox = button.closest(".speaker-sample");
   const audio = sampleBox?.querySelector(".speaker-sample-audio");
   if (!url || !audio) return;
+  if (!state.token && !restoreSessionFromStorage()) {
+    promptLogin("请先登录后再试听声音样本");
+    return;
+  }
   try {
     button.disabled = true;
     button.textContent = "加载中";
@@ -2267,7 +2282,14 @@ async function playSpeakerSample(button) {
       audio.dataset.objectUrl = "";
     }
     const response = await fetch(url, { headers: { Authorization: `Bearer ${state.token}` } });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) {
+      const text = await response.text();
+      throw httpError(response.status, text);
+    }
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.startsWith("audio/") && !contentType.includes("octet-stream")) {
+      throw new Error("服务器返回的不是音频文件");
+    }
     const objectUrl = URL.createObjectURL(await response.blob());
     audio.dataset.objectUrl = objectUrl;
     audio.dataset.sampleEnd = String(end);
@@ -2276,8 +2298,19 @@ async function playSpeakerSample(button) {
     await seekAndPlayAudio(audio, start, end);
     button.textContent = "重新试听";
   } catch (error) {
+    const message = isAuthError(error)
+      ? "登录状态已过期，请重新登录后试听"
+      : Number(error?.status) === 404
+        ? "原始音频文件不在服务器，无法试听"
+        : `声音样本加载失败：${friendlyError(error)}`;
     button.textContent = "试听失败";
-    toast("声音样本加载失败，请确认权限或稍后重试");
+    sampleBox?.querySelector(".speaker-sample-error")?.remove();
+    sampleBox?.appendChild(Object.assign(document.createElement("small"), {
+      className: "speaker-sample-error",
+      textContent: message,
+    }));
+    toast(message);
+    if (isAuthError(error)) promptLogin("登录状态已过期，请重新登录后试听");
   } finally {
     button.disabled = false;
   }
@@ -3103,6 +3136,7 @@ function findAudioForTranscriptSegment(segment, audioSegments) {
 }
 
 function buildSpeakerSample(segment, audio, meetingId) {
+  if (audio.audio_available === false || !audio.download_url) return null;
   const audioStartMs = Number(audio.start_ms || 0);
   const audioDurationMs = Number(audio.duration_ms || Math.max(0, Number(audio.end_ms || 0) - audioStartMs));
   const audioEndMs = audioDurationMs ? audioStartMs + audioDurationMs : Number(audio.end_ms || 0);

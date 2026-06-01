@@ -55,7 +55,7 @@ from .schemas import (
 )
 from .search_index import index_meeting
 from .transcripts import archive_transcript_rows
-from .utils import new_id, now_iso, row_to_dict, sha256_file
+from .utils import new_id, now_iso, resolve_existing_file, row_to_dict, sha256_file
 
 app = FastAPI(title="SoloRecord Internal API", version="0.7.0")
 settings = get_settings()
@@ -455,10 +455,11 @@ def download_audio_segment(meeting_id: str, segment_no: int, user: CurrentUser) 
             """,
             (meeting_id, segment_no),
         ).fetchone()
-    if not row or not Path(row["storage_path"]).exists():
+    path = resolve_existing_file(row["storage_path"] if row else None)
+    if not row or not path:
         raise HTTPException(status_code=404, detail="Audio segment not found")
     return FileResponse(
-        row["storage_path"],
+        path,
         filename=row["file_name"] or f"part_{segment_no:04d}.m4a",
         media_type=row["mime_type"] or "application/octet-stream",
     )
@@ -1017,11 +1018,11 @@ def download_export(export_id: str, user: CurrentUser) -> FileResponse:
     if not row:
         raise HTTPException(status_code=404, detail="Export not found")
     _assert_access(row["meeting_id"], user)
-    path = Path(row["storage_path"])
-    if not path.exists():
+    path = resolve_existing_file(row["storage_path"])
+    if not path:
         raise HTTPException(status_code=404, detail="Export file not found")
     return FileResponse(
-        str(path),
+        path,
         filename=path.name,
         media_type="application/octet-stream",
     )
@@ -1161,13 +1162,14 @@ def _download_release(
             """,
             (platform, version),
         ).fetchone()
-    if not row or not Path(row["storage_path"]).exists():
+    path = resolve_existing_file(row["storage_path"] if row else None)
+    if not row or not path:
         raise HTTPException(status_code=404, detail="Release artifact not found")
     stored_name = row["file_name"] or PLATFORM_FILE_NAMES[platform]
     if file_name not in {stored_name, "app.apk"}:
         raise HTTPException(status_code=404, detail="Release artifact not found")
     return FileResponse(
-        row["storage_path"],
+        path,
         filename=stored_name,
         media_type=row["content_type"] or _release_media_type(platform),
     )

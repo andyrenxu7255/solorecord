@@ -22,6 +22,32 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def resolve_existing_file(path_value: str | Path | None) -> Path | None:
+    if not path_value:
+        return None
+    raw = Path(path_value)
+    candidates: list[Path] = [raw] if raw.is_absolute() else [Path.cwd() / raw, raw]
+    if not raw.is_absolute():
+        from .config import get_settings
+
+        settings = get_settings()
+        candidates.extend(
+            [
+                settings.data_dir.parent / raw,
+                settings.storage_dir.parent.parent / raw,
+            ]
+        )
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
+
+
 def json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 

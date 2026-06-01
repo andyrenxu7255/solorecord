@@ -571,6 +571,41 @@ def test_multi_source_join_uploads_same_local_segment_without_conflict(tmp_path:
     ).content == b"back source"
 
 
+def test_missing_audio_file_is_hidden_from_playback_controls(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+
+    create = client.post("/api/web/meetings", json={"title": "试听缺失音频"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    upload = client.post(
+        f"/api/mobile/meetings/{meeting_id}/segments",
+        headers=headers,
+        data={"segment_no": "1", "start_ms": "0", "end_ms": "5000", "duration_ms": "5000"},
+        files={"file": ("part_0001.m4a", b"sample audio", "audio/mp4")},
+    )
+    assert upload.status_code == 200
+
+    detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
+    segment = detail["audioSegments"][0]
+    assert segment["audio_available"] is True
+    assert segment["download_url"].endswith("/segments/1/audio")
+
+    Path(segment["storage_path"]).unlink()
+
+    missing_detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers).json()
+    missing_segment = missing_detail["audioSegments"][0]
+    assert missing_segment["audio_available"] is False
+    assert missing_segment["missing_reason"] == "audio_file_missing"
+    assert missing_segment["download_url"] == ""
+
+    missing_audio = client.get(
+        f"/api/web/meetings/{meeting_id}/segments/1/audio",
+        headers=headers,
+    )
+    assert missing_audio.status_code == 404
+    assert missing_audio.json()["detail"] == "Audio segment not found"
+
+
 def test_create_meeting_returns_conflict_for_duplicate_join_code(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)
@@ -6118,6 +6153,9 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "data-sample-audio" in app_js
     assert "data-speakers" in app_js
     assert "speakerStatsKey" in app_js
+    assert "audio_available" in app_js
+    assert "原始音频文件不在服务器，无法试听" in app_js
+    assert "原始音频缺失" in app_js
     assert "renderMeetingLoading" in app_js
     assert "renderMeetingLoadError" in app_js
     assert "meetingLoadSeq" in app_js
