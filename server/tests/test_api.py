@@ -5941,7 +5941,8 @@ def test_web_release_page_refreshes_after_login_and_distinguishes_errors() -> No
     assert "view === \"downloads\"" in login_refresh
     assert "await loadRelease()" in login_refresh
     assert "await refreshAfterLogin()" in app_js
-    assert "if (!state.token)" in load_release
+    assert "if (!state.token && !restoreSessionFromStorage())" in load_release
+    assert "restoreSessionFromStorage()" in load_release
     assert "登录状态已过期，请重新登录后查看发布包" in load_release
     assert "发布包信息加载失败" in load_release
     assert "请稍后刷新，或联系运维确认发布包服务" in load_release
@@ -6965,7 +6966,11 @@ def test_full_user_story_permissions_sync_export_and_release(tmp_path: Path) -> 
     assert latest.status_code == 200
     assert latest.json()["release"]["version_name"] == "0.7.0"
     assert latest.json()["release"]["platform"] == "android"
-    download = client.get("/downloads/android/0.7.0/app.apk")
+    assert "expires=" in latest.json()["release"]["downloadUrl"]
+    assert "token=" in latest.json()["release"]["downloadUrl"]
+    download_without_token = client.get("/downloads/android/0.7.0/app.apk")
+    assert download_without_token.status_code == 401
+    download = client.get(latest.json()["release"]["downloadUrl"])
     assert download.status_code == 200
     assert download.content == b"fake apk"
 
@@ -6985,6 +6990,8 @@ def test_full_user_story_permissions_sync_export_and_release(tmp_path: Path) -> 
     windows_latest = client.get("/api/web/releases/latest?platform=windows", headers=headers)
     assert windows_latest.status_code == 200
     assert windows_latest.json()["release"]["platform"] == "windows"
+    assert "expires=" in windows_latest.json()["release"]["downloadUrl"]
+    assert "token=" in windows_latest.json()["release"]["downloadUrl"]
     windows_download = client.get(windows_latest.json()["release"]["downloadUrl"])
     assert windows_download.status_code == 200
     assert windows_download.content == b"fake exe"

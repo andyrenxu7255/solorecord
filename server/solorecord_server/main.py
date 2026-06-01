@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
+import hmac
 import json
 import sqlite3
 from pathlib import Path
@@ -7,6 +9,7 @@ import re
 import secrets
 import sqlite3
 import string
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -59,6 +62,7 @@ settings = get_settings()
 job_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="solorecord-job")
 
 SUPPORTED_RELEASE_PLATFORMS = {"android", "windows", "macos", "ios", "harmony"}
+RELEASE_DOWNLOAD_TOKEN_TTL_SECONDS = 2 * 60 * 60
 PLATFORM_FILE_NAMES = {
     "android": "solorecord.apk",
     "windows": "SoloRecord-Setup.exe",
@@ -1101,23 +1105,41 @@ async def upload_release(
         "id": release_id,
         "platform": platform,
         "sha256": digest,
-        "downloadUrl": f"/downloads/{platform}/{version_name}/{safe_name}",
+        "downloadUrl": _release_download_url(
+            {"platform": platform, "version_name": version_name, "file_name": safe_name}
+        ),
     }
 
 
 @app.get("/downloads/android/{version}/app.apk")
-def download_apk(version: str) -> FileResponse:
-    return _download_release("android", version, "app.apk")
+def download_apk(
+    version: str,
+    expires: int | None = Query(None),
+    token: str | None = Query(None),
+) -> FileResponse:
+    return _download_release("android", version, "app.apk", expires, token)
 
 
 @app.get("/downloads/{platform}/{version}/{file_name}")
-def download_release(platform: str, version: str, file_name: str) -> FileResponse:
-    return _download_release(platform, version, file_name)
+def download_release(
+    platform: str,
+    version: str,
+    file_name: str,
+    expires: int | None = Query(None),
+    token: str | None = Query(None),
+) -> FileResponse:
+    return _download_release(platform, version, file_name, expires, token)
 
 
-def _download_release(platform: str, version: str, file_name: str) -> FileResponse:
-    # Internal deployments may also restrict this path at Nginx/VPN level.
+def _download_release(
+    platform: str,
+    version: str,
+    file_name: str,
+    expires: int | None,
+    token: str | None,
+) -> FileResponse:
     platform = _normalize_release_platform(platform)
+    _assert_valid_release_download_token(platform, version, file_name, expires, token)
     with get_db() as db:
         row = db.execute(
             """
@@ -1579,9 +1601,42 @@ def _normalize_release_platform(platform: str) -> str:
 
 def _release_download_url(release: dict) -> str:
     platform = _normalize_release_platform(str(release.get("platform") or "android"))
+    version = str(release["version_name"])
     if platform == "android":
-        return f"/downloads/android/{release['version_name']}/app.apk"
-    return f"/downloads/{platform}/{release['version_name']}/{release['file_name']}"
+        file_name = "app.apk"
+        path = f"/downloads/android/{version}/app.apk"
+    else:
+        file_name = str(release["file_name"])
+        path = f"/downloads/{platform}/{version}/{file_name}"
+    params = _release_download_token_query(platform, version, file_name)
+    return f"{path}?{params}"
+
+
+def _release_download_token_query(platform: str, version: str, file_name: str) -> str:
+    expires = int(datetime.now(timezone.utc).timestamp()) + RELEASE_DOWNLOAD_TOKEN_TTL_SECONDS
+    signature = _release_download_signature(platform, version, file_name, expires)
+    return urlencode({"expires": str(expires), "token": signature})
+
+
+def _release_download_signature(platform: str, version: str, file_name: str, expires: int) -> str:
+    message = f"{platform}\n{version}\n{file_name}\n{expires}".encode("utf-8")
+    return hmac.new(settings.secret_key.encode("utf-8"), message, hashlib.sha256).hexdigest()
+
+
+def _assert_valid_release_download_token(
+    platform: str,
+    version: str,
+    file_name: str,
+    expires: int | None,
+    token: str | None,
+) -> None:
+    if expires is None or not token:
+        raise HTTPException(status_code=401, detail="Missing release download token")
+    if expires < int(datetime.now(timezone.utc).timestamp()):
+        raise HTTPException(status_code=401, detail="Release download token expired")
+    expected = _release_download_signature(platform, version, file_name, expires)
+    if not hmac.compare_digest(expected, token):
+        raise HTTPException(status_code=401, detail="Invalid release download token")
 
 
 def _release_media_type(platform: str) -> str:

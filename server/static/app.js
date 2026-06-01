@@ -138,6 +138,20 @@ function requireLoginForAction(message = "请先登录后再继续") {
   return false;
 }
 
+function restoreSessionFromStorage() {
+  const token = localStorage.getItem("solo_token") || "";
+  const userText = localStorage.getItem("solo_user") || "null";
+  if (!token) return false;
+  state.token = token;
+  try {
+    state.user = JSON.parse(userText);
+  } catch (error) {
+    state.user = null;
+  }
+  renderAccount();
+  return true;
+}
+
 function activeViewName() {
   return $(".view.active")?.id?.replace(/^view-/, "") || "meetings";
 }
@@ -2748,7 +2762,7 @@ async function loadRelease() {
   const box = $("#releaseBox");
   if (!box) return;
   const platform = state.selectedDownloadPlatform || "android";
-  if (!state.token) {
+  if (!state.token && !restoreSessionFromStorage()) {
     box.textContent = "请先登录后查看发布包。";
     return;
   }
@@ -2764,7 +2778,7 @@ async function loadRelease() {
       <h3>${escapeHtml(PLATFORM_LABELS[rel.platform] || rel.platform)} · ${escapeHtml(rel.version_name)} (${rel.version_code})</h3>
       <p>SHA-256：<code>${escapeHtml(rel.sha256)}</code></p>
       <p>${escapeHtml(rel.release_notes || "")}</p>
-      <a class="button primary" href="${rel.downloadUrl}">下载 ${escapeHtml(PLATFORM_LABELS[rel.platform] || "应用")}</a>
+      <a class="button primary" href="${escapeAttr(rel.downloadUrl)}">下载 ${escapeHtml(PLATFORM_LABELS[rel.platform] || "应用")}</a>
     `;
   } catch (error) {
     if (isAuthError(error)) {
@@ -3463,6 +3477,7 @@ async function init() {
     try {
       const data = await api("/api/web/me");
       state.user = data.user;
+      localStorage.setItem("solo_user", JSON.stringify(state.user));
       renderAccount();
       await loadMeetings();
       await loadJoinableMeetings();
