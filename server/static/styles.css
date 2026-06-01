@@ -2011,13 +2011,13 @@ textarea.input {
 
   .list-panel,
   .detail-panel {
-    height: auto;
-    min-height: auto;
+    height: min(78vh, 720px);
+    min-height: 420px;
     max-height: none;
   }
 
   .detail-panel {
-    overflow: visible;
+    overflow: hidden;
   }
 
   .detail-head,
@@ -2027,8 +2027,16 @@ textarea.input {
 
   .meeting-detail-shell,
   .meeting-detail-scroll {
-    height: auto;
-    overflow: visible;
+    min-height: 0;
+  }
+
+  .meeting-detail-shell {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .meeting-detail-scroll {
+    overflow: auto;
   }
 
   .meeting-priority-grid {
