@@ -5709,6 +5709,159 @@ def test_knowledge_graph_topic_evidence_preserves_source_refs(tmp_path: Path) ->
     assert evidence["end_ms"] == 180000
 
 
+def test_ontology_extraction_persists_entities_relations_and_external_api(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "本体图谱"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+    import solorecord_server.ontology as ontology
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_ontology_1', ?, 1, 'front', 1, 'MANUAL_renxu', '任旭', 0, 5000,
+             '任旭在上海会议室确认客户名单，要求张三周三前补充报价明细。',
+             0.9, '["semantic_llm"]', 'now'),
+            ('seg_ontology_2', ?, 1, 'front', 1, 'MANUAL_lisi', '李四', 6000, 12000,
+             '李四负责合同条款复核，下周一同步到销售工作区。',
+             0.9, '["semantic_llm"]', 'now')
+            """,
+            (meeting_id, meeting_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO action_items (id, meeting_id, owner, task, due, status, created_at, updated_at)
+            VALUES
+            ('act_ontology_1', ?, '张三', '补充报价明细', '周三', 'open', 'now', 'now'),
+            ('act_ontology_2', ?, '李四', '复核合同条款并同步销售工作区', '下周一', 'open', 'now', 'now')
+            """,
+            (meeting_id, meeting_id),
+        )
+
+    graph = ontology.extract_and_store_ontology(meeting_id)
+    node_pairs = {(node["type"], node["label"]) for node in graph["nodes"]}
+    edge_pairs = {(edge["source_label"], edge["target_label"], edge["type"]) for edge in graph["edges"]}
+
+    assert ("person", "张三") in node_pairs
+    assert ("person", "李四") in node_pairs
+    assert ("place", "上海会议室") in node_pairs
+    assert ("time", "周三") in node_pairs
+    assert ("action", "补充报价明细") in node_pairs
+    assert ("张三", "补充报价明细", "responsible_for") in edge_pairs
+    assert ("补充报价明细", "周三", "due_at") in edge_pairs
+    assert ("报价明细", "补充报价明细", "related_to") in edge_pairs
+    assert ("客户名单", "上海会议室", "located_at") in edge_pairs
+    assert ("合同条款", "复核合同条款并同步销售工作区", "related_to") in edge_pairs
+    assert ("复核合同条款并同步销售工作区", "销售工作区", "located_at") in edge_pairs
+    assert any(node["evidence"] for node in graph["nodes"] if node["label"] == "上海会议室")
+
+    with db.get_db() as conn:
+        entity_count = conn.execute(
+            "SELECT COUNT(*) AS count FROM ontology_entities WHERE meeting_id=?",
+            (meeting_id,),
+        ).fetchone()["count"]
+        relation_count = conn.execute(
+            "SELECT COUNT(*) AS count FROM ontology_relations WHERE meeting_id=?",
+            (meeting_id,),
+        ).fetchone()["count"]
+    assert entity_count == len(graph["nodes"])
+    assert relation_count == len(graph["edges"])
+
+    detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers)
+    assert detail.status_code == 200
+    assert detail.json()["ontologyGraph"]["nodes"]
+
+    external = client.get(
+        f"/api/external/meetings/{meeting_id}/ontology",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert external.status_code == 200
+    assert external.json()["ontologyGraph"]["edges"]
+    assert "transcriptSegments" not in external.json()
+
+
+def test_ontology_rule_extractor_builds_contextual_action_chains(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "抽槽链路"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    import solorecord_server.db as db
+    import solorecord_server.ontology as ontology
+
+    with db.get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO transcript_segments
+            (id, meeting_id, version, source_id, source_segment_no, speaker_id, display_name,
+             start_ms, end_ms, text, confidence, flags, created_at)
+            VALUES
+            ('seg_chain_1', ?, 1, 'front', 1, 'MANUAL_renxu', '任旭', 0, 9000,
+             '任旭在北京客户现场讨论外接数据源，安排王五明天下午到客户现场完成接口联调。',
+             0.91, '[]', 'now'),
+            ('seg_chain_2', ?, 1, 'front', 2, 'MANUAL_wangwu', '王五', 9000, 15000,
+             '王五确认接口联调依赖李四先提供测试账号，李四今天晚上发过来。',
+             0.9, '[]', 'now')
+            """,
+            (meeting_id, meeting_id),
+        )
+
+    graph = ontology.extract_and_store_ontology(meeting_id)
+    node_pairs = {(node["type"], node["label"]) for node in graph["nodes"]}
+    edge_pairs = {(edge["source_label"], edge["target_label"], edge["type"]) for edge in graph["edges"]}
+
+    assert ("person", "王五") in node_pairs
+    assert ("person", "李四") in node_pairs
+    assert ("place", "北京客户现场") in node_pairs
+    assert ("time", "明天下午") in node_pairs
+    assert ("matter", "外接数据源") in node_pairs
+    assert ("王五", "到客户现场完成接口联调", "responsible_for") in edge_pairs
+    assert ("到客户现场完成接口联调", "明天下午", "due_at") in edge_pairs
+    assert ("到客户现场完成接口联调", "北京客户现场", "located_at") in edge_pairs
+    assert ("外接数据源", "北京客户现场", "located_at") in edge_pairs
+    assert any(edge[0] == "李四" and edge[2] == "responsible_for" for edge in edge_pairs)
+
+
+def test_ontology_api_requires_meeting_access_and_can_enqueue_job(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    owner_headers = login(client)
+    user_headers = login_user(client)
+    create = client.post("/api/web/meetings", json={"title": "图谱权限"}, headers=owner_headers)
+    meeting_id = create.json()["meeting"]["id"]
+
+    denied = client.get(f"/api/web/meetings/{meeting_id}/ontology", headers=user_headers)
+    assert denied.status_code == 404
+
+    import solorecord_server.main as main
+
+    submitted: list[str] = []
+
+    class DelayedExecutor:
+        def submit(self, fn, job_id):
+            submitted.append(job_id)
+            return None
+
+    original_executor = main.job_executor
+    main.job_executor = DelayedExecutor()
+    try:
+        response = client.post(
+            f"/api/web/meetings/{meeting_id}/ontology/extract",
+            headers=owner_headers,
+        )
+    finally:
+        main.job_executor = original_executor
+
+    assert response.status_code == 200
+    assert submitted == [response.json()["jobId"]]
+
+    denied_post = client.post(f"/api/web/meetings/{meeting_id}/ontology/extract", headers=user_headers)
+    assert denied_post.status_code == 404
+
+
 def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     app_js = (Path(__file__).parents[1] / "static" / "app.js").read_text(
         encoding="utf-8"
@@ -5766,6 +5919,12 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert ".knowledge-review-item" in styles
     assert ".knowledge-readiness-tags .blocker" in styles
     assert ".summary-evidence-item p" in styles
+    assert "ontologyGraph" in app_js
+    assert "renderOntologyGraphSummary" in app_js
+    assert "openOntologyGraph" in app_js
+    assert "graph.html?meetingId=" in app_js
+    assert ".ontology-stage" in styles
+    assert ".graph-inspector" in styles
     assert "detailRoleNotes" in app_js
     assert "分角色整理" in app_js
     assert "role_notes" in app_js

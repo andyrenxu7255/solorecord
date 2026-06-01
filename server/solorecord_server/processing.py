@@ -12,6 +12,7 @@ from .llm_adapters import (
     refine_segments_with_llm,
     summarize_with_llm,
 )
+from .ontology import enqueue_ontology_extraction
 from .owner_terms import ORG_OWNER_TERMS
 from .publisher import publish_meeting
 from .repository import build_quality_report
@@ -203,6 +204,17 @@ def process_transcription_job(job_id: str) -> None:
                     """
                     INSERT INTO audit_logs (id, actor_user_id, action, resource_type, resource_id, metadata, created_at)
                     VALUES (?, 'system', 'publish.failed', 'meeting', ?, '{}', ?)
+                    """,
+                    (new_id("audlog"), meeting_id, now_iso()),
+                )
+        try:
+            enqueue_ontology_extraction(meeting_id, run_inline=True)
+        except Exception:
+            with get_db() as db:
+                db.execute(
+                    """
+                    INSERT INTO audit_logs (id, actor_user_id, action, resource_type, resource_id, metadata, created_at)
+                    VALUES (?, 'system', 'ontology.extract.failed', 'meeting', ?, '{}', ?)
                     """,
                     (new_id("audlog"), meeting_id, now_iso()),
                 )

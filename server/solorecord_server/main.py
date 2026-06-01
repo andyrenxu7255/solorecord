@@ -27,6 +27,11 @@ from .auth import (
 from .config import get_settings
 from .db import get_db, init_db
 from .exports import create_export
+from .ontology import (
+    enqueue_ontology_extraction,
+    ontology_graph,
+    process_ontology_job,
+)
 from .processing import enqueue_transcription, process_uploaded_segment
 from .processing import process_transcription_job
 from .repository import (
@@ -397,6 +402,7 @@ def get_meeting(meeting_id: str, user: CurrentUser) -> dict:
         "qualityReport": document["qualityReport"],
         "knowledgeReadiness": document["knowledgeReadiness"],
         "knowledgeGraph": document["knowledgeGraph"],
+        "ontologyGraph": document["ontologyGraph"],
         "jobs": [row_to_dict(row) for row in jobs],
     }
 
@@ -677,6 +683,22 @@ def process_meeting(meeting_id: str, user: CurrentUser) -> dict:
     return {"jobId": job_id}
 
 
+@app.get("/api/mobile/meetings/{meeting_id}/ontology")
+@app.get("/api/web/meetings/{meeting_id}/ontology")
+def get_meeting_ontology(meeting_id: str, user: CurrentUser) -> dict:
+    _assert_access(meeting_id, user)
+    return ontology_graph(meeting_id)
+
+
+@app.post("/api/mobile/meetings/{meeting_id}/ontology/extract")
+@app.post("/api/web/meetings/{meeting_id}/ontology/extract")
+def extract_meeting_ontology(meeting_id: str, user: CurrentUser) -> dict:
+    _assert_access(meeting_id, user, write=True)
+    job_id = _enqueue_background_ontology(meeting_id)
+    audit(user["id"], "ontology.extract", "meeting", meeting_id, {"job_id": job_id})
+    return {"jobId": job_id}
+
+
 @app.get("/api/mobile/meetings/{meeting_id}/status")
 @app.get("/api/web/meetings/{meeting_id}/status")
 def meeting_status(meeting_id: str, user: CurrentUser) -> dict:
@@ -939,6 +961,20 @@ def external_meeting_transcript(
     return {"client": client["client"], **document}
 
 
+@app.get("/api/external/meetings/{meeting_id}/ontology")
+def external_meeting_ontology(meeting_id: str, client: ExternalClient) -> dict:
+    document = meeting_document(meeting_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    return {
+        "client": client["client"],
+        "meeting": document["meeting"],
+        "owner": document["owner"],
+        "knowledgeReadiness": document["knowledgeReadiness"],
+        "ontologyGraph": document["ontologyGraph"],
+    }
+
+
 @app.post("/api/admin/search/reindex")
 def reindex_all(user: CurrentUser) -> dict:
     require_admin(user)
@@ -1182,7 +1218,10 @@ def retry_job(job_id: str, user: CurrentUser) -> dict:
         job = db.execute("SELECT * FROM processing_jobs WHERE id = ?", (job_id,)).fetchone()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    new_job = _enqueue_background_transcription(job["meeting_id"], job["asr_provider"])
+    if job["type"] == "knowledge_graph":
+        new_job = _enqueue_background_ontology(job["meeting_id"])
+    else:
+        new_job = _enqueue_background_transcription(job["meeting_id"], job["asr_provider"])
     audit(user["id"], "job.retry", "job", job_id, {"new_job": new_job})
     return {"jobId": new_job}
 
@@ -1190,6 +1229,12 @@ def retry_job(job_id: str, user: CurrentUser) -> dict:
 def _enqueue_background_transcription(meeting_id: str, asr_provider: str | None = None) -> str:
     job_id = enqueue_transcription(meeting_id, asr_provider, run_inline=False)
     job_executor.submit(process_transcription_job, job_id)
+    return job_id
+
+
+def _enqueue_background_ontology(meeting_id: str) -> str:
+    job_id = enqueue_ontology_extraction(meeting_id, run_inline=False)
+    job_executor.submit(process_ontology_job, job_id)
     return job_id
 
 

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .db import get_db
 from .llm_adapters import mentioned_people_candidates
+from .ontology import ontology_graph
 from .owner_terms import ORG_OWNER_TERMS
 from .utils import row_to_dict
 
@@ -119,6 +120,7 @@ def meeting_document(meeting_id: str) -> dict:
             action_items,
             normalized_transcript_segments,
         ),
+        "ontologyGraph": ontology_graph(meeting_id),
         "searchText": "\n".join(
             part
             for part in [
@@ -150,6 +152,7 @@ def transcript_document(meeting_id: str, include_history: bool = False) -> dict:
         "qualityReport": document["qualityReport"],
         "knowledgeReadiness": document["knowledgeReadiness"],
         "knowledgeGraph": document["knowledgeGraph"],
+        "ontologyGraph": document["ontologyGraph"],
         "transcript": {
             "version": document["meeting"]["version"],
             "segments": current_segments,

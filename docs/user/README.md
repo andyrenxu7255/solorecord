@@ -159,6 +159,7 @@ Web 详情页的“整理质量”会提示候选人名、需要校对的段落�
 - 修改待办负责人、任务、截止时间和状态。
 - 查看待办证据；如果系统给出“建议负责人”，可以先应用建议，再保存待办。证据旁边的“定位转写”可以跳到对应原文段落，方便回听和校对。
 - 检查待办里的“协同：某人”。这表示主责人明确，但转写里还有配合或协助关系，复制到 IM 前建议一并保留。
+- 打开“本体图谱”。图谱会把人员、地点、时间、事项和待办显示成可拖动、可点击的关系图，例如“张三负责补充报价明细”“补充报价明细截止周三”“合同条款关联销售工作区”。点击节点或关系可以查看对应转写或待办证据。图谱用于查阅和知识整理，最终事实仍以转写原文和人工校对为准。
 - 修改转写文本。
 - 批量修改说话人名称。
 - 按说话人或音频分段筛选转写时间线。
@@ -413,6 +414,7 @@ The SoloRecord Web app supports:
 - Title editing
 - Summary editing
 - Action-item editing for owner, task, due date, and status
+- Ontology graph review for people, places, times, matters, action items, and their relationships
 - Transcript editing
 - Batch speaker rename
 - Transcript filtering by speaker or source audio segment
@@ -465,6 +467,13 @@ Rename the role in record details and apply the change to all segments with the 
 If a row is marked “needs review”, the speaker was inferred from context and should be checked against the text or audio. Rows can also be marked “LLM segmented” or “rule segmented”, meaning SoloRecord reorganized the ASR text into dialogue turns after transcription.
 
 The Web detail page includes a quality panel with candidate names, rows needing review, speaker-evidence risk, and action evidence coverage. This is a review aid: if a speaker lacks source evidence, an action item lacks transcript evidence, or an action owner is marked weak, check the transcript or audio before sending it to IM or another system. Unsupported actions are shown as missing transcript evidence and are not also counted as weak-owner issues. A majority-source task still needs owner confirmation when it is marked weak. Suggested owners may come from named call-outs such as “Yitian, cover automated testing” even before the row is fully split; treat the suggestion as a review aid and save the action list after applying it.
+
+Open the ontology graph from the meeting detail page to review extracted
+people, places, times, matters, action items, and relationships. The graph is
+draggable and clickable; selecting a node or relationship shows the transcript
+or action evidence behind it. Use it to understand context and prepare knowledge
+ingestion, but keep transcript evidence and human corrections as the source of
+truth.
 
 If the quality panel shows weak source-segment coverage or a "system review" transcript row, that audio segment is uploaded but lacks effective transcript text. Replay or re-transcribe it before copying the summary or sending the meeting to another system.
 

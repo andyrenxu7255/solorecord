@@ -70,6 +70,7 @@ server/solorecord_server/
 ├── processing.py        处理任务：ASR、纪要、转发、索引
 ├── asr_adapters.py      本地 ASR 命令适配器
 ├── llm_adapters.py      LLM/Ollama/OpenAI 兼容适配器
+├── ontology.py          本体抽槽、图谱节点/关系持久化
 ├── publisher.py         Hermes/Webhook 转发
 ├── repository.py        聚合会议文档
 ├── search_index.py      ES/OpenSearch 索引
@@ -93,6 +94,8 @@ server/solorecord_server/
 - `transcript_segments`
 - `speakers`
 - `action_items`
+- `ontology_entities`
+- `ontology_relations`
 - `exports`
 - `apk_releases`
 - `app_config`
@@ -124,6 +127,8 @@ GET  /api/mobile/meetings/{meetingId}/segments/{segmentNo}/audio
 POST /api/mobile/meetings/{meetingId}/finish
 POST /api/mobile/meetings/{meetingId}/process
 GET  /api/mobile/meetings/{meetingId}/status
+GET  /api/mobile/meetings/{meetingId}/ontology
+POST /api/mobile/meetings/{meetingId}/ontology/extract
 GET  /api/mobile/meetings/{meetingId}/transcript
 PUT  /api/mobile/meetings/{meetingId}/transcript
 PUT  /api/mobile/meetings/{meetingId}/actions
@@ -142,6 +147,8 @@ GET  /api/web/meetings/{meetingId}/transcript
 PUT  /api/web/meetings/{meetingId}/transcript
 PUT  /api/web/meetings/{meetingId}/actions
 POST /api/web/meetings/{meetingId}/process
+GET  /api/web/meetings/{meetingId}/ontology
+POST /api/web/meetings/{meetingId}/ontology/extract
 POST /api/web/meetings/{meetingId}/speakers/rename
 POST /api/web/meetings/{meetingId}/exports
 GET  /api/web/search
@@ -166,6 +173,7 @@ POST /api/admin/search/reindex
 GET /api/external/meetings
 GET /api/external/meetings/{meetingId}
 GET /api/external/meetings/{meetingId}/transcript
+GET /api/external/meetings/{meetingId}/ontology
 ```
 
 外部系统用 `SOLO_EXTERNAL_API_TOKENS` 中配置的 bearer token。
@@ -240,7 +248,9 @@ Android 录音和上传采用连续录音、重叠分段、分段级断点续传
 
 目前“自动发现就近录制设备”尚未实现协议层，产品上先用共享会议编号加入；Web 会显示服务端可加入会议候选，但这不是局域网/Bluetooth 近场发现。后续如果增加局域网发现或二维码邀请，只应创建/传递 `join_code`，不要绕过服务端权限和来源上限。
 
-转写是企业知识平台的原始证据层。服务端使用 `transcript_segment_history` 归档被重处理或人工替换前的旧行。非 admin 用户更新转写时不能减少段落数；admin 可以删除段落，但删除前同样归档。知识平台 Agent 应通过 `/api/external/meetings/{meetingId}/transcript?include_history=true` 拉取当前转写和历史，不要直接读 SQLite。待办事项通过 `/api/web/meetings/{meetingId}/actions` 或 `/api/mobile/meetings/{meetingId}/actions` 更新，字段为 `owner`、`task`、`due`、`status`，更新后会出现在同步、导出、外部 API 和可选 ES/OpenSearch 索引中。
+转写是企业知识平台的原始证据层。服务端使用 `transcript_segment_history` 归档被重处理或人工替换前的旧行。非 admin 用户更新转写时不能减少段落数；admin 可以删除段落，但删除前同样归档。知识平台 Agent 应通过 `/api/external/meetings/{meetingId}/transcript?include_history=true` 拉取当前转写和历史，不要直接读 SQLite。待办事项通过 `/api/web/meetings/{meetingId}/actions` 或 `/api/mobile/meetings/{meetingId}/actions` 更新，字段为 `owner`、`task`、`due`、`status`，更新后会出现在同步、导出、外部 API、持久化本体图谱和可选 ES/OpenSearch 索引中。
+
+本体图谱由 `ontology.py` 维护，实体表是 `ontology_entities`，关系表是 `ontology_relations`。实体类型固定为 `person`、`place`、`time`、`matter`、`action`；关系优先使用 `responsible_for`、`due_at`、`located_at`、`scheduled_at`、`discussed`、`related_to`、`depends_on`、`mentioned`。会议最终转写整理成功后会自动创建 `knowledge_graph` 任务并落库；也可以调用 `/api/web/meetings/{meetingId}/ontology/extract` 或移动端同名接口单独重建，不需要重跑 ASR。图谱结果通过 `ontologyGraph` 返回，外部知识平台可单独拉取 `/api/external/meetings/{meetingId}/ontology`。`knowledgeGraph` 仍保留为轻量主题图，`ontologyGraph` 才是面向“人员-地点-时间-事项-待办”对象抽槽和关系查询的持久化图谱。
 
 `/segments-json` 仍保留作兼容和简单测试入口，Android 主流程不再使用它上传长会议音频。
 
@@ -657,6 +667,7 @@ server/solorecord_server/
 ├── processing.py        ASR, summary, forwarding, indexing workflow
 ├── asr_adapters.py      local ASR command adapter
 ├── llm_adapters.py      LLM/Ollama/OpenAI-compatible adapters
+├── ontology.py          ontology slot extraction and persisted graph storage
 ├── publisher.py         Hermes/Webhook forwarding
 ├── repository.py        full meeting document aggregation
 ├── search_index.py      ES/OpenSearch indexing
@@ -680,6 +691,8 @@ Core tables:
 - `transcript_segments`
 - `speakers`
 - `action_items`
+- `ontology_entities`
+- `ontology_relations`
 - `exports`
 - `apk_releases`
 - `app_config`
@@ -703,6 +716,8 @@ GET  /api/mobile/meetings/{meetingId}/segments/{segmentNo}/audio
 POST /api/mobile/meetings/{meetingId}/finish
 POST /api/mobile/meetings/{meetingId}/process
 GET  /api/mobile/meetings/{meetingId}/status
+GET  /api/mobile/meetings/{meetingId}/ontology
+POST /api/mobile/meetings/{meetingId}/ontology/extract
 GET  /api/mobile/meetings/{meetingId}/transcript
 PUT  /api/mobile/meetings/{meetingId}/transcript
 POST /api/mobile/meetings/{meetingId}/speakers/rename
@@ -718,6 +733,8 @@ GET  /api/web/meetings/{meetingId}
 PATCH /api/web/meetings/{meetingId}
 GET  /api/web/meetings/{meetingId}/transcript
 PUT  /api/web/meetings/{meetingId}/transcript
+GET  /api/web/meetings/{meetingId}/ontology
+POST /api/web/meetings/{meetingId}/ontology/extract
 POST /api/web/meetings/{meetingId}/process
 POST /api/web/meetings/{meetingId}/speakers/rename
 POST /api/web/meetings/{meetingId}/exports
@@ -743,6 +760,7 @@ External systems:
 GET /api/external/meetings
 GET /api/external/meetings/{meetingId}
 GET /api/external/meetings/{meetingId}/transcript
+GET /api/external/meetings/{meetingId}/ontology
 ```
 
 External systems authenticate with bearer tokens from `SOLO_EXTERNAL_API_TOKENS`.
@@ -808,6 +826,18 @@ Transcripts are the evidence layer for enterprise knowledge platforms. The
 server archives rows replaced by reprocessing or manual edits in
 `transcript_segment_history`. Non-admin transcript updates cannot reduce segment
 count; admin users may remove rows, but previous rows are still archived first.
+Knowledge agents should use
+`/api/external/meetings/{meetingId}/transcript?include_history=true` for the
+evidence layer and `/api/external/meetings/{meetingId}/ontology` for the
+persisted ontology graph. `ontology.py` stores entities in
+`ontology_entities` and relations in `ontology_relations`. Entity types are
+limited to `person`, `place`, `time`, `matter`, and `action`; relation types
+prefer `responsible_for`, `due_at`, `located_at`, `scheduled_at`, `discussed`,
+`related_to`, `depends_on`, and `mentioned`. Final meeting processing queues a
+`knowledge_graph` job automatically, and clients may rebuild only the graph via
+`/api/web/meetings/{meetingId}/ontology/extract` without rerunning ASR. The old
+`knowledgeGraph` field remains a lightweight topic graph; `ontologyGraph` is
+the durable object-slot graph for people, places, times, matters, and actions.
 Knowledge agents should pull `/api/external/meetings/{meetingId}/transcript?include_history=true`
 instead of reading SQLite directly.
 

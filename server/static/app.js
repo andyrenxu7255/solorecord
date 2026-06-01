@@ -336,6 +336,7 @@ function renderMeetingDetail(data, transcriptSegments) {
         <div class="detail-actions">
           <button id="saveMeeting" class="button primary">保存标题/纪要</button>
           <button id="processMeeting" class="button secondary">重新转写整理</button>
+          <button id="openOntologyGraph" class="button secondary">打开本体图谱</button>
         </div>
         <div class="detail-actions">
           <button data-export="markdown" class="button secondary">导出 Markdown</button>
@@ -381,6 +382,7 @@ function renderMeetingDetail(data, transcriptSegments) {
       </div>
       <details class="summary-box graph-details">
         <summary>图谱视图</summary>
+        ${renderOntologyGraphSummary(data.ontologyGraph || null)}
         ${renderKnowledgeGraph(knowledgeGraph)}
       </details>
       <div class="summary-box">
@@ -448,6 +450,9 @@ function renderMeetingDetail(data, transcriptSegments) {
   `;
   $("#saveMeeting").addEventListener("click", saveMeeting);
   $("#processMeeting").addEventListener("click", processSelectedMeeting);
+  $("#openOntologyGraph").addEventListener("click", openOntologyGraph);
+  $("#rebuildOntologyGraph")?.addEventListener("click", rebuildOntologyGraph);
+  $("#openOntologyGraphInline")?.addEventListener("click", openOntologyGraph);
   $("#saveTranscript").addEventListener("click", saveTranscript);
   $("#saveActions").addEventListener("click", saveActions);
   $("#addActionItem").addEventListener("click", addActionRow);
@@ -815,6 +820,39 @@ function renderKnowledgeGraph(graph) {
           <span>${escapeHtml(edge.source_label || edge.source)} → ${escapeHtml(edge.target_label || edge.target)} · ${escapeHtml(edge.label || "关联")}</span>
         `).join("") || "<span>暂无关系边</span>"}
       </div>
+    </div>
+  `;
+}
+
+function renderOntologyGraphSummary(graph) {
+  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+  const edges = Array.isArray(graph?.edges) ? graph.edges : [];
+  const counts = nodes.reduce((acc, node) => {
+    const type = node.type || "item";
+    acc[type] = (acc[type] || 0) + 1;
+    return acc;
+  }, {});
+  return `
+    <div class="ontology-summary">
+      <div class="section-row">
+        <div>
+          <h3>本体抽槽</h3>
+          <span class="hint">人员、地点、时间、事项、待办及其关系会持久化保存，供知识平台和图谱页读取。</span>
+        </div>
+        <div class="detail-actions">
+          <button type="button" id="rebuildOntologyGraph" class="button secondary">重建图谱</button>
+          <button type="button" id="openOntologyGraphInline" class="button primary">打开图谱页</button>
+        </div>
+      </div>
+      <div class="ontology-counts">
+        <span>人员 ${Number(counts.person || 0)}</span>
+        <span>地点 ${Number(counts.place || 0)}</span>
+        <span>时间 ${Number(counts.time || 0)}</span>
+        <span>事项 ${Number(counts.matter || 0)}</span>
+        <span>待办 ${Number(counts.action || 0)}</span>
+        <span>关系 ${edges.length}</span>
+      </div>
+      ${nodes.length ? "" : "<p class='hint'>暂未生成本体图谱。可点击重建图谱，或等待会议整理完成后自动抽槽。</p>"}
     </div>
   `;
 }
@@ -1371,6 +1409,17 @@ async function processSelectedMeeting() {
   await api(`/api/web/meetings/${state.selectedMeetingId}/process`, { method: "POST", body: "{}" });
   toast("已提交处理任务");
   await selectMeeting(state.selectedMeetingId);
+}
+
+async function rebuildOntologyGraph() {
+  await api(`/api/web/meetings/${state.selectedMeetingId}/ontology/extract`, { method: "POST", body: "{}" });
+  toast("已提交图谱抽槽任务");
+  await selectMeeting(state.selectedMeetingId);
+}
+
+function openOntologyGraph() {
+  if (!state.selectedMeetingId) return;
+  window.open(`/graph.html?meetingId=${encodeURIComponent(state.selectedMeetingId)}`, "_blank", "noopener");
 }
 
 async function saveTranscript() {
