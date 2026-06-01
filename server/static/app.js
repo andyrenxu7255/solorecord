@@ -304,6 +304,7 @@ async function selectMeeting(id) {
   if (!id) return;
   const meeting = state.meetings.find((item) => item.id === id) || null;
   const loadSeq = state.meetingLoadSeq + 1;
+  const isCurrentLoad = () => loadSeq === state.meetingLoadSeq && id === state.selectedMeetingId;
   state.meetingLoadSeq = loadSeq;
   state.selectedMeetingId = id;
   state.loadingMeetingId = id;
@@ -312,26 +313,75 @@ async function selectMeeting(id) {
   state.currentTranscriptSegments = [];
   renderMeetingList();
   renderMeetingLoading(meeting);
+  scrollMeetingDetailToTop();
   try {
     const overview = await api(`/api/web/meetings/${id}/overview`);
-    if (loadSeq !== state.meetingLoadSeq || id !== state.selectedMeetingId) return;
+    if (!isCurrentLoad()) return;
     state.selectedTranscriptVersion = overview.meeting?.version || 1;
-    renderMeetingDetail(overview, [], { transcriptLoading: true });
-    const [data, transcript] = await Promise.all([
-      api(`/api/web/meetings/${id}`),
-      api(`/api/web/meetings/${id}/transcript`),
-    ]);
-    if (loadSeq !== state.meetingLoadSeq || id !== state.selectedMeetingId) return;
-    state.selectedTranscriptVersion = transcript.version;
+    let latestDetail = overview;
+    let latestTranscript = [];
+    let detailDone = false;
+    let transcriptDone = false;
+    let detailError = "";
+    let transcriptError = "";
+    const renderProgress = () => {
+      if (!isCurrentLoad()) return;
+      renderMeetingDetail(latestDetail, latestTranscript, {
+        detailLoading: !detailDone,
+        transcriptLoading: !transcriptDone,
+        transcriptUnavailable: Boolean(transcriptError),
+        loadError: detailError || transcriptError,
+      });
+    };
+    renderProgress();
+    scrollMeetingDetailToTop();
+    const detailTask = api(`/api/web/meetings/${id}`)
+      .then((data) => {
+        if (!isCurrentLoad()) return;
+        latestDetail = data;
+      })
+      .catch((error) => {
+        if (!isCurrentLoad()) return;
+        detailError = `质量证据暂未加载完成：${error.message}`;
+      })
+      .finally(() => {
+        if (!isCurrentLoad()) return;
+        detailDone = true;
+        renderProgress();
+      });
+    const transcriptTask = api(`/api/web/meetings/${id}/transcript`)
+      .then((transcript) => {
+        if (!isCurrentLoad()) return;
+        state.selectedTranscriptVersion = transcript.version || state.selectedTranscriptVersion;
+        latestTranscript = transcript.segments || [];
+      })
+      .catch((error) => {
+        if (!isCurrentLoad()) return;
+        transcriptError = `转写时间线暂未加载完成：${error.message}`;
+      })
+      .finally(() => {
+        if (!isCurrentLoad()) return;
+        transcriptDone = true;
+        renderProgress();
+      });
+    await Promise.all([detailTask, transcriptTask]);
+    if (!isCurrentLoad()) return;
     state.loadingMeetingId = "";
     renderMeetingList();
-    renderMeetingDetail(data, transcript.segments || []);
+    if (detailError || transcriptError) {
+      toast("会议已打开，部分内容稍后可刷新重试");
+    }
   } catch (error) {
-    if (loadSeq !== state.meetingLoadSeq || id !== state.selectedMeetingId) return;
+    if (!isCurrentLoad()) return;
     state.loadingMeetingId = "";
     renderMeetingList();
     renderMeetingLoadError(meeting, error);
   }
+}
+
+function scrollMeetingDetailToTop() {
+  const panel = $("#meetingDetail")?.closest(".detail-panel");
+  if (panel) panel.scrollTo({ top: 0, left: 0 });
 }
 
 function renderMeetingLoading(meeting) {
@@ -378,7 +428,12 @@ function renderMeetingDetail(data, transcriptSegments, options = {}) {
   const meeting = data.meeting;
   state.currentMeetingDetail = data;
   state.currentTranscriptSegments = transcriptSegments;
+  const detailLoading = Boolean(options.detailLoading);
   const transcriptLoading = Boolean(options.transcriptLoading);
+  const transcriptUnavailable = Boolean(options.transcriptUnavailable);
+  const isLoadingMore = detailLoading || transcriptLoading;
+  const loadError = String(options.loadError || "");
+  const transcriptDisabled = transcriptLoading || transcriptUnavailable;
   const jobs = data.jobs || [];
   const actions = data.actionItems || [];
   const exports = data.exports || [];
@@ -391,7 +446,7 @@ function renderMeetingDetail(data, transcriptSegments, options = {}) {
   const recordingSources = data.recordingSources || [];
   const statusHint = meetingStatusHint(meeting.status, audioSegments, transcriptSegments);
   const speakerSamples = buildSpeakerSamples(transcriptSegments, audioSegments, meeting.id);
-  const speakerStats = transcriptLoading && !transcriptSegments.length
+  const speakerStats = (transcriptLoading || transcriptUnavailable) && !transcriptSegments.length
     ? buildSpeakerStatsFromSpeakers(data.speakers || [], actions)
     : buildSpeakerStats(transcriptSegments, actions, speakerSamples);
   const segmentInsights = buildSegmentInsights(transcriptSegments, actions, audioSegments);
@@ -405,24 +460,20 @@ function renderMeetingDetail(data, transcriptSegments, options = {}) {
     ? Number(transcriptMeta.segment_count || 0)
     : transcriptSegments.length;
   $("#meetingDetail").innerHTML = `
-    <div class="meeting-detail-shell ${transcriptLoading ? "is-loading-more" : ""}">
+    <div class="meeting-detail-shell ${isLoadingMore ? "is-loading-more" : ""}">
       <div class="detail-head">
-        <input id="detailTitle" class="input detail-title" value="${escapeAttr(meeting.title)}">
+        <div class="detail-title-row">
+          <input id="detailTitle" class="input detail-title" value="${escapeAttr(meeting.title)}">
+          <span class="status-pill">${statusLabel(meeting.status)}</span>
+        </div>
         <div class="detail-actions">
           <button id="saveMeeting" class="button primary">保存标题/纪要</button>
           <button id="processMeeting" class="button secondary">重新转写整理</button>
         </div>
-        <div class="detail-actions">
-          <button data-export="markdown" class="button secondary">导出 Markdown</button>
-          <button data-export="docx" class="button secondary">导出 Word</button>
-          <button data-export="pdf" class="button secondary">导出 PDF</button>
-          <button data-export="json" class="button secondary">导出 JSON</button>
-          <button data-export="srt" class="button secondary">导出 SRT</button>
-        </div>
       </div>
       <div class="status-banner ${meeting.status === "failed" ? "danger" : ""}">
-        <b>${statusLabel(meeting.status)}</b>
-        <span>${escapeHtml(statusHint)}</span>
+        <b>${isLoadingMore ? "会议已打开，正在补齐内容" : statusLabel(meeting.status)}</b>
+        <span>${escapeHtml(loadError || statusHint)}</span>
       </div>
       <div class="progress-strip">
         <span>录音分段：${audioSegments.length}</span>
@@ -431,99 +482,118 @@ function renderMeetingDetail(data, transcriptSegments, options = {}) {
         <span>转写段落：${transcriptCount}</span>
         <span>总时长：${formatTime(meeting.duration_ms || 0)}</span>
       </div>
-      ${transcriptLoading ? `
+      ${isLoadingMore ? `
         <div class="inline-loading" role="status" aria-live="polite">
           <span class="loading-spinner small" aria-hidden="true"></span>
           <div>
             <b>已打开会议，正在补全转写和证据检查</b>
-            <span>会议标题、纪要、待办和录音分段已可先查看；大会议的时间线会稍后自动出现。</span>
+            <span>${detailLoading && transcriptLoading ? "先显示概要，完整证据和时间线会分批出现。" : detailLoading ? "转写时间线已就绪，正在补全质量证据。" : "会议信息已就绪，正在读取转写时间线。"}</span>
           </div>
         </div>
       ` : ""}
-      <div class="summary-box">
-        <div class="section-row">
-          <h3>整理质量</h3>
-          <span class="quality-score ${escapeAttr(qualityReport.status || "review_recommended")}">${qualityScoreLabel(qualityReport)}</span>
-        </div>
-        ${transcriptLoading ? renderDeferredPanel("正在加载质量证据", "转写时间线到达后会显示发言人证据、待办证据和可入库检查。") : renderQualityReport(qualityReport, knowledgeReadiness)}
-      </div>
-      <div class="summary-box">
-        <div class="section-row">
-          <h3>人物校对</h3>
-          <span class="hint">把发言人或音译名统一成正确人名</span>
-        </div>
-        <div class="people-grid">
-          ${speakerStats.map(renderPersonCard).join("") || (transcriptLoading ? renderDeferredPanel("正在加载人物校对", "人物声音样本会在转写时间线加载后显示。") : "<p class='hint'>暂无人物信息。转写完成后可在这里统一校对人名。</p>")}
-        </div>
-      </div>
-      <div class="summary-box">
-        <div class="section-row">
-          <h3>分段洞察</h3>
-          <span class="hint">按时间查看发言人、讨论内容、待办和负责人</span>
-        </div>
-        ${transcriptLoading ? renderDeferredPanel("正在加载分段洞察", "分段列表到达后会按时间聚合发言人、主题和待办。") : renderSegmentInsights(segmentInsights)}
-      </div>
-      <div class="summary-box">
-        <div class="section-row">
-          <h3>导出文件</h3>
-          <span class="hint">生成后可下载，也可复制文件链接</span>
-        </div>
-        <div id="exportList" class="export-list">
-          ${renderExports(exports)}
-        </div>
-      </div>
-      <div class="summary-box">
-        <h3>会议纪要</h3>
-        <textarea id="detailSummary" class="input" rows="5">${escapeHtml(meeting.summary || "")}</textarea>
-      </div>
-      <div class="summary-box">
-        <h3>分角色整理</h3>
-        <textarea id="detailRoleNotes" class="input" rows="5">${escapeHtml(meeting.role_notes || "")}</textarea>
-      </div>
-      <div class="actions-box">
-        <div class="section-row">
-          <h3>待办</h3>
-          <div class="detail-actions">
-            <button id="copyActions" class="button secondary">复制待办</button>
-            <button id="applyAllSuggestedOwners" class="button secondary">应用全部建议负责人</button>
-            <button id="addActionItem" class="button secondary">新增待办</button>
+      <div class="meeting-detail-scroll">
+        <section class="meeting-priority-grid" aria-label="会议复核主工作区">
+          <div class="summary-box priority-card priority-people">
+            <div class="section-row">
+              <h3>人物校对</h3>
+              <span class="hint">先确认发言人，后续纪要和待办才可信</span>
+            </div>
+            <div class="people-grid">
+              ${speakerStats.map(renderPersonCard).join("") || (transcriptLoading ? renderDeferredPanel("正在加载人物校对", "人物声音样本会在转写时间线加载后显示。") : "<p class='hint'>暂无人物信息。转写完成后可在这里统一校对人名。</p>")}
+            </div>
           </div>
-        </div>
-        <div id="actionList" class="action-list">
-          ${actionRows.map((item) => renderActionRow(item, actionRiskMap)).join("")}
-        </div>
-        <button id="saveActions" class="button primary">保存待办</button>
-      </div>
-      <h3>录音分段</h3>
-      ${renderRecordingSources(recordingSources)}
-      <div class="audio-list">
-        ${audioSegments.map(renderAudioSegment).join("") || "<p class='hint'>暂无音频</p>"}
-      </div>
-      <section id="transcriptWorkspace" class="transcript-workspace">
-        <div class="section-row">
-          <div>
-            <h3>转写时间线</h3>
-            <p class="hint">${transcriptLoading ? "正在读取转写时间线，大会议可能需要多等几秒。" : "长段可直接上下滚动；如果一段里有多人说话，先拆分，再把拆出的段落设为新发言人。"}</p>
+          <div class="summary-box priority-card priority-summary">
+            <h3>会议纪要</h3>
+            <textarea id="detailSummary" class="input" rows="7">${escapeHtml(meeting.summary || "")}</textarea>
+            <h3 class="subsection-title">分角色整理</h3>
+            <textarea id="detailRoleNotes" class="input" rows="5">${escapeHtml(meeting.role_notes || "")}</textarea>
           </div>
-          <div class="detail-actions">
-            <select id="transcriptFilter" class="input compact-input" ${transcriptLoading ? "disabled" : ""}>
-              ${availableFilters.map((filter) => `
-                <option value="${escapeAttr(filter.value)}" ${filter.value === state.selectedTranscriptFilter ? "selected" : ""}>
-                  ${escapeHtml(filter.label)}
-                </option>
-              `).join("")}
-            </select>
-            <button id="expandTranscript" class="button secondary" ${transcriptLoading ? "disabled" : ""}>展开阅读</button>
-            <button id="copyTranscript" class="button secondary" ${transcriptLoading ? "disabled" : ""}>复制转写</button>
+          <div class="actions-box priority-card priority-actions">
+            <div class="section-row">
+              <h3>待办</h3>
+              <div class="detail-actions">
+                <button id="copyActions" class="button secondary">复制待办</button>
+                <button id="applyAllSuggestedOwners" class="button secondary">应用全部建议负责人</button>
+                <button id="addActionItem" class="button secondary">新增待办</button>
+              </div>
+            </div>
+            <div id="actionList" class="action-list">
+              ${actionRows.map((item) => renderActionRow(item, actionRiskMap)).join("")}
+            </div>
+            <button id="saveActions" class="button primary">保存待办</button>
           </div>
-        </div>
-        <div id="transcriptList" class="transcript-list">
-          ${transcriptLoading ? renderTranscriptSkeleton(transcriptCount) : (filteredSegments.map((segment) => renderTranscriptRow(segment, speakerEvidenceMap)).join("") || "<p class='hint'>当前筛选下暂无转写</p>")}
-        </div>
-        <button id="saveTranscript" class="button primary" ${transcriptLoading ? "disabled" : ""}>保存转写修改</button>
-      </section>
-      <h3>最近任务</h3>
-      ${jobs.map((job) => `<div class="job-item"><b>${job.current_stage}</b><span>${job.status} · ${job.progress}%</span><span class="hint">${escapeHtml(job.error_message || "")}</span></div>`).join("") || "<p class='hint'>暂无任务</p>"}
+        </section>
+        <section class="evidence-workspace" aria-label="证据与回听工作区">
+          <div class="summary-box">
+            <div class="section-row">
+              <h3>整理质量</h3>
+              <span class="quality-score ${escapeAttr(qualityReport.status || "review_recommended")}">${qualityScoreLabel(qualityReport)}</span>
+            </div>
+            ${detailLoading || transcriptLoading ? renderDeferredPanel("正在加载质量证据", "转写时间线到达后会显示发言人证据、待办证据和可入库检查。") : renderQualityReport(qualityReport, knowledgeReadiness)}
+          </div>
+          <div class="summary-box">
+            <div class="section-row">
+              <h3>分段洞察</h3>
+              <span class="hint">按时间查看发言人、讨论内容、待办和负责人</span>
+            </div>
+            ${transcriptUnavailable ? renderUnavailablePanel("转写时间线暂未加载", "请稍后重新打开会议，已显示的纪要和待办不会丢失。") : (transcriptLoading ? renderDeferredPanel("正在加载分段洞察", "分段列表到达后会按时间聚合发言人、主题和待办。") : renderSegmentInsights(segmentInsights))}
+          </div>
+          <div class="summary-box">
+            <div class="section-row">
+              <h3>导出文件</h3>
+              <div class="detail-actions">
+                <button data-export="markdown" class="button secondary">Markdown</button>
+                <button data-export="docx" class="button secondary">Word</button>
+                <button data-export="pdf" class="button secondary">PDF</button>
+                <button data-export="json" class="button secondary">JSON</button>
+                <button data-export="srt" class="button secondary">SRT</button>
+              </div>
+            </div>
+            <div id="exportList" class="export-list">
+              ${renderExports(exports)}
+            </div>
+          </div>
+          <div class="summary-box">
+            <div class="section-row">
+              <h3>录音分段</h3>
+              <span class="hint">需要核对时再加载播放</span>
+            </div>
+            ${renderRecordingSources(recordingSources)}
+            <div class="audio-list">
+              ${audioSegments.map(renderAudioSegment).join("") || "<p class='hint'>暂无音频</p>"}
+            </div>
+          </div>
+          <section id="transcriptWorkspace" class="transcript-workspace">
+            <div class="section-row">
+              <div>
+                <h3>转写时间线</h3>
+                <p class="hint">${transcriptLoading ? "正在读取转写时间线，大会议可能需要多等几秒。" : "长段可直接上下滚动；如果一段里有多人说话，先拆分，再把拆出的段落设为新发言人。"}</p>
+              </div>
+              <div class="detail-actions">
+                <select id="transcriptFilter" class="input compact-input" ${transcriptDisabled ? "disabled" : ""}>
+                  ${availableFilters.map((filter) => `
+                    <option value="${escapeAttr(filter.value)}" ${filter.value === state.selectedTranscriptFilter ? "selected" : ""}>
+                      ${escapeHtml(filter.label)}
+                    </option>
+                  `).join("")}
+                </select>
+                <button id="expandTranscript" class="button secondary" ${transcriptDisabled ? "disabled" : ""}>展开阅读</button>
+                <button id="copyTranscript" class="button secondary" ${transcriptDisabled ? "disabled" : ""}>复制转写</button>
+              </div>
+            </div>
+            <div id="transcriptList" class="transcript-list">
+              ${transcriptUnavailable ? renderUnavailablePanel("转写未加载成功", "为避免误删服务端转写，当前禁止保存空时间线。请重新打开会议或刷新页面。") : (transcriptLoading ? renderTranscriptSkeleton(transcriptCount) : (filteredSegments.map((segment) => renderTranscriptRow(segment, speakerEvidenceMap)).join("") || "<p class='hint'>当前筛选下暂无转写</p>"))}
+            </div>
+            <button id="saveTranscript" class="button primary" ${transcriptDisabled ? "disabled" : ""}>保存转写修改</button>
+          </section>
+          <div class="summary-box">
+            <h3>最近任务</h3>
+            <div class="job-list">
+              ${jobs.map((job) => `<div class="job-item"><b>${job.current_stage}</b><span>${job.status} · ${job.progress}%</span><span class="hint">${escapeHtml(job.error_message || "")}</span></div>`).join("") || "<p class='hint'>暂无任务</p>"}
+            </div>
+          </div>
+        </section>
+      </div>
     </div>
   `;
   $("#saveMeeting").addEventListener("click", saveMeeting);
@@ -907,6 +977,17 @@ function renderDeferredPanel(title, detail) {
   return `
     <div class="deferred-panel">
       <span class="loading-spinner small" aria-hidden="true"></span>
+      <div>
+        <b>${escapeHtml(title)}</b>
+        <span>${escapeHtml(detail)}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderUnavailablePanel(title, detail) {
+  return `
+    <div class="deferred-panel warning-panel">
       <div>
         <b>${escapeHtml(title)}</b>
         <span>${escapeHtml(detail)}</span>

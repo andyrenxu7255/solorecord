@@ -5956,6 +5956,20 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "renderTranscriptSkeleton" in app_js
     assert "正在补全转写和证据检查" in app_js
     assert "整理质量与证据" in app_js
+    assert "scrollMeetingDetailToTop" in app_js
+    assert "detailLoading" in app_js
+    assert "transcriptUnavailable" in app_js
+    assert "为避免误删服务端转写" in app_js
+    assert "meeting-detail-scroll" in app_js
+    assert "meeting-priority-grid" in app_js
+    assert "priority-card priority-people" in app_js
+    assert "priority-card priority-summary" in app_js
+    assert "priority-card priority-actions" in app_js
+    people_index = app_js.index("<h3>人物校对</h3>")
+    summary_index = app_js.index("<h3>会议纪要</h3>")
+    actions_index = app_js.index("<h3>待办</h3>")
+    quality_index = app_js.index("<h3>整理质量</h3>")
+    assert people_index < summary_index < actions_index < quality_index
     assert "ontologyGraph" not in app_js
     assert "renderOntologyGraphSummary" not in app_js
     assert "openOntologyGraph" not in app_js
@@ -5963,6 +5977,10 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert ".transcript-skeleton" in styles
     assert ".inline-loading" in styles
     assert ".deferred-panel" in styles
+    assert ".warning-panel" in styles
+    assert ".meeting-detail-scroll" in styles
+    assert ".meeting-priority-grid" in styles
+    assert ".priority-card" in styles
     assert ".graph-inspector" in styles
     assert "detailRoleNotes" in app_js
     assert "分角色整理" in app_js

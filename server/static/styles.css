@@ -296,7 +296,8 @@ p {
 
 .list-panel,
 .detail-panel {
-  min-height: calc(100vh - 174px);
+  height: calc(100vh - 174px);
+  min-height: 560px;
 }
 
 .list-panel {
@@ -308,8 +309,7 @@ p {
 
 .detail-panel {
   padding: 16px;
-  max-height: calc(100vh - 174px);
-  overflow: auto;
+  overflow: hidden;
   scrollbar-gutter: stable;
 }
 
@@ -670,7 +670,16 @@ textarea.input {
 
 .detail-head {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
+  align-items: center;
+}
+
+.detail-title-row {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  min-width: 0;
 }
 
 .detail-title {
@@ -693,14 +702,16 @@ textarea.input {
 .detail-loading {
   display: grid;
   gap: 16px;
-  min-height: 360px;
+  height: 100%;
   align-content: start;
   color: var(--muted);
 }
 
 .meeting-detail-shell {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 0;
+  height: 100%;
   min-height: 0;
 }
 
@@ -851,6 +862,12 @@ textarea.input {
   margin-top: 10px;
 }
 
+.warning-panel {
+  border-color: #fde68a;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .warning-text {
   color: var(--accent);
 }
@@ -860,16 +877,66 @@ textarea.input {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 12px;
-  margin-top: 12px;
   background: var(--surface);
   box-shadow: var(--shadow);
+  min-height: 0;
+}
+
+.meeting-detail-scroll {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+}
+
+.meeting-priority-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.88fr) minmax(320px, 1.1fr) minmax(320px, 1.02fr);
+  gap: 12px;
+  min-height: min(54vh, 620px);
+}
+
+.priority-card {
+  align-content: start;
+  display: grid;
+  gap: 10px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.priority-people .people-grid {
+  grid-template-columns: 1fr;
+}
+
+.priority-summary textarea {
+  min-height: 120px;
+}
+
+.priority-summary #detailSummary {
+  min-height: 170px;
+}
+
+.priority-actions #actionList {
+  min-height: 0;
+  overflow: auto;
+}
+
+.subsection-title {
+  margin-top: 4px;
+}
+
+.evidence-workspace {
+  display: grid;
+  gap: 12px;
 }
 
 .transcript-workspace {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 12px;
-  margin-top: 12px;
   background: var(--surface);
   box-shadow: var(--shadow);
 }
@@ -2059,8 +2126,32 @@ textarea.input {
 
   .list-panel,
   .detail-panel {
+    height: auto;
     min-height: auto;
     max-height: none;
+  }
+
+  .detail-panel {
+    overflow: visible;
+  }
+
+  .detail-head,
+  .meeting-priority-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .meeting-detail-shell,
+  .meeting-detail-scroll {
+    height: auto;
+    overflow: visible;
+  }
+
+  .meeting-priority-grid {
+    min-height: 0;
+  }
+
+  .priority-card {
+    overflow: visible;
   }
 
   .transcript-row {
