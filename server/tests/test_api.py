@@ -5906,6 +5906,25 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert ".summary-evidence-refs" in styles
 
 
+def test_web_upload_requires_login_before_create_or_upload() -> None:
+    app_js = (Path(__file__).parents[1] / "static" / "app.js").read_text(
+        encoding="utf-8"
+    )
+    create_start = app_js.index("async function createAndUpload()")
+    create_end = app_js.index("async function loadRecorderConfig()", create_start)
+    create_upload = app_js[create_start:create_end]
+    upload_start = app_js.index("function uploadWithProgress(")
+    upload_end = app_js.index("function updateRecordTimer()", upload_start)
+    upload_with_progress = app_js[upload_start:upload_end]
+
+    assert "requireLoginForAction(\"请先登录后再上传音频\")" in create_upload
+    assert "登录状态已过期，请重新登录后再次上传" in create_upload
+    assert "promptLogin(\"登录状态已过期，请重新登录后再次上传\")" in create_upload
+    assert "reject(httpError(401, JSON.stringify({ detail: \"Missing access token\" })))" in upload_with_progress
+    assert "reject(httpError(request.status, request.responseText))" in upload_with_progress
+    assert "if (isAuthError(error)) return \"请先登录后再继续\"" in app_js
+    assert "extractErrorDetail" in app_js
+
 
 def test_llm_semantic_segmentation_parses_structured_segments() -> None:
     import solorecord_server.llm_adapters as llm_adapters

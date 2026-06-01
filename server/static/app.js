@@ -55,8 +55,35 @@ function toast(message) {
   setTimeout(() => box.classList.remove("show"), 2600);
 }
 
+function extractErrorDetail(text) {
+  const raw = String(text || "");
+  if (!raw) return "";
+  try {
+    const payload = JSON.parse(raw);
+    const detail = payload.detail || payload.message || payload.error || "";
+    if (Array.isArray(detail)) {
+      return detail.map((item) => item?.msg || item?.message || String(item)).join("；");
+    }
+    if (detail && typeof detail === "object") {
+      return detail.msg || detail.message || JSON.stringify(detail);
+    }
+    return String(detail || raw);
+  } catch (error) {
+    return raw;
+  }
+}
+
+function httpError(status, text) {
+  const detail = extractErrorDetail(text) || `HTTP ${status}`;
+  const error = new Error(detail);
+  error.status = status;
+  error.detail = detail;
+  error.raw = String(text || "");
+  return error;
+}
+
 async function api(path, options = {}) {
-  const headers = options.headers || {};
+  const headers = { ...(options.headers || {}) };
   if (!(options.body instanceof FormData)) {
     headers["Content-Type"] = "application/json";
   }
@@ -66,9 +93,49 @@ async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `HTTP ${response.status}`);
+    throw httpError(response.status, text);
   }
-  return response.json();
+  const text = await response.text();
+  return text ? JSON.parse(text) : {};
+}
+
+function clearSessionState() {
+  localStorage.removeItem("solo_token");
+  localStorage.removeItem("solo_user");
+  state.token = "";
+  state.user = null;
+  state.meetings = [];
+  state.joinableMeetings = [];
+}
+
+function renderLoggedOutState() {
+  renderAccount();
+  renderMeetingList();
+  renderMeetingSummaryStrip();
+  renderJoinableMeetingLists();
+}
+
+function isAuthError(error) {
+  const text = `${error?.status || ""} ${error?.detail || ""} ${error?.message || ""} ${error?.raw || ""}`;
+  return Number(error?.status) === 401
+    || text.includes("Missing access token")
+    || text.includes("Invalid access token")
+    || text.includes("Not authenticated")
+    || text.includes("Could not validate credentials")
+    || text.includes("Unauthorized");
+}
+
+function promptLogin(message = "登录状态已过期，请重新登录") {
+  clearSessionState();
+  renderLoggedOutState();
+  showLogin();
+  toast(message);
+}
+
+function requireLoginForAction(message = "请先登录后再继续") {
+  if (state.token) return true;
+  promptLogin(message);
+  return false;
 }
 
 function setView(name) {
@@ -166,16 +233,8 @@ function configureClientMode() {
 }
 
 function logout() {
-  localStorage.removeItem("solo_token");
-  localStorage.removeItem("solo_user");
-  state.token = "";
-  state.user = null;
-  state.meetings = [];
-  state.joinableMeetings = [];
-  renderAccount();
-  renderMeetingList();
-  renderMeetingSummaryStrip();
-  renderJoinableMeetingLists();
+  clearSessionState();
+  renderLoggedOutState();
   toast("已退出登录");
 }
 
@@ -2217,6 +2276,10 @@ async function createAndUpload() {
     setUploadStatus("请选择要补传的音频文件。支持 m4a、mp3、wav、webm 等常见音频，实际识别取决于服务器 ASR 能力。", "warning");
     return;
   }
+  if (!requireLoginForAction("请先登录后再上传音频")) {
+    setUploadStatus("请先登录后再上传音频，登录后文件仍可继续选择并重试。", "warning");
+    return;
+  }
   const button = $("#createUploadButton");
   let meetingId = "";
   try {
@@ -2286,6 +2349,11 @@ async function createAndUpload() {
     await loadMeetings();
     await selectMeeting(meetingId);
   } catch (error) {
+    if (isAuthError(error)) {
+      setUploadStatus("登录状态已过期，请重新登录后再次上传。", "warning");
+      promptLogin("登录状态已过期，请重新登录后再次上传");
+      return;
+    }
     const message = friendlyError(error);
     setUploadStatus(
       meetingId
@@ -2312,8 +2380,7 @@ async function loadRecorderConfig() {
 }
 
 async function startWebRecording() {
-  if (!state.token) {
-    showLogin();
+  if (!requireLoginForAction("请先登录后再开始录音")) {
     return;
   }
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
@@ -2558,6 +2625,10 @@ function setUploadStatus(message, level = "info") {
 
 function uploadWithProgress(path, form, onProgress, onUploaded) {
   return new Promise((resolve, reject) => {
+    if (!state.token) {
+      reject(httpError(401, JSON.stringify({ detail: "Missing access token" })));
+      return;
+    }
     const request = new XMLHttpRequest();
     request.open("POST", path);
     if (state.token) request.setRequestHeader("Authorization", `Bearer ${state.token}`);
@@ -2574,7 +2645,7 @@ function uploadWithProgress(path, form, onProgress, onUploaded) {
     });
     request.addEventListener("load", () => {
       if (request.status < 200 || request.status >= 300) {
-        reject(new Error(request.responseText || `HTTP ${request.status}`));
+        reject(httpError(request.status, request.responseText));
         return;
       }
       try {
@@ -2618,6 +2689,7 @@ function recorderExtension(mimeType) {
 
 function friendlyError(error) {
   const text = String(error?.message || error || "未知错误");
+  if (isAuthError(error)) return "请先登录后再继续";
   if (text.includes("NotAllowedError")) return "麦克风权限被拒绝，请允许 SoloRecord 使用麦克风";
   if (text.includes("NotFoundError")) return "没有找到可用麦克风";
   if (text.includes("NotReadableError")) return "麦克风被其他程序占用";
