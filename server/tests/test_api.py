@@ -5943,10 +5943,35 @@ def test_web_release_page_refreshes_after_login_and_distinguishes_errors() -> No
     assert "await refreshAfterLogin()" in app_js
     assert "if (!state.token && !restoreSessionFromStorage())" in load_release
     assert "restoreSessionFromStorage()" in load_release
+    assert "downloadLatestRelease" in load_release
+    assert "release-download" in load_release
     assert "登录状态已过期，请重新登录后查看发布包" in load_release
     assert "发布包信息加载失败" in load_release
     assert "请稍后刷新，或联系运维确认发布包服务" in load_release
     assert load_release.count("请先登录后查看发布包。") == 1
+
+
+def test_release_download_button_fetches_fresh_signed_url() -> None:
+    app_js = (Path(__file__).parents[1] / "static" / "app.js").read_text(
+        encoding="utf-8"
+    )
+    start = app_js.index("async function downloadLatestRelease(")
+    end = app_js.index("async function loadAdmin()", start)
+    download_latest = app_js[start:end]
+
+    assert "api(`/api/web/releases/latest?platform=${encodeURIComponent(platform)}`)" in download_latest
+    assert "window.location.assign(downloadUrl)" in download_latest
+    assert "promptLogin(\"请先登录后下载应用\")" in download_latest
+    assert "promptLogin(\"登录状态已过期，请重新登录后下载应用\")" in download_latest
+
+
+def test_static_app_shell_disables_browser_cache(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    for path in ("/", "/index.html", "/app.js", "/styles.css"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
 
 
 def test_llm_semantic_segmentation_parses_structured_segments() -> None:

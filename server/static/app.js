@@ -2778,8 +2778,9 @@ async function loadRelease() {
       <h3>${escapeHtml(PLATFORM_LABELS[rel.platform] || rel.platform)} · ${escapeHtml(rel.version_name)} (${rel.version_code})</h3>
       <p>SHA-256：<code>${escapeHtml(rel.sha256)}</code></p>
       <p>${escapeHtml(rel.release_notes || "")}</p>
-      <a class="button primary" href="${escapeAttr(rel.downloadUrl)}">下载 ${escapeHtml(PLATFORM_LABELS[rel.platform] || "应用")}</a>
+      <button type="button" class="button primary release-download" data-platform="${escapeAttr(rel.platform)}">下载 ${escapeHtml(PLATFORM_LABELS[rel.platform] || "应用")}</button>
     `;
+    box.querySelector(".release-download")?.addEventListener("click", downloadLatestRelease);
   } catch (error) {
     if (isAuthError(error)) {
       box.textContent = "登录状态已过期，请重新登录后查看发布包。";
@@ -2787,6 +2788,39 @@ async function loadRelease() {
       return;
     }
     box.textContent = `发布包信息加载失败：${friendlyError(error)}。请稍后刷新，或联系运维确认发布包服务。`;
+  }
+}
+
+async function downloadLatestRelease(event) {
+  const button = event?.currentTarget;
+  const platform = button?.dataset?.platform || state.selectedDownloadPlatform || "android";
+  if (!state.token && !restoreSessionFromStorage()) {
+    promptLogin("请先登录后下载应用");
+    return;
+  }
+  if (button) {
+    button.disabled = true;
+    button.textContent = "正在准备下载...";
+  }
+  try {
+    const data = await api(`/api/web/releases/latest?platform=${encodeURIComponent(platform)}`);
+    const downloadUrl = data.release?.downloadUrl || "";
+    if (!downloadUrl) {
+      toast(`尚未发布 ${PLATFORM_LABELS[platform] || platform}`);
+      return;
+    }
+    window.location.assign(downloadUrl);
+  } catch (error) {
+    if (isAuthError(error)) {
+      promptLogin("登录状态已过期，请重新登录后下载应用");
+      return;
+    }
+    toast(`下载准备失败：${friendlyError(error)}`);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = `下载 ${PLATFORM_LABELS[platform] || "应用"}`;
+    }
   }
 }
 
