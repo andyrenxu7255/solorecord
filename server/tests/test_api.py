@@ -5063,6 +5063,51 @@ def test_bad_role_notes_do_not_force_good_minutes_to_fallback() -> None:
     assert "围城：" in role_notes
 
 
+def test_pseudo_role_subjects_are_rebuilt_from_transcript() -> None:
+    import solorecord_server.processing as processing
+
+    segments = [
+        {
+            "speaker_id": "MANUAL_yitian",
+            "display_name": "翼天",
+            "source_segment_no": 1,
+            "start_ms": 0,
+            "end_ms": 30000,
+            "text": "错误样例今天补三类，自动测试明天补完。",
+            "confidence": 0.82,
+            "flags": ["semantic_final"],
+        },
+        {
+            "speaker_id": "MANUAL_weicheng",
+            "display_name": "围城",
+            "source_segment_no": 1,
+            "start_ms": 30000,
+            "end_ms": 60000,
+            "text": "MySQL、PostgreSQL、Oracle 外接数据源要确认。",
+            "confidence": 0.82,
+            "flags": ["semantic_final"],
+        },
+    ]
+
+    summary, role_notes, _ = processing._grounded_summary_result(
+        "会议围绕错误样例、自动测试和外接数据源确认展开，明确了后续推进方向。",
+        "包括：我这边我这个呃大战这个这个这个我我的有不是啊？\n"
+        "给：ok 我确认一下啊，\n"
+        "到时候大家比如：要将来要出去给人演示说，\n"
+        "对我：明这意思吧，",
+        [],
+        segments,
+    )
+
+    assert summary.startswith("会议围绕错误样例")
+    assert "包括：" not in role_notes
+    assert "给：" not in role_notes
+    assert "到时候大家比如：" not in role_notes
+    assert "对我：" not in role_notes
+    assert "翼天：" in role_notes
+    assert "围城：" in role_notes
+
+
 def test_grounded_summary_does_not_turn_noise_into_minutes() -> None:
     import solorecord_server.processing as processing
 

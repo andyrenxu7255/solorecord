@@ -2720,6 +2720,8 @@ def _valid_role_note_subject(subject: str) -> bool:
     value = re.sub(r"\s+", "", str(subject or "").strip())
     if not value:
         return False
+    if _is_pseudo_role_subject(value):
+        return False
     if re.search(r"\d{1,2}:\d{2}|SPEAKER|Speaker|发言人\d|系统复核", value, flags=re.IGNORECASE):
         return False
     if len(value) > 16:
@@ -2731,6 +2733,40 @@ def _valid_role_note_subject(subject: str) -> bool:
     if _looks_like_due_time_phrase(value) or _looks_like_rule_topic_phrase(value):
         return False
     return True
+
+
+def _is_pseudo_role_subject(value: str) -> bool:
+    pseudo_subjects = {
+        "给",
+        "包括",
+        "比如",
+        "如果",
+        "还是",
+        "不是",
+        "假如",
+        "其实",
+        "就是",
+        "然后",
+        "还有就是",
+        "到时候",
+        "到时候大家",
+        "第三个呢是",
+        "在我底下",
+        "对我",
+        "你肯定能",
+        "就刚刚或者",
+        "就等于",
+        "呃事实上就等于",
+    }
+    if value in pseudo_subjects:
+        return True
+    if len(value) == 1 and value not in {"法", "销"}:
+        return True
+    if re.search(r"(比如|如果|假如|还是|不是|就是|包括|到时候|然后|其实|刚刚|等于|这边|那个)", value):
+        return True
+    if re.search(r"(我|你|他|她|它|咱|大家)", value) and len(value) <= 6:
+        return True
+    return False
 
 
 def _substantive_summary_segments(segments: list[dict]) -> list[dict]:
