@@ -5810,6 +5810,8 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert ".meeting-detail-scroll" in styles
     assert ".meeting-priority-grid" in styles
     assert ".priority-card" in styles
+    assert "#meetingDetail" in styles
+    assert "flex: 1 1 auto" in styles
     assert "detailRoleNotes" in app_js
     assert "分角色整理" in app_js
     assert "role_notes" in app_js

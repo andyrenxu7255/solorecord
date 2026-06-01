@@ -718,6 +718,11 @@ textarea.input {
   margin: 0;
 }
 
+#meetingDetail {
+  height: 100%;
+  min-height: 0;
+}
+
 .empty-state {
   display: grid;
   place-items: center;
@@ -951,6 +956,7 @@ textarea.input {
 
 .meeting-detail-scroll {
   display: grid;
+  flex: 1 1 auto;
   gap: 12px;
   margin-top: 12px;
   min-height: 0;
