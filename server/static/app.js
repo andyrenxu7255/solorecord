@@ -138,6 +138,25 @@ function requireLoginForAction(message = "请先登录后再继续") {
   return false;
 }
 
+function activeViewName() {
+  return $(".view.active")?.id?.replace(/^view-/, "") || "meetings";
+}
+
+async function refreshAfterLogin() {
+  renderAccount();
+  await Promise.allSettled([loadMeetings(), loadJoinableMeetings()]);
+  const view = activeViewName();
+  if (view === "downloads") {
+    await loadRelease();
+  } else if (view === "admin") {
+    await loadAdmin();
+  } else if (view === "recorder") {
+    await loadRecorderConfig();
+  } else if (view === "status") {
+    renderAccount();
+  }
+}
+
 function setView(name) {
   if (IS_DESKTOP_CLIENT && ["downloads", "admin"].includes(name)) {
     name = "recorder";
@@ -178,9 +197,7 @@ async function ldapLogin(event) {
     localStorage.setItem("solo_token", state.token);
     localStorage.setItem("solo_user", JSON.stringify(state.user));
     hideLogin();
-    renderAccount();
-    await loadMeetings();
-    await loadJoinableMeetings();
+    await refreshAfterLogin();
     toast("已登录");
   } catch (error) {
     toast("登录失败，请检查用户名、密码或服务器配置");
@@ -198,9 +215,7 @@ async function demoLogin() {
   state.user = data.user;
   localStorage.setItem("solo_token", state.token);
   localStorage.setItem("solo_user", JSON.stringify(state.user));
-  renderAccount();
-  await loadMeetings();
-  await loadJoinableMeetings();
+  await refreshAfterLogin();
   toast("已登录");
 }
 
@@ -2730,10 +2745,16 @@ function renderRecordCapabilityHint() {
 }
 
 async function loadRelease() {
+  const box = $("#releaseBox");
+  if (!box) return;
+  const platform = state.selectedDownloadPlatform || "android";
+  if (!state.token) {
+    box.textContent = "请先登录后查看发布包。";
+    return;
+  }
+  box.textContent = `正在读取 ${PLATFORM_LABELS[platform] || platform} 发布包...`;
   try {
-    const platform = state.selectedDownloadPlatform || "android";
     const data = await api(`/api/web/releases/latest?platform=${encodeURIComponent(platform)}`);
-    const box = $("#releaseBox");
     if (!data.release) {
       box.innerHTML = `<p>尚未发布 ${PLATFORM_LABELS[platform]}。管理员可在管理页上传。</p>`;
       return;
@@ -2746,7 +2767,12 @@ async function loadRelease() {
       <a class="button primary" href="${rel.downloadUrl}">下载 ${escapeHtml(PLATFORM_LABELS[rel.platform] || "应用")}</a>
     `;
   } catch (error) {
-    $("#releaseBox").textContent = "请先登录后查看发布包。";
+    if (isAuthError(error)) {
+      box.textContent = "登录状态已过期，请重新登录后查看发布包。";
+      promptLogin("登录状态已过期，请重新登录后查看发布包");
+      return;
+    }
+    box.textContent = `发布包信息加载失败：${friendlyError(error)}。请稍后刷新，或联系运维确认发布包服务。`;
   }
 }
 

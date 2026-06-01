@@ -5926,6 +5926,28 @@ def test_web_upload_requires_login_before_create_or_upload() -> None:
     assert "extractErrorDetail" in app_js
 
 
+def test_web_release_page_refreshes_after_login_and_distinguishes_errors() -> None:
+    app_js = (Path(__file__).parents[1] / "static" / "app.js").read_text(
+        encoding="utf-8"
+    )
+    login_refresh_start = app_js.index("async function refreshAfterLogin()")
+    login_refresh_end = app_js.index("function setView(", login_refresh_start)
+    login_refresh = app_js[login_refresh_start:login_refresh_end]
+    release_start = app_js.index("async function loadRelease()")
+    release_end = app_js.index("async function loadAdmin()", release_start)
+    load_release = app_js[release_start:release_end]
+
+    assert "activeViewName" in app_js
+    assert "view === \"downloads\"" in login_refresh
+    assert "await loadRelease()" in login_refresh
+    assert "await refreshAfterLogin()" in app_js
+    assert "if (!state.token)" in load_release
+    assert "登录状态已过期，请重新登录后查看发布包" in load_release
+    assert "发布包信息加载失败" in load_release
+    assert "请稍后刷新，或联系运维确认发布包服务" in load_release
+    assert load_release.count("请先登录后查看发布包。") == 1
+
+
 def test_llm_semantic_segmentation_parses_structured_segments() -> None:
     import solorecord_server.llm_adapters as llm_adapters
 
