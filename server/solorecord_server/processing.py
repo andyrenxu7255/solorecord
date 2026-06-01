@@ -3079,7 +3079,7 @@ def _normalize_action_owners(actions: list[dict], segments: list[dict]) -> list[
                 excluded_owner=owner,
                 require_strong=is_pseudo_person_name(owner),
             )
-            if not replacement:
+            if not replacement and not is_pseudo_person_name(owner):
                 replacement = _infer_owner_from_task(query, owner_aliases)
         if replacement:
             item["owner"] = replacement
@@ -3707,10 +3707,10 @@ def _is_invalid_owner_candidate(owner: str) -> bool:
     value = str(owner or "").strip()
     if not value:
         return True
-    if value in ORG_OWNER_TERMS:
-        return False
     if is_pseudo_person_name(value):
         return True
+    if value in ORG_OWNER_TERMS:
+        return False
     if re.match(r"^(?:等|待|等待|等到|等着|找|通知|安排|让|叫|拉上|交给)", value):
         return True
     return (

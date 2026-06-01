@@ -2983,6 +2983,9 @@ def test_action_owner_normalization_rejects_pseudo_asr_owner_names() -> None:
         {"owner": "给", "task": "清理 demo 数据并进行全流程测试", "due": "", "status": "open"},
         {"owner": "包括", "task": "优化 UI 风格和后台管理页面", "due": "", "status": "open"},
         {"owner": "对我", "task": "准备更通俗的样本数据", "due": "", "status": "open"},
+        {"owner": "这个是", "task": "部署 demo 数据到现场准备演示", "due": "", "status": "open"},
+        {"owner": "一般用户", "task": "优化 UI 风格", "due": "", "status": "open"},
+        {"owner": "数据", "task": "准备样本数据", "due": "", "status": "open"},
         {"owner": "翼天", "task": "补充错误样例和自动测试覆盖", "due": "明天", "status": "open"},
     ]
     segments = [
@@ -3006,8 +3009,15 @@ def test_action_owner_normalization_rejects_pseudo_asr_owner_names() -> None:
 
     normalized = processing._normalize_action_owners(actions, segments)
 
-    assert [item["owner"] for item in normalized[:3]] == ["待确认", "待确认", "待确认"]
-    assert normalized[3]["owner"] == "翼天"
+    assert [item["owner"] for item in normalized[:6]] == [
+        "待确认",
+        "待确认",
+        "待确认",
+        "待确认",
+        "待确认",
+        "待确认",
+    ]
+    assert normalized[6]["owner"] == "翼天"
 
 
 def test_action_owner_normalization_uses_department_owner_context() -> None:
@@ -4011,9 +4021,13 @@ def test_quality_report_rejects_pseudo_action_owner_and_suggestion(
             ('seg_pseudo_owner_2', ?, 1, 1, 'SPK_bad_2', '包括', 10000, 20000,
              '包括登录界面、图表颜色和后台管理页面都要优化。', 0.8, '["semantic_final"]', 'now'),
             ('seg_pseudo_owner_3', ?, 1, 1, 'MANUAL_yitian', '翼天', 20000, 30000,
-             '我这边补充错误样例和自动测试覆盖，明天给大家看结果。', 0.9, '["semantic_final"]', 'now')
+             '我这边补充错误样例和自动测试覆盖，明天给大家看结果。', 0.9, '["semantic_final"]', 'now'),
+            ('seg_pseudo_owner_4', ?, 1, 1, 'SPK_bad_3', '但是', 30000, 40000,
+             '但是你这个样例数据要提前发一下啊。', 0.8, '["semantic_final"]', 'now'),
+            ('seg_pseudo_owner_5', ?, 1, 1, 'SPK_bad_4', '要不', 40000, 50000,
+             '要不先把截图和下载链接放到 PPT。', 0.8, '["semantic_final"]', 'now')
             """,
-            (meeting_id, meeting_id, meeting_id),
+            (meeting_id, meeting_id, meeting_id, meeting_id, meeting_id),
         )
         conn.execute(
             """

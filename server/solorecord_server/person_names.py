@@ -8,9 +8,15 @@ PSEUDO_PERSON_NAMES = {
     "如果",
     "还是",
     "不是",
+    "但是",
+    "要不",
     "假如",
     "其实",
     "就是",
+    "这个是",
+    "一般用户",
+    "开始",
+    "点击",
     "然后",
     "还有就是",
     "到时候",
@@ -38,7 +44,9 @@ def is_pseudo_person_name(value: str) -> bool:
         return True
     if len(name) == 1 and name not in {"法", "销"}:
         return True
-    if re.search(r"(比如|如果|假如|还是|不是|就是|包括|到时候|然后|其实|刚刚|等于|这边|那个)", name):
+    if name in {"模型", "数据", "系统", "客户", "问题", "功能", "页面", "版本"}:
+        return True
+    if re.search(r"(比如|如果|假如|还是|不是|但是|就是|包括|到时候|然后|其实|刚刚|等于|这边|那个|这个|要不|开始|点击)", name):
         return True
     if re.search(r"(我|你|他|她|它|咱|大家)", name) and len(name) <= 6:
         return True
