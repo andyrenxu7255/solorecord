@@ -6282,6 +6282,10 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "audio-sample" in app_js
     assert "fetchSpeakerSampleBlob" in app_js
     assert "服务器暂未启用试听转码" in app_js
+    assert "服务器未启用短样本转码，已改用原始分段按时间窗播放。" in app_js
+    assert "showSpeakerSampleHint" in app_js
+    assert "degraded" in app_js
+    assert "seekWindow" in app_js
     assert "data-speakers" in app_js
     assert "speakerStatsKey" in app_js
     assert "audio_available" in app_js

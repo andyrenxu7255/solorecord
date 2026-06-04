@@ -2345,11 +2345,16 @@ async function playSpeakerSample(button) {
       type: source.mimeType,
     }));
     audio.dataset.objectUrl = objectUrl;
-    audio.dataset.sampleEnd = source.windowed ? String(end) : "";
+    audio.dataset.sampleEnd = source.seekWindow ? String(end) : "";
     audio.src = objectUrl;
     audio.classList.add("ready");
-    await seekAndPlayAudio(audio, source.windowed ? start : 0, source.windowed ? end : source.durationSeconds);
+    await seekAndPlayAudio(audio, source.seekWindow ? start : 0, source.seekWindow ? end : source.durationSeconds);
     button.textContent = "重新试听";
+    const previousHint = sampleBox?.querySelector(".speaker-sample-error");
+    if (previousHint && !source.degraded) previousHint.remove();
+    if (source.degraded) {
+      showSpeakerSampleHint(sampleBox, "服务器未启用短样本转码，已改用原始分段按时间窗播放。");
+    }
   } catch (error) {
     const message = isAuthError(error)
       ? "登录状态已过期，请重新登录后试听"
@@ -2359,11 +2364,7 @@ async function playSpeakerSample(button) {
           ? "服务器暂未启用试听转码，正在使用原始分段播放"
         : `声音样本加载失败：${friendlyError(error)}`;
     button.textContent = "试听失败";
-    sampleBox?.querySelector(".speaker-sample-error")?.remove();
-    sampleBox?.appendChild(Object.assign(document.createElement("small"), {
-      className: "speaker-sample-error",
-      textContent: message,
-    }));
+    showSpeakerSampleHint(sampleBox, message);
     toast(message);
     if (isAuthError(error)) promptLogin("登录状态已过期，请重新登录后试听");
   } finally {
@@ -2373,6 +2374,7 @@ async function playSpeakerSample(button) {
 
 async function fetchSpeakerSampleBlob(sampleUrl, fallbackUrl, start = 0, end = 10) {
   const clipUrl = sampleUrl || "";
+  let degraded = false;
   if (clipUrl) {
     const response = await fetch(clipUrl, { headers: { Authorization: `Bearer ${state.token}` } });
     if (response.ok && isPlayableAudioResponse(response, clipUrl)) {
@@ -2380,7 +2382,8 @@ async function fetchSpeakerSampleBlob(sampleUrl, fallbackUrl, start = 0, end = 1
       return {
         blob,
         mimeType: audioMimeTypeFromUrl(clipUrl, response.headers.get("content-type") || blob.type),
-        windowed: false,
+        seekWindow: false,
+        degraded: false,
         durationSeconds: 30,
       };
     }
@@ -2388,6 +2391,7 @@ async function fetchSpeakerSampleBlob(sampleUrl, fallbackUrl, start = 0, end = 1
       const text = await response.text();
       throw httpError(response.status, text);
     }
+    degraded = response.status === 424 || response.status === 501;
   }
   const response = await fetch(fallbackUrl, { headers: { Authorization: `Bearer ${state.token}` } });
   if (!response.ok) {
@@ -2403,16 +2407,26 @@ async function fetchSpeakerSampleBlob(sampleUrl, fallbackUrl, start = 0, end = 1
     return {
       blob: clipped,
       mimeType: "audio/wav",
-      windowed: false,
+      seekWindow: false,
+      degraded,
       durationSeconds: Math.max(1, Number(end || 0) - Number(start || 0)),
     };
   }
   return {
     blob,
     mimeType: audioMimeTypeFromUrl(fallbackUrl, response.headers.get("content-type") || blob.type),
-    windowed: true,
+    seekWindow: true,
+    degraded,
     durationSeconds: 30,
   };
+}
+
+function showSpeakerSampleHint(sampleBox, message) {
+  sampleBox?.querySelector(".speaker-sample-error")?.remove();
+  sampleBox?.appendChild(Object.assign(document.createElement("small"), {
+    className: "speaker-sample-error",
+    textContent: message,
+  }));
 }
 
 async function clientSideAudioSampleBlob(blob, start, end) {

@@ -424,7 +424,7 @@ Android 改动：
 - Android token 当前在 SharedPreferences，生产建议换 EncryptedSharedPreferences/Keystore。
 - Android 上传已使用 multipart 文件流和分段级断点续传；它不是单文件字节 offset 续传。若未来把分段时长调得很长，再评估更细粒度的对象存储分片上传。
 - Docker BuildKit 在本地 Windows 曾因 Python 包下载慢而超时，已给出 smoke fallback；生产 Linux 构建仍按 `docker compose up -d --build solorecord`。
-- 人物试听样本优先使用服务端 `ffmpeg` 裁剪；生产 Docker Compose 默认轻量构建，不安装系统媒体包，前端必须保留浏览器端 5-20 秒样本裁剪兜底。只有服务器包源和磁盘空间稳定时，才建议用 `INSTALL_MEDIA_TOOLS=true` 启用服务端转码。PDF 中文渲染如果需要系统字体，单独使用 `INSTALL_CJK_FONTS=true` 构建。
+- 人物试听样本优先使用服务端 `ffmpeg` 裁剪；生产 Docker Compose 默认安装媒体工具，前端仍必须保留浏览器端 5-20 秒样本裁剪兜底。只有服务器包源或磁盘空间临时受限时，才用 `INSTALL_MEDIA_TOOLS=false` 关闭服务端转码。PDF 中文渲染如果需要系统字体，单独使用 `INSTALL_CJK_FONTS=true` 构建。
 
 ## 关键测试用例
 
@@ -931,7 +931,7 @@ Android change:
 - Android token currently uses SharedPreferences; use EncryptedSharedPreferences/Keystore before broader rollout.
 - Android upload now uses multipart file streaming with segment-level resume. It is not byte-offset resume inside a single file; if segment duration is increased substantially, evaluate finer-grained object-storage multipart upload.
 - Windows Docker BuildKit may stall on slow Python package downloads; use the documented mounted-source smoke fallback locally.
-- Speaker samples prefer server-side `ffmpeg` clipping. Production Docker Compose uses a lightweight default image without OS media packages, so the frontend must keep the browser-side 5-20 second clipping fallback. Enable server-side transcoding with `INSTALL_MEDIA_TOOLS=true` only after the package mirror and disk capacity are ready. If Chinese PDF rendering needs system fonts, build separately with `INSTALL_CJK_FONTS=true`.
+- Speaker samples prefer server-side `ffmpeg` clipping. Production Docker Compose installs media tools by default, and the frontend must still keep the browser-side 5-20 second clipping fallback. Use `INSTALL_MEDIA_TOOLS=false` only when the package mirror or disk capacity is temporarily constrained. If Chinese PDF rendering needs system fonts, build separately with `INSTALL_CJK_FONTS=true`.
 
 ### Key Tests
 

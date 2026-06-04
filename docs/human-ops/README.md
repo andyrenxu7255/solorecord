@@ -559,12 +559,12 @@ GET /app.js
 
 ### 人物试听失败或 PDF 中文显示异常
 
-生产镜像默认使用轻量构建，不安装系统媒体包。人物校对会优先请求服务器裁剪样本；如果服务器没有 `ffmpeg`，Web 会尝试在浏览器端裁剪 5-20 秒样本并播放。
+生产镜像默认安装 `ffmpeg`。人物校对区“试听”会优先由服务器裁剪 5-20 秒 mp3 短样本，避免浏览器无法解码某些手机录音格式。
 
-如果服务器包源和磁盘空间稳定，希望由服务端统一转码试听样本，可启用 `ffmpeg`：
+如果服务器包源或磁盘空间临时受限，可以关闭系统媒体包安装；此时 Web 会退回到受权限保护的原始录音分段，并尽量在浏览器端裁剪 5-20 秒样本：
 
 ```bash
-INSTALL_MEDIA_TOOLS=true docker compose up -d --build solorecord
+INSTALL_MEDIA_TOOLS=false docker compose up -d --build solorecord
 ```
 
 中文 PDF 如果需要系统级 CJK 字体，再额外启用：
@@ -1079,16 +1079,16 @@ Transcription failures usually point to `SOLO_ASR_PROVIDER`, `SOLO_ASR_COMMAND`,
 
 Empty summaries usually point to missing `SOLO_LLM_PROVIDER`, `SOLO_LLM_ENDPOINT`, `SOLO_LLM_MODEL`, or `SOLO_LLM_API_KEY`. If the LLM is not configured, SoloRecord falls back to mock summaries.
 
-Production uses a lightweight image by default and does not install OS media
-packages. The people calibration UI first requests a server-side clipped sample;
-when `ffmpeg` is not installed, the Web UI tries to clip the 5-20 second sample
-in the browser before playback.
+Production installs `ffmpeg` by default. The people calibration "play" action
+first asks the server to create a 5-20 second mp3 sample, avoiding browser
+decode failures on some phone recording formats.
 
-If the server package mirror and disk capacity are ready, enable `ffmpeg` for
-server-side sample transcoding:
+If the package mirror or disk capacity is temporarily constrained, disable OS
+media packages. The Web UI then falls back to protected original segments and
+tries browser-side 5-20 second clipping:
 
 ```bash
-INSTALL_MEDIA_TOOLS=true docker compose up -d --build solorecord
+INSTALL_MEDIA_TOOLS=false docker compose up -d --build solorecord
 ```
 
 If Chinese PDF export needs system CJK fonts, enable them explicitly:
