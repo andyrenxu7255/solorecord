@@ -879,7 +879,7 @@ public final class MainActivity extends Activity {
     private void login(String serverEndpoint, String displayName, String email) {
         String endpoint = normalizeServerEndpoint(serverEndpoint);
         if (endpoint.isEmpty()) {
-            toast("请先填写服务器地址");
+            toast("公司服务器配置异常，请到高级设置检查");
             return;
         }
         sessionStore.setServerEndpoint(endpoint);
@@ -902,7 +902,7 @@ public final class MainActivity extends Activity {
         String endpoint = normalizeServerEndpoint(serverEndpoint);
         String loginName = username == null ? "" : username.trim();
         if (endpoint.isEmpty()) {
-            toast("请先填写服务器地址");
+            toast("公司服务器配置异常，请到高级设置检查");
             return;
         }
         if (loginName.isEmpty() || password == null || password.isEmpty()) {
@@ -928,7 +928,7 @@ public final class MainActivity extends Activity {
     private void startSsoLogin(String serverEndpoint) {
         String base = normalizeServerEndpoint(serverEndpoint);
         if (base.isEmpty()) {
-            toast("请先填写服务器地址");
+            toast("公司服务器配置异常，请到高级设置检查");
             return;
         }
         Uri baseUri = Uri.parse(base);
@@ -953,9 +953,9 @@ public final class MainActivity extends Activity {
             toast("请先登录");
             return;
         }
-        String endpoint = normalizeServerEndpoint(sessionStore.getServerEndpoint());
+        String endpoint = ensureServerEndpoint();
         if (endpoint.isEmpty()) {
-            toast("请先填写服务器地址");
+            toast("公司服务器配置异常，请到高级设置检查");
             return;
         }
         executorService.execute(() -> {
