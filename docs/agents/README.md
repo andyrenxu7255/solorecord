@@ -228,7 +228,7 @@ Agent 验收时必须检查：
 - 分段上传后应能看到带 `semantic_partial` 的阶段转写；`/finish` 后应把带 `semantic_final` 的整场上下文重分段结果写回数据库，而不是只用于纪要。
 - 验证人工改名闭环：把某个 `speaker_id` 改成具体姓名后重新处理，最终时间线应保留该姓名；但旧的 `发言人 N` 泛化名称不应阻止大模型/规则识别新的真实人名。
 - Web 时间线应能显示 `speaker_review`、`llm_refined`/`semantic_llm`、`semantic_rule` 对应的校对标记。
-- Web 人物校对区应按显示名合并同一人的多个 `speaker_id`，并为每个发言人提供 5-20 秒授权音频样本。样本应复用已有受权限保护的音频分段下载接口，通过前端时间窗播放，不要额外生成无权限校验的裁剪文件。
+- Web 人物校对区应按显示名合并同一人的多个 `speaker_id`，并为每个发言人提供 5-20 秒授权音频样本。样本优先走 `/api/web/meetings/{meetingId}/segments/{segmentNo}/audio-sample`，该接口必须复用会议权限校验并用 `ffmpeg` 生成临时 mp3，播放后清理；如果转码不可用，前端只能回退到受权限保护的原始音频分段和时间窗播放，不能生成无权限校验的裁剪文件。
 - `qualityReport.metrics.speaker_evidence_weak_count` 应反映 LLM 发言人名称是否缺少原始 ASR 证据；该值大于 0 时应优先播放对应片段。
 - `qualityReport.speakerEvidence` 应包含需校对段落的 `segment_id`、`scenario_label`、`reason` 和相邻上下文；如果 Web 时间线没有显示这些信息，先修前端再做真实会议验收。
 - `qualityReport.metrics.speaker_alias_conflict_count` 应反映同一 `display_name` 是否对应多个 `speaker_id`。外部知识 Agent 应按 `qualityReport.speakerAliasConflicts` 和转写段落里的 `speaker_id/display_name` 保留追溯，不要把同名多标签当成多个人。
@@ -424,7 +424,7 @@ Android 改动：
 - Android token 当前在 SharedPreferences，生产建议换 EncryptedSharedPreferences/Keystore。
 - Android 上传已使用 multipart 文件流和分段级断点续传；它不是单文件字节 offset 续传。若未来把分段时长调得很长，再评估更细粒度的对象存储分片上传。
 - Docker BuildKit 在本地 Windows 曾因 Python 包下载慢而超时，已给出 smoke fallback；生产 Linux 构建仍按 `docker compose up -d --build solorecord`。
-- PDF 中文渲染依赖系统字体，生产可启用 `INSTALL_MEDIA_TOOLS=true`。
+- 人物试听样本和 PDF 中文渲染依赖媒体工具与系统字体。生产 Docker Compose 默认使用 `INSTALL_MEDIA_TOOLS=true`；只有极简本地 smoke 才建议临时设为 `false`。
 
 ## 关键测试用例
 
@@ -693,7 +693,7 @@ Agent acceptance checks:
 - If the LLM only splits a long row from the same native ASR speaker and keeps the same `speaker_id` plus `native_speaker`, it may preserve `asr_speaker`; if it changes the speaker through context, task ownership, or topic continuation, it must not preserve `asr_speaker` and must keep `speaker_review`.
 - Partial transcripts should be visible after segment upload; `/finish` should write the full-meeting context-refined timeline back to the database, not only use it for summaries.
 - The Web timeline should surface review markers derived from `speaker_review`, `llm_refined`/`semantic_llm`, and `semantic_rule`.
-- The Web people calibration panel should group multiple `speaker_id` values by display name and provide a 5-20 second authorized audio sample for each speaker. Samples should reuse the protected audio segment download endpoint with a frontend playback time window instead of creating unprotected cropped files.
+- The Web people calibration panel should group multiple `speaker_id` values by display name and provide a 5-20 second authorized audio sample for each speaker. Samples should prefer `/api/web/meetings/{meetingId}/segments/{segmentNo}/audio-sample`; that endpoint must reuse meeting access control, generate a temporary mp3 with `ffmpeg`, and clean it after playback. If transcoding is unavailable, the frontend may fall back only to protected original-segment playback with a time window; never create unprotected cropped files.
 - `qualityReport.metrics.speaker_evidence_weak_count` should show whether LLM speaker names lack original ASR evidence. If it is above zero, play the affected segments first.
 - `qualityReport.metrics.speaker_alias_conflict_count` should show whether one `display_name` maps to multiple `speaker_id` values. External knowledge agents should use `qualityReport.speakerAliasConflicts` and transcript `speaker_id/display_name` values for traceability instead of treating same-name labels as separate people.
 - `qualityReport.metrics.speaker_over_split_count` or a `too_many_speakers` issue means speaker labels are unusually high. If a real meeting had only a few attendees but the transcript has dozens of speakers, calibrate and merge labels before treating them as separate people in downstream knowledge stores.
@@ -931,7 +931,7 @@ Android change:
 - Android token currently uses SharedPreferences; use EncryptedSharedPreferences/Keystore before broader rollout.
 - Android upload now uses multipart file streaming with segment-level resume. It is not byte-offset resume inside a single file; if segment duration is increased substantially, evaluate finer-grained object-storage multipart upload.
 - Windows Docker BuildKit may stall on slow Python package downloads; use the documented mounted-source smoke fallback locally.
-- PDF Chinese rendering depends on system fonts; production can enable `INSTALL_MEDIA_TOOLS=true`.
+- Speaker samples and Chinese PDF rendering depend on media tools and system fonts. Production Docker Compose uses `INSTALL_MEDIA_TOOLS=true` by default; set it to `false` only for minimal local smoke builds.
 
 ### Key Tests
 

@@ -1141,6 +1141,7 @@ function renderPersonCard(person) {
         ${sample ? `
           <button type="button" class="button secondary speaker-sample-play"
             data-sample-audio="${escapeAttr(sample.audioUrl)}"
+            data-sample-url="${escapeAttr(sample.sampleUrl)}"
             data-sample-start="${escapeAttr(sample.startSec)}"
             data-sample-end="${escapeAttr(sample.endSec)}">
             试听 ${escapeHtml(formatSampleSeconds(sample))}
@@ -2322,6 +2323,7 @@ async function loadAuthorizedAudio(button) {
 
 async function playSpeakerSample(button) {
   const url = button.dataset.sampleAudio || "";
+  const sampleUrl = button.dataset.sampleUrl || "";
   const start = Number(button.dataset.sampleStart || 0);
   const end = Number(button.dataset.sampleEnd || 0);
   const sampleBox = button.closest(".speaker-sample");
@@ -2338,29 +2340,23 @@ async function playSpeakerSample(button) {
       URL.revokeObjectURL(audio.dataset.objectUrl);
       audio.dataset.objectUrl = "";
     }
-    const response = await fetch(url, { headers: { Authorization: `Bearer ${state.token}` } });
-    if (!response.ok) {
-      const text = await response.text();
-      throw httpError(response.status, text);
-    }
-    if (!isPlayableAudioResponse(response, url)) {
-      throw new Error("服务器返回的不是音频文件");
-    }
-    const blob = await response.blob();
-    const objectUrl = URL.createObjectURL(new Blob([blob], {
-      type: audioMimeTypeFromUrl(url, response.headers.get("content-type") || blob.type),
+    const source = await fetchSpeakerSampleBlob(sampleUrl, url);
+    const objectUrl = URL.createObjectURL(new Blob([source.blob], {
+      type: source.mimeType,
     }));
     audio.dataset.objectUrl = objectUrl;
-    audio.dataset.sampleEnd = String(end);
+    audio.dataset.sampleEnd = source.windowed ? String(end) : "";
     audio.src = objectUrl;
     audio.classList.add("ready");
-    await seekAndPlayAudio(audio, start, end);
+    await seekAndPlayAudio(audio, source.windowed ? start : 0, source.windowed ? end : source.durationSeconds);
     button.textContent = "重新试听";
   } catch (error) {
     const message = isAuthError(error)
       ? "登录状态已过期，请重新登录后试听"
       : Number(error?.status) === 404
         ? "原始音频文件不在服务器，无法试听"
+        : Number(error?.status) === 424
+          ? "服务器暂未启用试听转码，正在使用原始分段播放"
         : `声音样本加载失败：${friendlyError(error)}`;
     button.textContent = "试听失败";
     sampleBox?.querySelector(".speaker-sample-error")?.remove();
@@ -2373,6 +2369,41 @@ async function playSpeakerSample(button) {
   } finally {
     button.disabled = false;
   }
+}
+
+async function fetchSpeakerSampleBlob(sampleUrl, fallbackUrl) {
+  const clipUrl = sampleUrl || "";
+  if (clipUrl) {
+    const response = await fetch(clipUrl, { headers: { Authorization: `Bearer ${state.token}` } });
+    if (response.ok && isPlayableAudioResponse(response, clipUrl)) {
+      const blob = await response.blob();
+      return {
+        blob,
+        mimeType: audioMimeTypeFromUrl(clipUrl, response.headers.get("content-type") || blob.type),
+        windowed: false,
+        durationSeconds: 30,
+      };
+    }
+    if (![404, 424, 501].includes(response.status)) {
+      const text = await response.text();
+      throw httpError(response.status, text);
+    }
+  }
+  const response = await fetch(fallbackUrl, { headers: { Authorization: `Bearer ${state.token}` } });
+  if (!response.ok) {
+    const text = await response.text();
+    throw httpError(response.status, text);
+  }
+  if (!isPlayableAudioResponse(response, fallbackUrl)) {
+    throw new Error("服务器返回的不是音频文件");
+  }
+  const blob = await response.blob();
+  return {
+    blob,
+    mimeType: audioMimeTypeFromUrl(fallbackUrl, response.headers.get("content-type") || blob.type),
+    windowed: true,
+    durationSeconds: 30,
+  };
 }
 
 function seekAndPlayAudio(audio, start, end) {
@@ -3252,8 +3283,10 @@ function buildSpeakerSample(segment, audio, meetingId) {
   const absoluteDurationMs = sampleEndMs - segmentStartMs;
   if (absoluteDurationMs < 5000 || absoluteDurationMs > 15000) return null;
   const downloadUrl = audio.download_url || `/api/web/meetings/${meetingId}/segments/${audio.segment_no}/audio`;
+  const sampleUrl = webAudioSampleUrl(downloadUrl, relativeStartSec, relativeEndSec);
   return {
     audioUrl: webAudioUrl(downloadUrl),
+    sampleUrl,
     startSec: relativeStartSec.toFixed(2),
     endSec: relativeEndSec.toFixed(2),
     absoluteStartMs: segmentStartMs,
@@ -3267,6 +3300,19 @@ function buildSpeakerSample(segment, audio, meetingId) {
 
 function webAudioUrl(url) {
   return String(url || "").replace("/api/mobile/", "/api/web/");
+}
+
+function webAudioSampleUrl(url, startSec, endSec) {
+  const audioUrl = webAudioUrl(url);
+  try {
+    const parsed = new URL(audioUrl, window.location.origin);
+    parsed.pathname = parsed.pathname.replace(/\/audio$/, "/audio-sample");
+    parsed.searchParams.set("start", String(Number(startSec || 0).toFixed(2)));
+    parsed.searchParams.set("end", String(Number(endSec || 0).toFixed(2)));
+    return `${parsed.pathname}${parsed.search}`;
+  } catch (error) {
+    return `${audioUrl.replace(/\/audio$/, "/audio-sample")}?start=${encodeURIComponent(startSec)}&end=${encodeURIComponent(endSec)}`;
+  }
 }
 
 function speakerSampleRank(segment, durationMs) {

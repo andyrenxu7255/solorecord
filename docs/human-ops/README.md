@@ -557,12 +557,12 @@ GET /app.js
 
 如果 LLM 未配置，系统会回退 mock 纪要。
 
-### PDF 中文显示异常
+### 人物试听失败或 PDF 中文显示异常
 
-生产镜像构建时安装 CJK 字体：
+生产镜像默认安装 `ffmpeg` 和 CJK 字体。`ffmpeg` 用于人物校对区的 5-20 秒试听样本转码，CJK 字体用于中文 PDF 导出。若试听提示“转码不可用”或 PDF 中文异常，先确认镜像不是用 `INSTALL_MEDIA_TOOLS=false` 构建的，然后重新构建：
 
 ```bash
-docker compose build --build-arg INSTALL_MEDIA_TOOLS=true solorecord
+docker compose up -d --build solorecord
 ```
 
 ### Docker 构建卡住
@@ -1071,10 +1071,12 @@ Transcription failures usually point to `SOLO_ASR_PROVIDER`, `SOLO_ASR_COMMAND`,
 
 Empty summaries usually point to missing `SOLO_LLM_PROVIDER`, `SOLO_LLM_ENDPOINT`, `SOLO_LLM_MODEL`, or `SOLO_LLM_API_KEY`. If the LLM is not configured, SoloRecord falls back to mock summaries.
 
-For CJK PDF rendering issues, build the production image with:
+For speaker sample playback or CJK PDF rendering issues, confirm the image was
+not built with `INSTALL_MEDIA_TOOLS=false`. Production builds install `ffmpeg`
+and CJK fonts by default, so rebuild with:
 
 ```bash
-docker compose build --build-arg INSTALL_MEDIA_TOOLS=true solorecord
+docker compose up -d --build solorecord
 ```
 
 ### Go-Live Checklist

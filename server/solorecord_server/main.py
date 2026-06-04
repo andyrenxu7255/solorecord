@@ -4,18 +4,22 @@ import hashlib
 import hmac
 import json
 import mimetypes
+import shutil
 import sqlite3
+import subprocess
 from pathlib import Path
 import re
 import secrets
 import sqlite3
 import string
+import tempfile
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 
 from .audit import audit
 from .auth import (
@@ -463,6 +467,40 @@ def download_audio_segment(meeting_id: str, segment_no: int, user: CurrentUser) 
         path,
         filename=row["file_name"] or f"part_{segment_no:04d}.m4a",
         media_type=_audio_media_type(row["mime_type"], row["file_name"], path),
+    )
+
+
+@app.get("/api/web/meetings/{meeting_id}/segments/{segment_no}/audio-sample")
+def download_audio_sample(
+    meeting_id: str,
+    segment_no: int,
+    user: CurrentUser,
+    start: float = Query(0, ge=0),
+    end: float = Query(10, ge=0),
+) -> FileResponse:
+    _assert_access(meeting_id, user)
+    safe_start = max(0.0, float(start or 0))
+    safe_end = max(safe_start + 1.0, float(end or safe_start + 10.0))
+    duration = min(20.0, max(1.0, safe_end - safe_start))
+    with get_db() as db:
+        row = db.execute(
+            """
+            SELECT * FROM audio_segments
+            WHERE meeting_id = ? AND segment_no = ?
+            """,
+            (meeting_id, segment_no),
+        ).fetchone()
+    path = resolve_existing_file(row["storage_path"] if row else None)
+    if not row or not path:
+        raise HTTPException(status_code=404, detail="Audio segment not found")
+    sample = _create_audio_sample(path, safe_start, duration)
+    if not sample:
+        raise HTTPException(status_code=424, detail="Audio sample transcoding unavailable")
+    return FileResponse(
+        sample,
+        filename=f"speaker_sample_{segment_no:04d}.mp3",
+        media_type="audio/mpeg",
+        background=_delete_file_task(sample),
     )
 
 
@@ -1604,6 +1642,47 @@ def _audio_media_type(saved_type: str | None, file_name: str | None, path: Path)
         ".opus": "audio/ogg",
         ".flac": "audio/flac",
     }.get(suffix, media_type or "application/octet-stream")
+
+
+def _create_audio_sample(path: Path, start_seconds: float, duration_seconds: float) -> Path | None:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return None
+    output = Path(tempfile.gettempdir()) / f"solorecord_sample_{secrets.token_urlsafe(12)}.mp3"
+    command = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        f"{max(0.0, start_seconds):.3f}",
+        "-t",
+        f"{max(1.0, min(20.0, duration_seconds)):.3f}",
+        "-i",
+        str(path),
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-b:a",
+        "64k",
+        "-y",
+        str(output),
+    ]
+    try:
+        subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        output.unlink(missing_ok=True)
+        return None
+    if not output.exists() or output.stat().st_size <= 0:
+        output.unlink(missing_ok=True)
+        return None
+    return output
+
+
+def _delete_file_task(path: Path) -> BackgroundTask:
+    return BackgroundTask(lambda: path.unlink(missing_ok=True))
 
 
 def _try_index(meeting_id: str) -> None:

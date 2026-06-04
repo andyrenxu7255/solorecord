@@ -612,6 +612,73 @@ def test_missing_audio_file_is_hidden_from_playback_controls(tmp_path: Path) -> 
     assert missing_audio.json()["detail"] == "Audio segment not found"
 
 
+def test_speaker_audio_sample_is_authorized_and_returns_short_clip(tmp_path: Path, monkeypatch) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    user_headers = login_user(client)
+
+    create = client.post("/api/web/meetings", json={"title": "人物试听样本"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    upload = client.post(
+        f"/api/mobile/meetings/{meeting_id}/segments",
+        headers=headers,
+        data={"segment_no": "1", "start_ms": "0", "end_ms": "15000", "duration_ms": "15000"},
+        files={"file": ("part_0001.wav", b"source audio", "audio/wav")},
+    )
+    assert upload.status_code == 200
+
+    sample_bytes = b"mp3 sample"
+
+    def fake_create_audio_sample(path: Path, start_seconds: float, duration_seconds: float) -> Path:
+        assert path.exists()
+        assert start_seconds == 5
+        assert duration_seconds == 10
+        output = tmp_path / "speaker_sample.mp3"
+        output.write_bytes(sample_bytes)
+        return output
+
+    monkeypatch.setattr("solorecord_server.main._create_audio_sample", fake_create_audio_sample)
+
+    assert client.get(
+        f"/api/web/meetings/{meeting_id}/segments/1/audio-sample?start=5&end=15",
+    ).status_code == 401
+    assert client.get(
+        f"/api/web/meetings/{meeting_id}/segments/1/audio-sample?start=5&end=15",
+        headers=user_headers,
+    ).status_code == 404
+
+    sample = client.get(
+        f"/api/web/meetings/{meeting_id}/segments/1/audio-sample?start=5&end=15",
+        headers=headers,
+    )
+    assert sample.status_code == 200
+    assert sample.headers["content-type"].startswith("audio/mpeg")
+    assert sample.content == sample_bytes
+
+
+def test_speaker_audio_sample_reports_transcoding_unavailable(tmp_path: Path, monkeypatch) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+
+    create = client.post("/api/web/meetings", json={"title": "试听转码不可用"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    upload = client.post(
+        f"/api/mobile/meetings/{meeting_id}/segments",
+        headers=headers,
+        data={"segment_no": "1", "start_ms": "0", "end_ms": "15000", "duration_ms": "15000"},
+        files={"file": ("part_0001.m4a", b"source audio", "audio/mp4")},
+    )
+    assert upload.status_code == 200
+    monkeypatch.setattr("solorecord_server.main._create_audio_sample", lambda *_args: None)
+
+    sample = client.get(
+        f"/api/web/meetings/{meeting_id}/segments/1/audio-sample?start=0&end=30",
+        headers=headers,
+    )
+    assert sample.status_code == 424
+    assert sample.json()["detail"] == "Audio sample transcoding unavailable"
+
+
 def test_create_meeting_returns_conflict_for_duplicate_join_code(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     headers = login(client)
@@ -6211,6 +6278,10 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "audio/mp4" in app_js
     assert "浏览器无法解码这段音频" in app_js
     assert "data-sample-audio" in app_js
+    assert "data-sample-url" in app_js
+    assert "audio-sample" in app_js
+    assert "fetchSpeakerSampleBlob" in app_js
+    assert "服务器暂未启用试听转码" in app_js
     assert "data-speakers" in app_js
     assert "speakerStatsKey" in app_js
     assert "audio_available" in app_js

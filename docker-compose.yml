@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        INSTALL_MEDIA_TOOLS: ${INSTALL_MEDIA_TOOLS:-true}
     env_file:
       - server/.env
     init: true

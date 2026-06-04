@@ -37,10 +37,16 @@ docker compose up -d --build solorecord
 
 首次部署默认使用 SQLite 和 `var/` 下的本地文件存储。
 
-默认 Docker 镜像会跳过较大的可选系统包，方便本地 smoke 更快完成。如果生产 ASR 需要 `ffmpeg`，或 PDF 导出需要 CJK 字体，使用：
+默认 Docker Compose 构建会安装 `ffmpeg` 和 CJK 字体，用于人物校对 5-20 秒试听样本转码和中文 PDF 导出：
 
 ```bash
-docker compose build --build-arg INSTALL_MEDIA_TOOLS=true solorecord
+docker compose up -d --build solorecord
+```
+
+如果只是做极简本地 smoke、希望跳过较大的系统包，可临时关闭媒体工具：
+
+```bash
+INSTALL_MEDIA_TOOLS=false docker compose build solorecord
 docker compose up -d solorecord
 ```
 
@@ -230,12 +236,18 @@ docker compose up -d --build solorecord
 
 The first deploy uses SQLite and local file storage under `var/`.
 
-By default, the Docker image skips large optional OS packages so local smoke
-tests build quickly. If the production ASR pipeline needs `ffmpeg`, or PDF
-export needs system CJK fonts, build with:
+By default, Docker Compose installs `ffmpeg` and CJK fonts for 5-20 second
+speaker-sample transcoding and Chinese PDF export:
 
 ```bash
-docker compose build --build-arg INSTALL_MEDIA_TOOLS=true solorecord
+docker compose up -d --build solorecord
+```
+
+For a minimal local smoke build, you can temporarily skip the larger media
+packages:
+
+```bash
+INSTALL_MEDIA_TOOLS=false docker compose build solorecord
 docker compose up -d solorecord
 ```
 
