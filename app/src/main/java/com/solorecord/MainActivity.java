@@ -237,7 +237,7 @@ public final class MainActivity extends Activity {
                 ? "已登录：" + sessionStore.getDisplayName()
                 : "未登录，录音和同步需要先登录";
         String server = sessionStore.getServerEndpoint();
-        statusText.setText(login + "\n服务器：" + server);
+        statusText.setText(login + "\n服务器：" + server + serverRuntimeSummary());
     }
 
     private void updateTabs() {
@@ -453,7 +453,7 @@ public final class MainActivity extends Activity {
     private void renderLoginTab() {
         addSectionTitle("登录状态");
         String configuredEndpoint = ensureServerEndpoint();
-        addHint("公司服务器已配置：" + configuredEndpoint + "。ASR 和大模型由服务器统一配置，App 不内置任何模型密钥。");
+        addHint("公司服务器已配置：" + configuredEndpoint + "。ASR 和大模型由服务器统一配置，App 不内置任何模型密钥。" + serverRuntimeSummary());
 
         EditText usernameInput = input(
                 sessionStore.getUsername(),
@@ -503,6 +503,34 @@ public final class MainActivity extends Activity {
             }
         }
         return endpoint;
+    }
+
+    private String serverRuntimeSummary() {
+        List<String> parts = new ArrayList<>();
+        if (!sessionStore.getAsrLabel().isEmpty()) {
+            parts.add(sessionStore.getAsrLabel());
+        }
+        if (!sessionStore.getLlmLabel().isEmpty()) {
+            parts.add(sessionStore.getLlmLabel());
+        }
+        if (parts.isEmpty()) {
+            return "";
+        }
+        return "\n服务器模型：" + join(parts, " / ") + "；分段 " + sessionStore.getAudioSegmentMinutes() + " 分钟";
+    }
+
+    private String join(List<String> items, String separator) {
+        StringBuilder builder = new StringBuilder();
+        for (String item : items) {
+            if (item == null || item.isEmpty()) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append(separator);
+            }
+            builder.append(item);
+        }
+        return builder.toString();
     }
 
     private void showServerEndpointDialog() {
@@ -770,10 +798,19 @@ public final class MainActivity extends Activity {
         }
         executorService.execute(() -> {
             try {
-                int minutes = serverClient.fetchAudioSegmentMinutes(
+                SoloServerClient.MobileConfig config = serverClient.fetchMobileConfig(
                         sessionStore.getServerEndpoint(),
                         sessionStore.getToken());
-                sessionStore.setAudioSegmentMinutes(minutes);
+                sessionStore.saveServerRuntimeConfig(
+                        config.getSegmentMinutes(),
+                        config.getAsrLabel(),
+                        config.getLlmLabel());
+                runOnUiThread(() -> {
+                    updateHeader();
+                    if (currentTab == 2) {
+                        renderCurrentTab();
+                    }
+                });
             } catch (Exception ignored) {
                 sessionStore.setAudioSegmentMinutes(DEFAULT_SEGMENT_MINUTES);
             }
@@ -887,6 +924,7 @@ public final class MainActivity extends Activity {
             try {
                 SoloServerClient.LoginResult result = serverClient.demoLogin(endpoint, displayName, email);
                 sessionStore.saveLogin(result.getToken(), result.getDisplayName(), result.getEmail());
+                refreshMobileConfigAsync();
                 runOnUiThread(() -> {
                     updateHeader();
                     toast("登录成功");
@@ -914,6 +952,7 @@ public final class MainActivity extends Activity {
             try {
                 SoloServerClient.LoginResult result = serverClient.ldapLogin(endpoint, loginName, password);
                 sessionStore.saveLogin(result.getToken(), result.getDisplayName(), result.getEmail(), loginName);
+                refreshMobileConfigAsync();
                 runOnUiThread(() -> {
                     updateHeader();
                     toast("登录成功");

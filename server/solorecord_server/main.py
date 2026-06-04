@@ -174,10 +174,26 @@ def me(user: CurrentUser) -> dict:
 @app.get("/api/mobile/config")
 def mobile_config() -> dict:
     values = _config_values()
+    asr_provider = values.get("asr_provider", settings.asr_provider)
+    llm_provider = values.get("llm_provider", settings.llm_provider)
+    asr_model = values.get("asr_model", settings.asr_model)
+    llm_model = values.get("llm_model", settings.llm_model)
     return {
         "appName": settings.app_name,
         "serverTime": now_iso(),
         "segmentMinutes": int(values.get("audio_segment_minutes", settings.audio_segment_minutes)),
+        "asr": {
+            "provider": asr_provider,
+            "model": asr_model,
+            "label": _provider_label("ASR", asr_provider, asr_model),
+            "configured": asr_provider != "mock" or bool(asr_model),
+        },
+        "llm": {
+            "provider": llm_provider,
+            "model": llm_model,
+            "label": _provider_label("LLM", llm_provider, llm_model),
+            "configured": llm_provider != "mock" or bool(llm_model),
+        },
         "features": {
             "speakerRename": True,
             "exports": ["markdown", "json", "srt", "docx", "pdf"],
@@ -1643,6 +1659,16 @@ def _audio_media_type(saved_type: str | None, file_name: str | None, path: Path)
         ".opus": "audio/ogg",
         ".flac": "audio/flac",
     }.get(suffix, media_type or "application/octet-stream")
+
+
+def _provider_label(kind: str, provider: str | None, model: str | None) -> str:
+    provider_name = str(provider or "").strip() or "mock"
+    model_name = str(model or "").strip()
+    if provider_name == "mock" and not model_name:
+        return f"{kind}：演示模式"
+    if model_name:
+        return f"{kind}：{model_name}"
+    return f"{kind}：{provider_name}"
 
 
 def _create_audio_sample(path: Path, start_seconds: float, duration_seconds: float) -> Path | None:

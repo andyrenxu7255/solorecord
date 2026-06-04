@@ -45,6 +45,7 @@ const state = {
     mimeType: "",
     continueAfterStop: false,
   },
+  runtimeConfig: null,
 };
 
 const PLATFORM_LABELS = {
@@ -217,7 +218,7 @@ function activeViewName() {
 
 async function refreshAfterLogin() {
   renderAccount();
-  await Promise.allSettled([loadMeetings(), loadJoinableMeetings()]);
+  await Promise.allSettled([loadRuntimeConfig(), loadMeetings(), loadJoinableMeetings()]);
   const view = activeViewName();
   if (view === "downloads") {
     await loadRelease();
@@ -300,8 +301,25 @@ function renderAccount() {
   const desktopHint = $("#desktopAccountHint");
   if (desktopStatus && desktopHint) {
     desktopStatus.textContent = loggedIn ? `${state.user.display_name} (${state.user.role})` : "未登录";
-    desktopHint.textContent = loggedIn ? "可以录音、同步和查看会议记录。" : "录音和查看记录需要先登录。";
+    desktopHint.textContent = loggedIn
+      ? `可以录音、同步和查看会议记录。${runtimeConfigText()}`
+      : "录音和查看记录需要先登录。";
   }
+}
+
+function runtimeConfigText() {
+  const config = state.runtimeConfig || {};
+  const labels = [
+    config.asr?.label || "",
+    config.llm?.label || "",
+  ].filter(Boolean);
+  const minutes = Math.max(1, Number(config.segmentMinutes || state.recorder.segmentMs / 60000 || 5));
+  if (!labels.length) return `服务器已统一配置音频分段，当前约 ${minutes} 分钟一段。`;
+  return `服务器已统一配置：${labels.join(" / ")}；音频约 ${minutes} 分钟一段。`;
+}
+
+function runtimeConfigHtml() {
+  return `<p class="hint">${escapeHtml(runtimeConfigText())}</p>`;
 }
 
 function ssoLogin() {
@@ -2682,14 +2700,20 @@ async function createAndUpload() {
 }
 
 async function loadRecorderConfig() {
+  await loadRuntimeConfig();
+  renderAccount();
+  renderRecorderSegments();
+  await loadJoinableMeetings();
+}
+
+async function loadRuntimeConfig() {
   try {
     const data = await api("/api/mobile/config");
+    state.runtimeConfig = data;
     state.recorder.segmentMs = Math.max(1, Number(data.segmentMinutes || 5)) * 60 * 1000;
   } catch (error) {
     state.recorder.segmentMs = 5 * 60 * 1000;
   }
-  renderRecorderSegments();
-  await loadJoinableMeetings();
 }
 
 async function startWebRecording() {
@@ -3037,8 +3061,8 @@ function renderRecordCapabilityHint() {
     startButton.textContent = "开始录音";
   }
   hint.textContent = IS_DESKTOP_CLIENT
-    ? "Windows 客户端支持麦克风录音；首次使用时请允许系统麦克风权限。"
-    : "当前浏览器支持录音；首次使用时请允许麦克风权限。";
+    ? `Windows 客户端支持麦克风录音；首次使用时请允许系统麦克风权限。${runtimeConfigText()}`
+    : `当前浏览器支持录音；首次使用时请允许麦克风权限。${runtimeConfigText()}`;
   hint.classList.remove("warning-text");
 }
 
@@ -3052,6 +3076,7 @@ async function loadRelease() {
   }
   box.textContent = `正在读取 ${PLATFORM_LABELS[platform] || platform} 发布包...`;
   try {
+    await loadRuntimeConfig();
     const data = await api(`/api/web/releases/latest?platform=${encodeURIComponent(platform)}`);
     if (!data.release) {
       const signedNote = SIGNED_PLATFORM_NOTES[platform] || "管理员可在管理页上传该平台发布包。";
@@ -3066,6 +3091,7 @@ async function loadRelease() {
     box.innerHTML = `
       <h3>${escapeHtml(PLATFORM_LABELS[rel.platform] || rel.platform)} · ${escapeHtml(rel.version_name)} (${rel.version_code})</h3>
       <p>内部版已预置公司服务器 <code>https://record.uino.com</code>。安装后用公司 LDAP 登录即可录音和查看纪要；ASR 与大模型由服务器统一配置，客户端不内置任何 token/key。</p>
+      ${runtimeConfigHtml()}
       ${["android", "windows"].includes(rel.platform) ? "<p class='hint'>推荐用于明早演示：下载安装后不需要初始化服务器地址。</p>" : ""}
       <p>SHA-256：<code>${escapeHtml(rel.sha256)}</code></p>
       <p>${escapeHtml(rel.release_notes || "")}</p>

@@ -6439,6 +6439,9 @@ def test_web_release_page_refreshes_after_login_and_distinguishes_errors() -> No
     assert "https://record.uino.com" in load_release
     assert "ASR 与大模型由服务器统一配置" in load_release
     assert "客户端不内置任何 token/key" in load_release
+    assert "runtimeConfigHtml()" in load_release
+    assert "loadRuntimeConfig()" in load_release
+    assert "服务器已统一配置" in app_js
     assert "SIGNED_PLATFORM_NOTES" in app_js
     assert "Apple 开发者证书签名和公证" in app_js
     assert "Apple 企业签名或 Ad Hoc 分发配置" in app_js
@@ -6470,11 +6473,64 @@ def test_internal_clients_are_preconfigured_for_company_server() -> None:
     assert "公司服务器已配置" in contents["android_login"]
     assert "高级：修改服务器地址" in contents["android_login"]
     assert "App 不内置任何模型密钥" in contents["android_login"]
+    assert "serverRuntimeSummary()" in contents["android_login"]
+    assert "fetchMobileConfig" in contents["android_login"]
+    assert "saveServerRuntimeConfig" in contents["android_login"]
     assert "PreconfiguredConfig.serverEndpoint()" in contents["android_login"]
     assert 'const DEFAULT_SERVER_URL = "https://record.uino.com";' in contents["desktop"]
     assert "return \"https://record.uino.com\"" in contents["ios_swift"]
     assert "return \"https://record.uino.com\"" in contents["macos_swift"]
     assert "const DEFAULT_SERVER_URL = 'https://record.uino.com';" in contents["harmony"]
+
+
+def test_mobile_config_exposes_non_secret_runtime_labels(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    payload = {
+        "asr_provider": "funasr",
+        "asr_command": "",
+        "asr_endpoint": "https://asr.example.invalid/v1",
+        "asr_api_key": "hidden-asr-value",
+        "asr_model": "funasr-paraformer-zh",
+        "llm_provider": "openai-compatible",
+        "llm_endpoint": "https://llm.example.invalid/v1",
+        "llm_api_key": "hidden-llm-value",
+        "llm_model": "mimo-v2.5",
+        "hermes_webhook_url": "",
+        "hermes_webhook_token": "",
+        "es_enabled": False,
+        "es_url": "",
+        "es_index": "solorecord_meetings",
+        "external_api_tokens": "",
+        "audio_segment_minutes": 6,
+        "enable_diarization": True,
+        "enable_denoise": False,
+        "enable_semantic_segmentation": True,
+        "target_sample_rate": 16000,
+    }
+    save = client.put("/api/admin/providers", json=payload, headers=headers)
+    assert save.status_code == 200
+
+    config = client.get("/api/mobile/config", headers=headers).json()
+    assert config["segmentMinutes"] == 6
+    assert "serverUrl" not in config
+    assert config["asr"] == {
+        "provider": "funasr",
+        "model": "funasr-paraformer-zh",
+        "label": "ASR：funasr-paraformer-zh",
+        "configured": True,
+    }
+    assert config["llm"] == {
+        "provider": "openai-compatible",
+        "model": "mimo-v2.5",
+        "label": "LLM：mimo-v2.5",
+        "configured": True,
+    }
+    serialized = json.dumps(config, ensure_ascii=False)
+    assert "hidden-asr-value" not in serialized
+    assert "hidden-llm-value" not in serialized
+    assert "asr.example.invalid" not in serialized
+    assert "llm.example.invalid" not in serialized
 
 
 def test_web_account_state_requires_token_not_stale_user_cache() -> None:

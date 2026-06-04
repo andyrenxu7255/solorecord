@@ -66,9 +66,18 @@ public final class SoloServerClient {
     }
 
     public int fetchAudioSegmentMinutes(String serverEndpoint, String token) throws Exception {
+        return fetchMobileConfig(serverEndpoint, token).getSegmentMinutes();
+    }
+
+    public MobileConfig fetchMobileConfig(String serverEndpoint, String token) throws Exception {
         JSONObject response = httpJsonClient.getJson(url(serverEndpoint, "/api/mobile/config"), token);
         int minutes = response.optInt("segmentMinutes", 5);
-        return Math.max(1, Math.min(30, minutes));
+        JSONObject asr = response.optJSONObject("asr");
+        JSONObject llm = response.optJSONObject("llm");
+        return new MobileConfig(
+                Math.max(1, Math.min(30, minutes)),
+                asr == null ? "" : asr.optString("label", ""),
+                llm == null ? "" : llm.optString("label", ""));
     }
 
     public MeetingRecord createMeeting(String serverEndpoint, String token, String title) throws Exception {
@@ -554,6 +563,30 @@ public final class SoloServerClient {
         UploadContext(MeetingRecord record, String remoteId) {
             this.record = record;
             this.remoteId = remoteId;
+        }
+    }
+
+    public static final class MobileConfig {
+        private final int segmentMinutes;
+        private final String asrLabel;
+        private final String llmLabel;
+
+        MobileConfig(int segmentMinutes, String asrLabel, String llmLabel) {
+            this.segmentMinutes = segmentMinutes;
+            this.asrLabel = asrLabel == null ? "" : asrLabel;
+            this.llmLabel = llmLabel == null ? "" : llmLabel;
+        }
+
+        public int getSegmentMinutes() {
+            return segmentMinutes;
+        }
+
+        public String getAsrLabel() {
+            return asrLabel;
+        }
+
+        public String getLlmLabel() {
+            return llmLabel;
         }
     }
 }

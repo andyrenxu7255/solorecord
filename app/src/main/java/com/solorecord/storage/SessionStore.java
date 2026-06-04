@@ -30,6 +30,23 @@ public final class SessionStore {
         preferences.edit().putInt("audioSegmentMinutes", safeMinutes).apply();
     }
 
+    public String getAsrLabel() {
+        return preferences.getString("asrLabel", "");
+    }
+
+    public String getLlmLabel() {
+        return preferences.getString("llmLabel", "");
+    }
+
+    public void saveServerRuntimeConfig(int minutes, String asrLabel, String llmLabel) {
+        int safeMinutes = Math.max(1, Math.min(30, minutes));
+        preferences.edit()
+                .putInt("audioSegmentMinutes", safeMinutes)
+                .putString("asrLabel", asrLabel == null ? "" : asrLabel.trim())
+                .putString("llmLabel", llmLabel == null ? "" : llmLabel.trim())
+                .apply();
+    }
+
     public String getToken() {
         return preferences.getString("token", "");
     }
