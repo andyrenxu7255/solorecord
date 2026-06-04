@@ -34,7 +34,7 @@ android {
         applicationId "com.solorecord"
         minSdk 26
         targetSdk 34
-        versionCode 7
+        versionCode 73
         versionName "0.7.0"
 
         buildConfigField "String", "SERVER_ENDPOINT", quoted(soloValue("SOLO_SERVER_ENDPOINT", ""))
