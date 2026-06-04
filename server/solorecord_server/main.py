@@ -13,6 +13,7 @@ import secrets
 import sqlite3
 import string
 import tempfile
+import wave
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
@@ -498,8 +499,8 @@ def download_audio_sample(
         raise HTTPException(status_code=424, detail="Audio sample transcoding unavailable")
     return FileResponse(
         sample,
-        filename=f"speaker_sample_{segment_no:04d}.mp3",
-        media_type="audio/mpeg",
+        filename=f"speaker_sample_{segment_no:04d}{sample.suffix or '.mp3'}",
+        media_type=_audio_media_type(None, sample.name, sample),
         background=_delete_file_task(sample),
     )
 
@@ -1646,36 +1647,68 @@ def _audio_media_type(saved_type: str | None, file_name: str | None, path: Path)
 
 def _create_audio_sample(path: Path, start_seconds: float, duration_seconds: float) -> Path | None:
     ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        return None
-    output = Path(tempfile.gettempdir()) / f"solorecord_sample_{secrets.token_urlsafe(12)}.mp3"
-    command = [
-        ffmpeg,
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-ss",
-        f"{max(0.0, start_seconds):.3f}",
-        "-t",
-        f"{max(1.0, min(20.0, duration_seconds)):.3f}",
-        "-i",
-        str(path),
-        "-vn",
-        "-ac",
-        "1",
-        "-ar",
-        "16000",
-        "-b:a",
-        "64k",
-        "-y",
-        str(output),
-    ]
+    if ffmpeg:
+        output = Path(tempfile.gettempdir()) / f"solorecord_sample_{secrets.token_urlsafe(12)}.mp3"
+        command = [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-ss",
+            f"{max(0.0, start_seconds):.3f}",
+            "-t",
+            f"{max(1.0, min(20.0, duration_seconds)):.3f}",
+            "-i",
+            str(path),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-b:a",
+            "64k",
+            "-y",
+            str(output),
+        ]
+        try:
+            subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            output.unlink(missing_ok=True)
+        else:
+            if output.exists() and output.stat().st_size > 0:
+                return output
+            output.unlink(missing_ok=True)
+    return _create_wav_audio_sample(path, start_seconds, duration_seconds)
+
+
+def _create_wav_audio_sample(path: Path, start_seconds: float, duration_seconds: float) -> Path | None:
+    output = Path(tempfile.gettempdir()) / f"solorecord_sample_{secrets.token_urlsafe(12)}.wav"
     try:
-        subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
-    except (OSError, subprocess.SubprocessError):
+        with wave.open(str(path), "rb") as source:
+            frame_rate = source.getframerate()
+            total_frames = source.getnframes()
+            if frame_rate <= 0 or total_frames <= 0:
+                return None
+            start_frame = int(max(0.0, start_seconds) * frame_rate)
+            duration_frames = int(max(1.0, min(20.0, duration_seconds)) * frame_rate)
+            if start_frame >= total_frames:
+                start_frame = max(0, total_frames - duration_frames)
+            frame_count = min(duration_frames, total_frames - start_frame)
+            if frame_count <= 0:
+                return None
+            source.setpos(start_frame)
+            frames = source.readframes(frame_count)
+            if not frames:
+                return None
+            with wave.open(str(output), "wb") as target:
+                target.setnchannels(source.getnchannels())
+                target.setsampwidth(source.getsampwidth())
+                target.setframerate(frame_rate)
+                target.writeframes(frames)
+    except (EOFError, OSError, wave.Error):
         output.unlink(missing_ok=True)
         return None
-    if not output.exists() or output.stat().st_size <= 0:
+    if not output.exists() or output.stat().st_size <= 44:
         output.unlink(missing_ok=True)
         return None
     return output

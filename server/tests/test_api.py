@@ -1,7 +1,9 @@
 import importlib
 import json
+import math
 import os
 import time
+import wave
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
@@ -677,6 +679,43 @@ def test_speaker_audio_sample_reports_transcoding_unavailable(tmp_path: Path, mo
     )
     assert sample.status_code == 424
     assert sample.json()["detail"] == "Audio sample transcoding unavailable"
+
+
+def test_speaker_audio_sample_falls_back_to_wav_clip_without_ffmpeg(tmp_path: Path, monkeypatch) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+
+    wav_path = tmp_path / "source.wav"
+    with wave.open(str(wav_path), "wb") as audio:
+        sample_rate = 16000
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(sample_rate)
+        frames = bytearray()
+        for index in range(sample_rate * 8):
+            value = int(0.2 * 32767 * math.sin(2 * math.pi * 440 * index / sample_rate))
+            frames.extend(value.to_bytes(2, "little", signed=True))
+        audio.writeframes(bytes(frames))
+
+    create = client.post("/api/web/meetings", json={"title": "WAV 试听兜底"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    upload = client.post(
+        f"/api/mobile/meetings/{meeting_id}/segments",
+        headers=headers,
+        data={"segment_no": "1", "start_ms": "0", "end_ms": "8000", "duration_ms": "8000"},
+        files={"file": ("part_0001.wav", wav_path.read_bytes(), "audio/wav")},
+    )
+    assert upload.status_code == 200
+
+    monkeypatch.setattr("shutil.which", lambda name: None if name == "ffmpeg" else name)
+
+    sample = client.get(
+        f"/api/web/meetings/{meeting_id}/segments/1/audio-sample?start=2&end=7",
+        headers=headers,
+    )
+    assert sample.status_code == 200
+    assert sample.headers["content-type"].startswith("audio/wav")
+    assert sample.content.startswith(b"RIFF")
 
 
 def test_create_meeting_returns_conflict_for_duplicate_join_code(tmp_path: Path) -> None:

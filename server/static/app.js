@@ -2393,11 +2393,11 @@ async function fetchSpeakerSampleBlob(sampleUrl, fallbackUrl, start = 0, end = 1
         durationSeconds: 30,
       };
     }
-    if (![404, 424, 501].includes(response.status)) {
+    if ([401, 403].includes(response.status)) {
       const text = await response.text();
       throw httpError(response.status, text);
     }
-    degraded = response.status === 424 || response.status === 501;
+    degraded = true;
   }
   const response = await fetch(fallbackUrl, { headers: { Authorization: `Bearer ${state.token}` } });
   if (!response.ok) {
