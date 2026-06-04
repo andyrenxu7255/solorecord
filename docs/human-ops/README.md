@@ -559,10 +559,16 @@ GET /app.js
 
 ### 人物试听失败或 PDF 中文显示异常
 
-生产镜像默认安装 `ffmpeg` 和 CJK 字体。`ffmpeg` 用于人物校对区的 5-20 秒试听样本转码，CJK 字体用于中文 PDF 导出。若试听提示“转码不可用”或 PDF 中文异常，先确认镜像不是用 `INSTALL_MEDIA_TOOLS=false` 构建的，然后重新构建：
+生产镜像默认安装 `ffmpeg`，用于人物校对区的 5-20 秒试听样本转码。若试听提示“转码不可用”，先确认镜像不是用 `INSTALL_MEDIA_TOOLS=false` 构建的，然后重新构建：
 
 ```bash
 docker compose up -d --build solorecord
+```
+
+中文 PDF 如果需要系统级 CJK 字体，再额外启用：
+
+```bash
+INSTALL_CJK_FONTS=true docker compose up -d --build solorecord
 ```
 
 ### Docker 构建卡住
@@ -1071,12 +1077,18 @@ Transcription failures usually point to `SOLO_ASR_PROVIDER`, `SOLO_ASR_COMMAND`,
 
 Empty summaries usually point to missing `SOLO_LLM_PROVIDER`, `SOLO_LLM_ENDPOINT`, `SOLO_LLM_MODEL`, or `SOLO_LLM_API_KEY`. If the LLM is not configured, SoloRecord falls back to mock summaries.
 
-For speaker sample playback or CJK PDF rendering issues, confirm the image was
-not built with `INSTALL_MEDIA_TOOLS=false`. Production builds install `ffmpeg`
-and CJK fonts by default, so rebuild with:
+For speaker sample playback issues, confirm the image was not built with
+`INSTALL_MEDIA_TOOLS=false`. Production builds install `ffmpeg` by default, so
+rebuild with:
 
 ```bash
 docker compose up -d --build solorecord
+```
+
+If Chinese PDF export needs system CJK fonts, enable them explicitly:
+
+```bash
+INSTALL_CJK_FONTS=true docker compose up -d --build solorecord
 ```
 
 ### Go-Live Checklist

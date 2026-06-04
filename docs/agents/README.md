@@ -424,7 +424,7 @@ Android 改动：
 - Android token 当前在 SharedPreferences，生产建议换 EncryptedSharedPreferences/Keystore。
 - Android 上传已使用 multipart 文件流和分段级断点续传；它不是单文件字节 offset 续传。若未来把分段时长调得很长，再评估更细粒度的对象存储分片上传。
 - Docker BuildKit 在本地 Windows 曾因 Python 包下载慢而超时，已给出 smoke fallback；生产 Linux 构建仍按 `docker compose up -d --build solorecord`。
-- 人物试听样本和 PDF 中文渲染依赖媒体工具与系统字体。生产 Docker Compose 默认使用 `INSTALL_MEDIA_TOOLS=true`；只有极简本地 smoke 才建议临时设为 `false`。
+- 人物试听样本依赖 `ffmpeg`。生产 Docker Compose 默认使用 `INSTALL_MEDIA_TOOLS=true`；只有极简本地 smoke 才建议临时设为 `false`。PDF 中文渲染如果需要系统字体，单独使用 `INSTALL_CJK_FONTS=true` 构建。
 
 ## 关键测试用例
 
@@ -931,7 +931,7 @@ Android change:
 - Android token currently uses SharedPreferences; use EncryptedSharedPreferences/Keystore before broader rollout.
 - Android upload now uses multipart file streaming with segment-level resume. It is not byte-offset resume inside a single file; if segment duration is increased substantially, evaluate finer-grained object-storage multipart upload.
 - Windows Docker BuildKit may stall on slow Python package downloads; use the documented mounted-source smoke fallback locally.
-- Speaker samples and Chinese PDF rendering depend on media tools and system fonts. Production Docker Compose uses `INSTALL_MEDIA_TOOLS=true` by default; set it to `false` only for minimal local smoke builds.
+- Speaker samples depend on `ffmpeg`. Production Docker Compose uses `INSTALL_MEDIA_TOOLS=true` by default; set it to `false` only for minimal local smoke builds. If Chinese PDF rendering needs system fonts, build separately with `INSTALL_CJK_FONTS=true`.
 
 ### Key Tests
 

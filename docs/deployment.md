@@ -37,13 +37,19 @@ docker compose up -d --build solorecord
 
 首次部署默认使用 SQLite 和 `var/` 下的本地文件存储。
 
-默认 Docker Compose 构建会安装 `ffmpeg` 和 CJK 字体，用于人物校对 5-20 秒试听样本转码和中文 PDF 导出：
+默认 Docker Compose 构建会安装 `ffmpeg`，用于人物校对 5-20 秒试听样本转码：
 
 ```bash
 docker compose up -d --build solorecord
 ```
 
-如果只是做极简本地 smoke、希望跳过较大的系统包，可临时关闭媒体工具：
+中文 PDF 如果需要系统级 CJK 字体，可额外启用字体包：
+
+```bash
+INSTALL_CJK_FONTS=true docker compose up -d --build solorecord
+```
+
+如果只是做极简本地 smoke、希望跳过媒体工具，可临时关闭：
 
 ```bash
 INSTALL_MEDIA_TOOLS=false docker compose build solorecord
@@ -236,15 +242,21 @@ docker compose up -d --build solorecord
 
 The first deploy uses SQLite and local file storage under `var/`.
 
-By default, Docker Compose installs `ffmpeg` and CJK fonts for 5-20 second
-speaker-sample transcoding and Chinese PDF export:
+By default, Docker Compose installs `ffmpeg` for 5-20 second speaker-sample
+transcoding:
 
 ```bash
 docker compose up -d --build solorecord
 ```
 
-For a minimal local smoke build, you can temporarily skip the larger media
-packages:
+If Chinese PDF export needs system CJK fonts, enable the font package
+explicitly:
+
+```bash
+INSTALL_CJK_FONTS=true docker compose up -d --build solorecord
+```
+
+For a minimal local smoke build, you can temporarily skip media tools:
 
 ```bash
 INSTALL_MEDIA_TOOLS=false docker compose build solorecord

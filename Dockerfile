@@ -8,12 +8,16 @@ ENV PIP_DEFAULT_TIMEOUT=120
 WORKDIR /app
 
 ARG INSTALL_MEDIA_TOOLS=false
+ARG INSTALL_CJK_FONTS=false
 ARG PIP_INDEX_URL=
 ARG PIP_EXTRA_INDEX_URL=
-RUN if [ "$INSTALL_MEDIA_TOOLS" = "true" ]; then \
-      apt-get update \
-      && apt-get install -y --no-install-recommends ffmpeg fonts-noto-cjk \
-      && rm -rf /var/lib/apt/lists/*; \
+RUN if [ "$INSTALL_MEDIA_TOOLS" = "true" ] || [ "$INSTALL_CJK_FONTS" = "true" ]; then \
+      apt-get update; \
+      packages=""; \
+      if [ "$INSTALL_MEDIA_TOOLS" = "true" ]; then packages="$packages ffmpeg"; fi; \
+      if [ "$INSTALL_CJK_FONTS" = "true" ]; then packages="$packages fonts-noto-cjk"; fi; \
+      apt-get install -y --no-install-recommends $packages; \
+      rm -rf /var/lib/apt/lists/*; \
     fi
 
 COPY server/requirements.txt /app/server/requirements.txt
