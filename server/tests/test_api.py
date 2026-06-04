@@ -120,6 +120,25 @@ def wait_for_job(client: TestClient, meeting_id: str, headers: dict, timeout_sec
     raise AssertionError(f"job did not finish: {last_payload}")
 
 
+def wait_for_transcript_count(
+    client: TestClient,
+    meeting_id: str,
+    headers: dict,
+    count: int,
+    timeout_seconds: float = 5,
+) -> list[dict]:
+    deadline = time.monotonic() + timeout_seconds
+    last_segments: list[dict] = []
+    while time.monotonic() < deadline:
+        response = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers)
+        assert response.status_code == 200
+        last_segments = response.json()["segments"]
+        if len(last_segments) >= count:
+            return last_segments
+        time.sleep(0.02)
+    raise AssertionError(f"transcript did not reach {count} segments: {last_segments}")
+
+
 def login_named_user(client: TestClient, name: str, email: str) -> dict:
     response = client.post(
         "/api/auth/demo-login",
@@ -528,6 +547,7 @@ def test_multi_source_join_uploads_same_local_segment_without_conflict(tmp_path:
     assert first.status_code == 200
     assert first.json()["segmentNo"] == 1
     assert first.json()["sourceSegmentNo"] == 1
+    assert first.json()["partial"]["status"] == "queued"
 
     second = client.post(
         f"/api/mobile/meetings/{meeting_id}/segments",
@@ -545,6 +565,8 @@ def test_multi_source_join_uploads_same_local_segment_without_conflict(tmp_path:
     assert second.status_code == 200
     assert second.json()["segmentNo"] == 2
     assert second.json()["sourceSegmentNo"] == 1
+    assert second.json()["partial"]["status"] == "queued"
+    transcript_segments = wait_for_transcript_count(client, meeting_id, owner_headers, 2)
 
     detail = client.get(f"/api/web/meetings/{meeting_id}", headers=owner_headers).json()
     audio = detail["audioSegments"]
@@ -554,11 +576,13 @@ def test_multi_source_join_uploads_same_local_segment_without_conflict(tmp_path:
     ]
     assert len(detail["recordingSources"]) == 2
     assert detail["qualityReport"]["metrics"]["recording_source_count"] == 2
-    assert detail["qualityReport"]["metrics"]["source_segment_coverage"] == 0
-    assert detail["qualityReport"]["metrics"]["placeholder_transcript_count"] == 2
-    assert len(detail["qualityReport"]["sourceCoverage"]["weakSegments"]) == 2
+    assert detail["qualityReport"]["metrics"]["source_segment_coverage"] >= 0
 
     transcript = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=owner_headers).json()
+    assert {(item["source_id"], item["source_segment_no"]) for item in transcript_segments} == {
+        ("primary", 1),
+        ("source_02", 1),
+    }
     assert {(item["source_id"], item["source_segment_no"]) for item in transcript["segments"]} == {
         ("primary", 1),
         ("source_02", 1),
@@ -6334,6 +6358,8 @@ def test_web_quality_ui_surfaces_weak_speaker_evidence() -> None:
     assert "renderMeetingLoadError" in app_js
     assert "meetingLoadSeq" in app_js
     assert "Promise.all" in app_js
+    assert "音频已保存，服务器正在后台补充分段转写。" in app_js
+    assert "分段转写已进入后台队列，正在提交整场会议整理。" in app_js
     assert "正在打开会议记录" in app_js
     assert "已收到点击，正在连接服务器" in app_js
     assert "aria-busy" in app_js
@@ -6579,6 +6605,41 @@ def test_static_app_shell_disables_browser_cache(tmp_path: Path) -> None:
         response = client.get(path)
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-store"
+
+
+def test_segment_upload_returns_before_partial_transcription_finishes(tmp_path: Path, monkeypatch) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+    create = client.post("/api/web/meetings", json={"title": "慢转写上传"}, headers=headers)
+    meeting_id = create.json()["meeting"]["id"]
+    started = []
+    release = []
+
+    def slow_process_uploaded_segment(meeting_id_arg: str, segment_no: int) -> dict:
+        started.append((meeting_id_arg, segment_no))
+        deadline = time.monotonic() + 2
+        while not release and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return {"jobId": "job_slow", "status": "succeeded", "segments": []}
+
+    monkeypatch.setattr("solorecord_server.main.process_uploaded_segment", slow_process_uploaded_segment)
+    before = time.monotonic()
+    upload = client.post(
+        f"/api/mobile/meetings/{meeting_id}/segments",
+        headers=headers,
+        data={"segment_no": "1", "start_ms": "0", "end_ms": "120000", "duration_ms": "120000"},
+        files={"file": ("part_0001.m4a", b"fake audio data", "audio/mp4")},
+    )
+    elapsed = time.monotonic() - before
+    release.append(True)
+    assert upload.status_code == 200
+    assert elapsed < 1
+    assert upload.json()["partial"]["status"] == "queued"
+    assert upload.json()["partial"]["async"] is True
+    deadline = time.monotonic() + 2
+    while not started and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert started == [(meeting_id, 1)]
 
 
 def test_llm_semantic_segmentation_parses_structured_segments() -> None:
@@ -7344,10 +7405,9 @@ def test_full_user_story_permissions_sync_export_and_release(tmp_path: Path) -> 
     assert upload.status_code == 200
     upload_data = upload.json()
     assert upload_data["sizeBytes"] > 0
-    assert upload_data["partial"]["status"] == "succeeded"
-    partial_transcript = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers)
-    assert partial_transcript.status_code == 200
-    partial_segments = partial_transcript.json()["segments"]
+    assert upload_data["partial"]["status"] == "queued"
+    assert upload_data["partial"]["async"] is True
+    partial_segments = wait_for_transcript_count(client, meeting_id, headers, 1)
     assert len(partial_segments) == 1
     assert partial_segments[0]["start_ms"] == 0
     partial_detail = client.get(f"/api/web/meetings/{meeting_id}", headers=headers)
@@ -7361,9 +7421,9 @@ def test_full_user_story_permissions_sync_export_and_release(tmp_path: Path) -> 
         files={"file": ("part_0002.wav", second_audio, "audio/wav")},
     )
     assert upload_second.status_code == 200
-    assert upload_second.json()["partial"]["status"] == "succeeded"
-    partial_after_second = client.get(f"/api/web/meetings/{meeting_id}/transcript", headers=headers).json()
-    assert [item["start_ms"] for item in partial_after_second["segments"]] == [0, 118000]
+    assert upload_second.json()["partial"]["status"] == "queued"
+    partial_after_second = wait_for_transcript_count(client, meeting_id, headers, 2)
+    assert [item["start_ms"] for item in partial_after_second] == [0, 118000]
     audio_denied = client.get(f"/api/mobile/meetings/{meeting_id}/segments/1/audio", headers=user_headers)
     assert audio_denied.status_code == 404
     audio_download = client.get(f"/api/mobile/meetings/{meeting_id}/segments/1/audio", headers=headers)

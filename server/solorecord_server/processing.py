@@ -135,6 +135,18 @@ def process_uploaded_segment(meeting_id: str, segment_no: int) -> dict:
             force_semantic=False,
             scope="partial",
         )
+        if not _should_store_partial_segment(meeting_id):
+            with get_db() as db:
+                db.execute(
+                    """
+                    UPDATE processing_jobs
+                    SET status='succeeded', current_stage='skipped_by_final_processing',
+                        progress=100, finished_at=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (now_iso(), now_iso(), job_id),
+                )
+            return {"jobId": job_id, "status": "skipped", "segments": []}
         _replace_transcript_for_segment(meeting_id, segment_no, segments)
         with get_db() as db:
             db.execute(
@@ -170,6 +182,24 @@ def process_uploaded_segment(meeting_id: str, segment_no: int) -> dict:
                 (str(exc), now_iso(), now_iso(), job_id),
             )
         return {"jobId": job_id, "status": "failed", "segments": [], "error": str(exc)}
+
+
+def _should_store_partial_segment(meeting_id: str) -> bool:
+    with get_db() as db:
+        meeting = db.execute("SELECT status FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
+        final_job = db.execute(
+            """
+            SELECT 1 FROM processing_jobs
+            WHERE meeting_id = ?
+              AND type = 'transcribe'
+              AND status IN ('queued', 'running', 'succeeded', 'succeeded_with_publish_warning')
+            LIMIT 1
+            """,
+            (meeting_id,),
+        ).fetchone()
+    if final_job:
+        return False
+    return str(meeting["status"] if meeting else "") in {"uploaded", "partial_ready"}
 
 
 def process_transcription_job(job_id: str) -> None:

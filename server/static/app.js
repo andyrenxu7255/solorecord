@@ -2673,17 +2673,17 @@ async function createAndUpload() {
         setUploadStatus(`正在上传音频 ${percent}%，上传完成后服务器会立即保存原始文件并启动阶段转写。`, "running");
       },
       () => {
-        button.textContent = "服务器正在识别...";
-        setUploadStatus("音频已上传到服务器，正在等待服务器保存并调用 ASR。大文件或 m4a 转写可能需要更久。", "running");
+        button.textContent = "服务器正在保存...";
+        setUploadStatus("音频已上传到服务器，正在保存原始文件并排队转写。", "running");
       },
     );
-    setUploadStatus("音频已到服务器，正在等待 ASR 返回阶段转写。这个步骤可能比上传更久，请不要重复点击。", "running");
+    setUploadStatus("音频已保存，服务器正在后台补充分段转写。", "running");
     if (upload.partial?.status === "failed") {
       setUploadStatus(`音频已保存，阶段转写失败：${upload.partial.error || "请稍后重试转写"}`, "warning");
       toast(`音频已保存，阶段转写失败：${upload.partial.error || "请稍后重试转写"}`);
     } else {
-      setUploadStatus("阶段转写已返回，正在提交整场会议整理。", "running");
-      toast("音频已上传，正在提交整理");
+      setUploadStatus("分段转写已进入后台队列，正在提交整场会议整理。", "running");
+      toast("音频已上传，后台正在转写");
     }
     button.textContent = "正在提交整理...";
     await api(`/api/mobile/meetings/${meetingId}/finish`, { method: "POST", body: "{}" });

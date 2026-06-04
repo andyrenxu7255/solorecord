@@ -634,7 +634,7 @@ async def upload_segment(
             "source_segment_no": source_segment_no,
         },
     )
-    partial = process_uploaded_segment(meeting_id, global_segment_no)
+    partial = _enqueue_background_segment_transcription(meeting_id, global_segment_no)
     return {
         "segmentNo": global_segment_no,
         "sourceId": source_id,
@@ -728,7 +728,7 @@ def upload_segment_json(meeting_id: str, request: SegmentJsonUpload, user: Curre
             "source_segment_no": source_segment_no,
         },
     )
-    partial = process_uploaded_segment(meeting_id, global_segment_no)
+    partial = _enqueue_background_segment_transcription(meeting_id, global_segment_no)
     return {
         "segmentNo": global_segment_no,
         "sourceId": source_id,
@@ -1315,6 +1315,16 @@ def _enqueue_background_transcription(meeting_id: str, asr_provider: str | None 
     job_id = enqueue_transcription(meeting_id, asr_provider, run_inline=False)
     job_executor.submit(process_transcription_job, job_id)
     return job_id
+
+
+def _enqueue_background_segment_transcription(meeting_id: str, segment_no: int) -> dict:
+    future = job_executor.submit(process_uploaded_segment, meeting_id, segment_no)
+    return {
+        "jobId": "",
+        "status": "queued",
+        "segments": [],
+        "async": True,
+    }
 
 
 def _assert_access(meeting_id: str, user: dict, write: bool = False) -> None:
