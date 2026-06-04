@@ -55,6 +55,12 @@ const PLATFORM_LABELS = {
   harmony: "HarmonyOS HAP",
 };
 
+const SIGNED_PLATFORM_NOTES = {
+  macos: "macOS 包需要 Apple 开发者证书签名和公证后才能发布。源码已预置 https://record.uino.com，IT 完成签名后可在管理页上传 DMG。",
+  ios: "iOS IPA 需要 Apple 企业签名或 Ad Hoc 分发配置。源码已预置 https://record.uino.com，IT 完成签名后可在管理页上传 IPA。",
+  harmony: "HarmonyOS HAP 需要 DevEco Studio 和公司签名证书。源码已预置 https://record.uino.com，IT 完成签名后可在管理页上传 HAP。",
+};
+
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 const IS_DESKTOP_CLIENT = new URLSearchParams(window.location.search).get("client") === "desktop";
@@ -3048,13 +3054,19 @@ async function loadRelease() {
   try {
     const data = await api(`/api/web/releases/latest?platform=${encodeURIComponent(platform)}`);
     if (!data.release) {
-      box.innerHTML = `<p>尚未发布 ${PLATFORM_LABELS[platform]}。管理员可在管理页上传。</p>`;
+      const signedNote = SIGNED_PLATFORM_NOTES[platform] || "管理员可在管理页上传该平台发布包。";
+      box.innerHTML = `
+        <h3>${escapeHtml(PLATFORM_LABELS[platform] || platform)}</h3>
+        <p>${escapeHtml(signedNote)}</p>
+        <p class="hint">明早演示建议优先使用已发布的 Android APK 或 Windows ZIP；员工安装后直接用公司 LDAP 登录。</p>
+      `;
       return;
     }
     const rel = data.release;
     box.innerHTML = `
       <h3>${escapeHtml(PLATFORM_LABELS[rel.platform] || rel.platform)} · ${escapeHtml(rel.version_name)} (${rel.version_code})</h3>
       <p>内部版已预置公司服务器 <code>https://record.uino.com</code>。安装后用公司 LDAP 登录即可录音和查看纪要；ASR 与大模型由服务器统一配置，客户端不内置任何 token/key。</p>
+      ${["android", "windows"].includes(rel.platform) ? "<p class='hint'>推荐用于明早演示：下载安装后不需要初始化服务器地址。</p>" : ""}
       <p>SHA-256：<code>${escapeHtml(rel.sha256)}</code></p>
       <p>${escapeHtml(rel.release_notes || "")}</p>
       <button type="button" class="button primary release-download" data-platform="${escapeAttr(rel.platform)}">下载 ${escapeHtml(PLATFORM_LABELS[rel.platform] || "应用")}</button>

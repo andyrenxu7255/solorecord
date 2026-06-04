@@ -6400,6 +6400,12 @@ def test_web_release_page_refreshes_after_login_and_distinguishes_errors() -> No
     assert "https://record.uino.com" in load_release
     assert "ASR 与大模型由服务器统一配置" in load_release
     assert "客户端不内置任何 token/key" in load_release
+    assert "SIGNED_PLATFORM_NOTES" in app_js
+    assert "Apple 开发者证书签名和公证" in app_js
+    assert "Apple 企业签名或 Ad Hoc 分发配置" in app_js
+    assert "DevEco Studio 和公司签名证书" in app_js
+    assert "明早演示建议优先使用已发布的 Android APK 或 Windows ZIP" in load_release
+    assert "推荐用于明早演示" in load_release
     assert load_release.count("请先登录后查看发布包。") == 1
 
 
