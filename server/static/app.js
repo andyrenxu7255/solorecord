@@ -2340,7 +2340,7 @@ async function playSpeakerSample(button) {
       URL.revokeObjectURL(audio.dataset.objectUrl);
       audio.dataset.objectUrl = "";
     }
-    const source = await fetchSpeakerSampleBlob(sampleUrl, url);
+    const source = await fetchSpeakerSampleBlob(sampleUrl, url, start, end);
     const objectUrl = URL.createObjectURL(new Blob([source.blob], {
       type: source.mimeType,
     }));
@@ -2371,7 +2371,7 @@ async function playSpeakerSample(button) {
   }
 }
 
-async function fetchSpeakerSampleBlob(sampleUrl, fallbackUrl) {
+async function fetchSpeakerSampleBlob(sampleUrl, fallbackUrl, start = 0, end = 10) {
   const clipUrl = sampleUrl || "";
   if (clipUrl) {
     const response = await fetch(clipUrl, { headers: { Authorization: `Bearer ${state.token}` } });
@@ -2398,12 +2398,79 @@ async function fetchSpeakerSampleBlob(sampleUrl, fallbackUrl) {
     throw new Error("服务器返回的不是音频文件");
   }
   const blob = await response.blob();
+  const clipped = await clientSideAudioSampleBlob(blob, start, end);
+  if (clipped) {
+    return {
+      blob: clipped,
+      mimeType: "audio/wav",
+      windowed: false,
+      durationSeconds: Math.max(1, Number(end || 0) - Number(start || 0)),
+    };
+  }
   return {
     blob,
     mimeType: audioMimeTypeFromUrl(fallbackUrl, response.headers.get("content-type") || blob.type),
     windowed: true,
     durationSeconds: 30,
   };
+}
+
+async function clientSideAudioSampleBlob(blob, start, end) {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass || !blob?.arrayBuffer) return null;
+  const safeStart = Math.max(0, Number(start || 0));
+  const safeEnd = Math.max(safeStart + 1, Number(end || safeStart + 10));
+  try {
+    const context = new AudioContextClass();
+    const buffer = await context.decodeAudioData(await blob.arrayBuffer());
+    const sampleRate = buffer.sampleRate || 16000;
+    const first = Math.max(0, Math.floor(safeStart * sampleRate));
+    const last = Math.min(buffer.length, Math.ceil(safeEnd * sampleRate));
+    const frameCount = Math.max(1, last - first);
+    const samples = new Float32Array(frameCount);
+    for (let channel = 0; channel < buffer.numberOfChannels; channel += 1) {
+      const data = buffer.getChannelData(channel).subarray(first, last);
+      for (let index = 0; index < data.length; index += 1) {
+        samples[index] += data[index] / buffer.numberOfChannels;
+      }
+    }
+    await context.close?.();
+    return encodeMonoWav(samples, sampleRate);
+  } catch (error) {
+    return null;
+  }
+}
+
+function encodeMonoWav(samples, sampleRate) {
+  const dataSize = samples.length * 2;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  writeAscii(view, 0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeAscii(view, 8, "WAVE");
+  writeAscii(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(view, 36, "data");
+  view.setUint32(40, dataSize, true);
+  let offset = 44;
+  samples.forEach((sample) => {
+    const clipped = Math.max(-1, Math.min(1, sample || 0));
+    view.setInt16(offset, clipped < 0 ? clipped * 0x8000 : clipped * 0x7fff, true);
+    offset += 2;
+  });
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+function writeAscii(view, offset, value) {
+  for (let index = 0; index < value.length; index += 1) {
+    view.setUint8(offset + index, value.charCodeAt(index));
+  }
 }
 
 function seekAndPlayAudio(audio, start, end) {

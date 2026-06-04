@@ -37,10 +37,12 @@ docker compose up -d --build solorecord
 
 首次部署默认使用 SQLite 和 `var/` 下的本地文件存储。
 
-默认 Docker Compose 构建会安装 `ffmpeg`，用于人物校对 5-20 秒试听样本转码：
+默认 Docker Compose 构建使用轻量镜像，不安装系统媒体包。人物校对会优先请求服务器裁剪样本；如果服务器没有 `ffmpeg`，Web 会尝试在浏览器端裁剪 5-20 秒样本并播放。
+
+如果服务器包源和磁盘空间稳定，希望由服务端统一转码试听样本，可启用 `ffmpeg`：
 
 ```bash
-docker compose up -d --build solorecord
+INSTALL_MEDIA_TOOLS=true docker compose up -d --build solorecord
 ```
 
 中文 PDF 如果需要系统级 CJK 字体，可额外启用字体包：
@@ -49,11 +51,10 @@ docker compose up -d --build solorecord
 INSTALL_CJK_FONTS=true docker compose up -d --build solorecord
 ```
 
-如果只是做极简本地 smoke、希望跳过媒体工具，可临时关闭：
+常规轻量构建：
 
 ```bash
-INSTALL_MEDIA_TOOLS=false docker compose build solorecord
-docker compose up -d solorecord
+docker compose up -d --build solorecord
 ```
 
 如果 Windows 本地 Docker BuildKit 构建卡住，可用挂载源码方式验证服务：
@@ -242,11 +243,16 @@ docker compose up -d --build solorecord
 
 The first deploy uses SQLite and local file storage under `var/`.
 
-By default, Docker Compose installs `ffmpeg` for 5-20 second speaker-sample
-transcoding:
+By default, Docker Compose uses a lightweight image and does not install OS
+media packages. The people calibration UI first requests a server-side clipped
+sample; when `ffmpeg` is not installed, the Web UI tries to clip the 5-20 second
+sample in the browser before playback.
+
+If the server package mirror and disk capacity are ready, enable `ffmpeg` for
+server-side sample transcoding:
 
 ```bash
-docker compose up -d --build solorecord
+INSTALL_MEDIA_TOOLS=true docker compose up -d --build solorecord
 ```
 
 If Chinese PDF export needs system CJK fonts, enable the font package
@@ -256,11 +262,10 @@ explicitly:
 INSTALL_CJK_FONTS=true docker compose up -d --build solorecord
 ```
 
-For a minimal local smoke build, you can temporarily skip media tools:
+Regular lightweight build:
 
 ```bash
-INSTALL_MEDIA_TOOLS=false docker compose build solorecord
-docker compose up -d solorecord
+docker compose up -d --build solorecord
 ```
 
 If Docker BuildKit hangs on Windows while building the image, use this smoke

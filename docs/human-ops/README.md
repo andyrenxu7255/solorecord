@@ -559,10 +559,12 @@ GET /app.js
 
 ### 人物试听失败或 PDF 中文显示异常
 
-生产镜像默认安装 `ffmpeg`，用于人物校对区的 5-20 秒试听样本转码。若试听提示“转码不可用”，先确认镜像不是用 `INSTALL_MEDIA_TOOLS=false` 构建的，然后重新构建：
+生产镜像默认使用轻量构建，不安装系统媒体包。人物校对会优先请求服务器裁剪样本；如果服务器没有 `ffmpeg`，Web 会尝试在浏览器端裁剪 5-20 秒样本并播放。
+
+如果服务器包源和磁盘空间稳定，希望由服务端统一转码试听样本，可启用 `ffmpeg`：
 
 ```bash
-docker compose up -d --build solorecord
+INSTALL_MEDIA_TOOLS=true docker compose up -d --build solorecord
 ```
 
 中文 PDF 如果需要系统级 CJK 字体，再额外启用：
@@ -1077,12 +1079,16 @@ Transcription failures usually point to `SOLO_ASR_PROVIDER`, `SOLO_ASR_COMMAND`,
 
 Empty summaries usually point to missing `SOLO_LLM_PROVIDER`, `SOLO_LLM_ENDPOINT`, `SOLO_LLM_MODEL`, or `SOLO_LLM_API_KEY`. If the LLM is not configured, SoloRecord falls back to mock summaries.
 
-For speaker sample playback issues, confirm the image was not built with
-`INSTALL_MEDIA_TOOLS=false`. Production builds install `ffmpeg` by default, so
-rebuild with:
+Production uses a lightweight image by default and does not install OS media
+packages. The people calibration UI first requests a server-side clipped sample;
+when `ffmpeg` is not installed, the Web UI tries to clip the 5-20 second sample
+in the browser before playback.
+
+If the server package mirror and disk capacity are ready, enable `ffmpeg` for
+server-side sample transcoding:
 
 ```bash
-docker compose up -d --build solorecord
+INSTALL_MEDIA_TOOLS=true docker compose up -d --build solorecord
 ```
 
 If Chinese PDF export needs system CJK fonts, enable them explicitly:
