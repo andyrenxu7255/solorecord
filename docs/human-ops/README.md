@@ -559,12 +559,12 @@ GET /app.js
 
 ### 人物试听失败或 PDF 中文显示异常
 
-生产镜像默认使用轻量构建，不安装系统媒体包。人物校对会优先请求服务器裁剪样本；如果服务器没有 `ffmpeg`，Web 会退回到受权限保护的原始录音分段，并尽量在浏览器端裁剪 5-20 秒样本。
+生产镜像默认安装 `ffmpeg`，人物校对区会优先使用服务器裁剪 5-20 秒试听样本，避免浏览器无法解码 m4a/webm 时出现试听失败。Web 仍保留受权限保护的原始分段和浏览器端裁剪兜底。
 
-如果服务器包源和磁盘空间稳定，希望由服务端统一转码试听样本，可启用 `ffmpeg`：
+如果服务器包源受限、临时需要轻量镜像，可显式关闭媒体工具：
 
 ```bash
-INSTALL_MEDIA_TOOLS=true docker compose up -d --build solorecord
+INSTALL_MEDIA_TOOLS=false docker compose up -d --build solorecord
 ```
 
 中文 PDF 如果需要系统级 CJK 字体，再额外启用：
@@ -1079,16 +1079,16 @@ Transcription failures usually point to `SOLO_ASR_PROVIDER`, `SOLO_ASR_COMMAND`,
 
 Empty summaries usually point to missing `SOLO_LLM_PROVIDER`, `SOLO_LLM_ENDPOINT`, `SOLO_LLM_MODEL`, or `SOLO_LLM_API_KEY`. If the LLM is not configured, SoloRecord falls back to mock summaries.
 
-Production uses a lightweight image by default and does not install OS media
-packages. The people calibration UI first requests a server-side clipped sample;
-when `ffmpeg` is not installed, the Web UI falls back to protected original
-segments and tries browser-side 5-20 second clipping.
+Production installs `ffmpeg` by default. The people-calibration panel first uses
+server-side 5-20 second clipping so m4a/webm recordings remain playable even
+when the browser cannot decode or crop the original file. The Web UI still keeps
+protected original-segment playback and browser clipping fallbacks.
 
-If the server package mirror and disk capacity are ready, enable `ffmpeg` for
-server-side sample transcoding:
+If the server package mirror is constrained and a temporary lightweight image is
+required, explicitly disable media tools:
 
 ```bash
-INSTALL_MEDIA_TOOLS=true docker compose up -d --build solorecord
+INSTALL_MEDIA_TOOLS=false docker compose up -d --build solorecord
 ```
 
 If Chinese PDF export needs system CJK fonts, enable them explicitly:

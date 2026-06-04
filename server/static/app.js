@@ -2352,6 +2352,7 @@ async function playSpeakerSample(button) {
   const end = Number(button.dataset.sampleEnd || 0);
   const sampleBox = button.closest(".speaker-sample");
   const audio = sampleBox?.querySelector(".speaker-sample-audio");
+  let usedFallbackSegment = false;
   if (!url || !audio) return;
   if (!state.token && !restoreSessionFromStorage()) {
     promptLogin("请先登录后再试听声音样本");
@@ -2365,6 +2366,7 @@ async function playSpeakerSample(button) {
       audio.dataset.objectUrl = "";
     }
     const source = await fetchSpeakerSampleBlob(sampleUrl, url, start, end);
+    usedFallbackSegment = Boolean(source.degraded);
     const objectUrl = URL.createObjectURL(new Blob([source.blob], {
       type: source.mimeType,
     }));
@@ -2386,6 +2388,8 @@ async function playSpeakerSample(button) {
         ? "原始音频文件不在服务器，无法试听"
         : Number(error?.status) === 424
           ? "服务器暂未启用试听转码，正在使用原始分段播放"
+        : usedFallbackSegment && isBrowserAudioDecodeError(error)
+          ? "服务器短样本转码暂不可用，当前浏览器也无法直接试听原始录音。请稍后刷新，或联系运维开启媒体转码。"
         : `声音样本加载失败：${friendlyError(error)}`;
     button.textContent = "试听失败";
     showSpeakerSampleHint(sampleBox, message);
@@ -2394,6 +2398,11 @@ async function playSpeakerSample(button) {
   } finally {
     button.disabled = false;
   }
+}
+
+function isBrowserAudioDecodeError(error) {
+  const text = String(error?.message || error || "");
+  return /无法解码|decode|DEMUXER|MEDIA_ERR|not supported|no supported source/i.test(text);
 }
 
 async function fetchSpeakerSampleBlob(sampleUrl, fallbackUrl, start = 0, end = 10) {
@@ -2543,7 +2552,11 @@ function seekAndPlayAudio(audio, start, end) {
       const playback = audio.play();
       if (playback?.then) {
         playback.then(finish).catch((error) => {
-          if (error?.name === "NotAllowedError") {
+          if (
+            error?.name === "NotAllowedError"
+            || error?.name === "AbortError"
+            || String(error?.message || "").includes("interrupted")
+          ) {
             finish();
             return;
           }
