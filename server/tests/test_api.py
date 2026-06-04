@@ -6396,7 +6396,40 @@ def test_web_release_page_refreshes_after_login_and_distinguishes_errors() -> No
     assert "登录状态已过期，请重新登录后查看发布包" in load_release
     assert "发布包信息加载失败" in load_release
     assert "请稍后刷新，或联系运维确认发布包服务" in load_release
+    assert "内部版已预置公司服务器" in load_release
+    assert "https://record.uino.com" in load_release
+    assert "ASR 与大模型由服务器统一配置" in load_release
+    assert "客户端不内置任何 token/key" in load_release
     assert load_release.count("请先登录后查看发布包。") == 1
+
+
+def test_internal_clients_are_preconfigured_for_company_server() -> None:
+    root = Path(__file__).parents[2]
+    expected = "https://record.uino.com"
+    files = {
+        "android_config": root / "app" / "src" / "main" / "java" / "com" / "solorecord" / "config" / "PreconfiguredConfig.java",
+        "android_login": root / "app" / "src" / "main" / "java" / "com" / "solorecord" / "MainActivity.java",
+        "desktop": root / "clients" / "desktop" / "src" / "main.js",
+        "ios_swift": root / "clients" / "ios" / "SoloRecord" / "SoloRecord" / "ContentView.swift",
+        "ios_plist": root / "clients" / "ios" / "SoloRecord" / "SoloRecord" / "Info.plist",
+        "macos_swift": root / "clients" / "macos" / "SoloRecord" / "SoloRecord" / "ContentView.swift",
+        "macos_plist": root / "clients" / "macos" / "SoloRecord" / "SoloRecord" / "Info.plist",
+        "harmony": root / "clients" / "harmony" / "SoloRecord" / "entry" / "src" / "main" / "ets" / "pages" / "Index.ets",
+    }
+    contents = {name: path.read_text(encoding="utf-8") for name, path in files.items()}
+
+    for name, content in contents.items():
+        if name == "android_login":
+            continue
+        assert expected in content
+    assert "公司服务器已配置" in contents["android_login"]
+    assert "高级：修改服务器地址" in contents["android_login"]
+    assert "App 不内置任何模型密钥" in contents["android_login"]
+    assert "PreconfiguredConfig.serverEndpoint()" in contents["android_login"]
+    assert 'const DEFAULT_SERVER_URL = "https://record.uino.com";' in contents["desktop"]
+    assert "return \"https://record.uino.com\"" in contents["ios_swift"]
+    assert "return \"https://record.uino.com\"" in contents["macos_swift"]
+    assert "const DEFAULT_SERVER_URL = 'https://record.uino.com';" in contents["harmony"]
 
 
 def test_web_account_state_requires_token_not_stale_user_cache() -> None:

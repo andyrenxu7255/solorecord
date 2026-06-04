@@ -2,6 +2,7 @@ package com.solorecord;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -451,8 +452,8 @@ public final class MainActivity extends Activity {
 
     private void renderLoginTab() {
         addSectionTitle("登录状态");
-        EditText serverInput = input(sessionStore.getServerEndpoint(), "服务器地址");
-        content.addView(serverInput, spacedParams());
+        String configuredEndpoint = ensureServerEndpoint();
+        addHint("公司服务器已配置：" + configuredEndpoint + "。ASR 和大模型由服务器统一配置，App 不内置任何模型密钥。");
 
         EditText usernameInput = input(
                 sessionStore.getUsername(),
@@ -463,23 +464,15 @@ public final class MainActivity extends Activity {
         passwordInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         content.addView(passwordInput, spacedParams());
 
-        Button saveServer = secondaryButton("保存服务器地址");
-        saveServer.setOnClickListener(view -> {
-            sessionStore.setServerEndpoint(serverInput.getText().toString());
-            updateHeader();
-            toast("服务器地址已保存");
-        });
-        content.addView(saveServer, spacedParams());
-
         Button login = primaryButton("LDAP 登录");
         login.setOnClickListener(view -> loginWithLdap(
-                serverInput.getText().toString(),
+                ensureServerEndpoint(),
                 usernameInput.getText().toString(),
                 passwordInput.getText().toString()));
         content.addView(login, spacedParams());
 
         Button ssoLogin = secondaryButton("浏览器统一登录");
-        ssoLogin.setOnClickListener(view -> startSsoLogin(serverInput.getText().toString()));
+        ssoLogin.setOnClickListener(view -> startSsoLogin(ensureServerEndpoint()));
         content.addView(ssoLogin, spacedParams());
 
         Button logout = secondaryButton("退出登录");
@@ -494,7 +487,43 @@ public final class MainActivity extends Activity {
         checkRelease.setOnClickListener(view -> openLatestRelease());
         content.addView(checkRelease, spacedParams());
 
-        addHint("App 版本：" + BuildConfig.VERSION_NAME + "。APK 只保存服务器地址和登录会话，不内置 LDAP、模型密钥或外部系统 token。");
+        Button advancedServer = secondaryButton("高级：修改服务器地址");
+        advancedServer.setOnClickListener(view -> showServerEndpointDialog());
+        content.addView(advancedServer, spacedParams());
+
+        addHint("App 版本：" + BuildConfig.VERSION_NAME + "。APK 只保存公司服务器地址和登录会话，不内置 LDAP、ASR、LLM、Hermes、ES 或外部系统 token。");
+    }
+
+    private String ensureServerEndpoint() {
+        String endpoint = normalizeServerEndpoint(sessionStore.getServerEndpoint());
+        if (endpoint.isEmpty() || "http://127.0.0.1:8000".equals(endpoint)) {
+            endpoint = normalizeServerEndpoint(PreconfiguredConfig.serverEndpoint());
+            if (!endpoint.isEmpty()) {
+                sessionStore.setServerEndpoint(endpoint);
+            }
+        }
+        return endpoint;
+    }
+
+    private void showServerEndpointDialog() {
+        EditText serverInput = input(ensureServerEndpoint(), "服务器地址");
+        new AlertDialog.Builder(this)
+                .setTitle("高级设置")
+                .setMessage("内部员工无需修改。仅在运维要求切换环境时使用。")
+                .setView(serverInput)
+                .setPositiveButton("保存", (dialog, which) -> {
+                    String endpoint = normalizeServerEndpoint(serverInput.getText().toString());
+                    if (endpoint.isEmpty()) {
+                        toast("服务器地址需要以 http:// 或 https:// 开头");
+                        return;
+                    }
+                    sessionStore.setServerEndpoint(endpoint);
+                    updateHeader();
+                    renderCurrentTab();
+                    toast("服务器地址已保存");
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     private void toggleRecording() {

@@ -13,7 +13,7 @@ private func serverURL() -> String {
        bundled.hasPrefix("http") {
         return bundled
     }
-    return "http://127.0.0.1:8000"
+    return "https://record.uino.com"
 }
 
 struct SoloRecordWebView: UIViewRepresentable {

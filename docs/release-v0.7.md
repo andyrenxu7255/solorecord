@@ -41,7 +41,7 @@ SoloRecord V0.7 是公司内部会议记录系统的首个可部署交付版，�
 - 正式部署前必须修改 `SOLO_SECRET_KEY`。
 - 正式环境关闭 `SOLO_ALLOW_DEMO_LOGIN`。
 - 配置 HTTPS、群晖 LDAP、本地 ASR、LLM、备份和外部 API token；如果启用浏览器统一登录，再配置 SSO 回调。
-- 如果要让员工免填服务器地址，请用 `-PSOLO_SERVER_ENDPOINT=https://record.example.com` 重新构建 APK，再上传到服务器 Web 管理端；不要把任何 token/key 打进 APK。
+- 如果要让员工免填服务器地址，请用 `-PSOLO_SERVER_ENDPOINT=https://record.uino.com` 重新构建 APK，再上传到服务器 Web 管理端；不要把任何 token/key 打进 APK。
 - 代码仓库可以公开，但必须确认没有提交真实密钥、`server/.env`、运行数据、数据库、缓存、APK 构建产物或客户会议音频；生产部署仍按公司内部系统管控。
 
 ## English
@@ -85,5 +85,5 @@ SoloRecord V0.7 is the first deployable internal release of the company meeting 
 - Change `SOLO_SECRET_KEY` before production deployment.
 - Disable `SOLO_ALLOW_DEMO_LOGIN` in production.
 - Configure HTTPS, Synology LDAP, local ASR, LLM, backups, and external API tokens. Configure SSO callback only if browser unified login is enabled.
-- To avoid asking employees to type the server URL, rebuild with `-PSOLO_SERVER_ENDPOINT=https://record.example.com`, then upload that APK from the server Web admin. Never put tokens or keys into the APK.
+- To avoid asking employees to type the server URL, rebuild with `-PSOLO_SERVER_ENDPOINT=https://record.uino.com`, then upload that APK from the server Web admin. Never put tokens or keys into the APK.
 - The source repository can be public, but verify that real secrets, `server/.env`, runtime data, databases, caches, APK build outputs, and customer meeting audio are not committed. Production deployments remain internal systems.

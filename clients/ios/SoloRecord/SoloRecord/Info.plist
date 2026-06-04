@@ -13,7 +13,7 @@
   <key>CFBundleVersion</key>
   <string>7</string>
   <key>SoloRecordServerURL</key>
-  <string>http://127.0.0.1:8000</string>
+  <string>https://record.uino.com</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>SoloRecord needs microphone access to record meetings.</string>
   <key>NSCameraUsageDescription</key>
@@ -22,14 +22,6 @@
   <dict>
     <key>NSAllowsArbitraryLoads</key>
     <false/>
-    <key>NSExceptionDomains</key>
-    <dict>
-      <key>127.0.0.1</key>
-      <dict>
-        <key>NSExceptionAllowsInsecureHTTPLoads</key>
-        <true/>
-      </dict>
-    </dict>
   </dict>
 </dict>
 </plist>

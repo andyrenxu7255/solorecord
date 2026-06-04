@@ -1,6 +1,6 @@
 import webview from '@ohos.web.webview';
 
-const DEFAULT_SERVER_URL = 'http://127.0.0.1:8000';
+const DEFAULT_SERVER_URL = 'https://record.uino.com';
 
 @Entry
 @Component

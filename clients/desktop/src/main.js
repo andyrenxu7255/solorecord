@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { app, BrowserWindow, Menu, session, shell } = require("electron");
 
-const DEFAULT_SERVER_URL = "http://127.0.0.1:8000";
+const DEFAULT_SERVER_URL = "https://record.uino.com";
 const SERVER_URL = getServerUrl();
 
 app.commandLine.appendSwitch("unsafely-treat-insecure-origin-as-secure", new URL(SERVER_URL).origin);
@@ -25,7 +25,7 @@ function readPackagedServerUrl() {
       const value = fs.readFileSync(candidate, "utf8").trim();
       if (value) return value;
     } catch {
-      // Missing config is fine; the public package falls back to localhost.
+      // Missing config is fine; internal builds fall back to the company server.
     }
   }
   return "";

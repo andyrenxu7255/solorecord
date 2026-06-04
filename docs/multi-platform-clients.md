@@ -10,7 +10,7 @@ SoloRecord V0.7 之后支持以下终端发布位：
 - iOS IPA：SwiftUI + WKWebView 外壳源码，需要 Xcode 签名打包。
 - HarmonyOS HAP：HarmonyOS Stage 模型 Web 外壳源码，需要 DevEco Studio 签名打包。
 
-核心原则不变：终端应用不内置 ASR、LLM、LDAP、SSO、Hermes、ES 或外部系统密钥。服务器仍是权威数据源；终端只保存服务器地址、短期会话和必要缓存。
+核心原则不变：终端应用不内置 ASR、LLM、LDAP、SSO、Hermes、ES 或外部系统密钥。公司内部分发包只预置 `https://record.uino.com` 这个服务器地址；服务器仍是权威数据源，ASR 和大模型配置都在服务端维护，终端只保存服务器地址、短期会话和必要缓存。
 
 ## 体验一致性
 
@@ -29,7 +29,7 @@ Android 仍是最可靠的长会议采集端，因为它使用原生 AudioRecord
 ### Android
 
 ```powershell
-& 'C:\Users\Andy\.gradle\wrapper\dists\gradle-8.7-bin\bhs2wmbdwecv87pi65oeuq5iu\gradle-8.7\bin\gradle.bat' assembleDebug -PSOLO_SERVER_ENDPOINT=https://record.example.com
+& 'C:\Users\Andy\.gradle\wrapper\dists\gradle-8.7-bin\bhs2wmbdwecv87pi65oeuq5iu\gradle-8.7\bin\gradle.bat' assembleDebug -PSOLO_SERVER_ENDPOINT=https://record.uino.com
 ```
 
 输出：
@@ -43,12 +43,12 @@ app/build/outputs/apk/debug/app-debug.apk
 ```powershell
 cd clients\desktop
 npm install
-$env:SOLO_SERVER_URL="https://record.example.com"
+$env:SOLO_SERVER_URL="https://record.uino.com"
 npm run pack
 npm run portable:win
 ```
 
-`portable:win` 会把 `SOLO_SERVER_URL` 写入 `server-url.txt`，这样员工打开 `SoloRecord.exe` 后会直接进入公司服务器。公开包不要设置该环境变量。
+`portable:win` 会把 `SOLO_SERVER_URL` 写入 `server-url.txt`，这样员工打开 `SoloRecord.exe` 后会直接进入公司服务器。当前源码默认也指向 `https://record.uino.com`，仍建议内部分发包显式写入 `server-url.txt`，便于后续切换环境。
 
 输出：
 
@@ -71,18 +71,18 @@ npm run dist:win
 ```bash
 cd clients/desktop
 npm install
-SOLO_SERVER_URL=https://record.example.com npm run dist:mac
+SOLO_SERVER_URL=https://record.uino.com npm run dist:mac
 ```
 
 也可以使用 `clients/macos` 的 SwiftUI + WKWebView 外壳。两种方式都需要 Apple 签名和公证。
 
 ### iOS
 
-在 macOS + Xcode 上导入 `clients/ios` 的 Swift 文件和 `Info.plist`，把 `SoloRecordServerURL` 改成正式 HTTPS 地址，配置 Apple Developer Team 后 Archive 导出 IPA。
+在 macOS + Xcode 上导入 `clients/ios` 的 Swift 文件和 `Info.plist`。当前 `SoloRecordServerURL` 已预置为 `https://record.uino.com`，配置 Apple Developer Team 后 Archive 导出 IPA。
 
 ### HarmonyOS
 
-在 DevEco Studio 中打开 `clients/harmony/SoloRecord`，把 `entry/src/main/ets/pages/Index.ets` 的 `DEFAULT_SERVER_URL` 改成正式 HTTPS 地址，配置公司签名后生成 HAP。
+在 DevEco Studio 中打开 `clients/harmony/SoloRecord`。当前 `entry/src/main/ets/pages/Index.ets` 的 `DEFAULT_SERVER_URL` 已预置为 `https://record.uino.com`，配置公司签名后生成 HAP。
 
 ## 服务器发布
 

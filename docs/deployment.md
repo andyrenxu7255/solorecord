@@ -87,7 +87,7 @@ scripts\smoke-e2e.ps1 -BaseUrl http://127.0.0.1:8000 -ExternalToken test-token
 - 如果使用 GPU ASR，安装 NVIDIA driver 和 container runtime。
 - 在 Web 管理页配置 ASR Provider。
 - 通过 Web 管理页上传第一个 APK。
-- 公开 GitHub Release 附件 APK 不包含真实服务器地址或密钥；内部分发时用 `-PSOLO_SERVER_ENDPOINT=https://record.example.com` 重新构建，再上传到 Web 管理端发布中心。
+- 公开 GitHub Release 附件 APK 不包含真实服务器地址或密钥；公司内部分发时用 `-PSOLO_SERVER_ENDPOINT=https://record.uino.com` 重新构建，再上传到 Web 管理端发布中心。
 
 如果启用可选 `full` Compose profile，`server/.env` 还必须包含真实 `POSTGRES_PASSWORD` 和 `MINIO_ROOT_PASSWORD`，生产环境不能使用占位密码。
 
@@ -317,7 +317,7 @@ placeholder passwords in production.
 For the public GitHub Release APK, no real server URL or secret is embedded. For internal distribution, rebuild with:
 
 ```powershell
-& 'C:\Users\Andy\.gradle\wrapper\dists\gradle-8.7-bin\bhs2wmbdwecv87pi65oeuq5iu\gradle-8.7\bin\gradle.bat' assembleDebug -PSOLO_SERVER_ENDPOINT=https://record.example.com
+& 'C:\Users\Andy\.gradle\wrapper\dists\gradle-8.7-bin\bhs2wmbdwecv87pi65oeuq5iu\gradle-8.7\bin\gradle.bat' assembleDebug -PSOLO_SERVER_ENDPOINT=https://record.uino.com
 ```
 
 Then upload `app/build/outputs/apk/debug/app-debug.apk` from the Web admin release page.

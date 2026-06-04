@@ -8,7 +8,6 @@ SoloRecord 是公司内部会议记录系统。你可以用手机录音，系统
 
 - Android 手机，或 Windows/macOS/iOS/HarmonyOS 终端。
 - 公司统一登录账号。
-- SoloRecord 服务器地址。
 - 公司内部分发的 Android APK、Windows 包、macOS 包、iOS IPA 或 HarmonyOS HAP。
 
 ## 安装终端应用
@@ -27,11 +26,10 @@ Windows 版本下载后解压，运行 `SoloRecord.exe`。iOS、macOS 和 Harmon
 
 打开 App 后进入“登录状态”页：
 
-1. 填服务器地址。
-2. 输入公司 LDAP 用户名和密码。
-3. 点击“LDAP 登录”。
+1. 输入公司 LDAP 用户名和密码。
+2. 点击“LDAP 登录”。
 
-如果公司内部分发的 APK 已经预置服务器地址，这里会自动显示；如果是 GitHub Release 公开附件安装包，需要手动填写公司运维提供的服务器地址。
+公司内部分发的终端包已经预置 `https://record.uino.com`，普通用户不需要填写服务器地址。ASR 模型和大模型也由服务器统一配置，App 不会要求你填写模型、URL 或 key。只有运维要求切换环境时，才使用“高级：修改服务器地址”。
 
 登录成功后，顶部会显示当前用户和服务器地址。
 

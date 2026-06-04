@@ -3054,6 +3054,7 @@ async function loadRelease() {
     const rel = data.release;
     box.innerHTML = `
       <h3>${escapeHtml(PLATFORM_LABELS[rel.platform] || rel.platform)} · ${escapeHtml(rel.version_name)} (${rel.version_code})</h3>
+      <p>内部版已预置公司服务器 <code>https://record.uino.com</code>。安装后用公司 LDAP 登录即可录音和查看纪要；ASR 与大模型由服务器统一配置，客户端不内置任何 token/key。</p>
       <p>SHA-256：<code>${escapeHtml(rel.sha256)}</code></p>
       <p>${escapeHtml(rel.release_notes || "")}</p>
       <button type="button" class="button primary release-download" data-platform="${escapeAttr(rel.platform)}">下载 ${escapeHtml(PLATFORM_LABELS[rel.platform] || "应用")}</button>

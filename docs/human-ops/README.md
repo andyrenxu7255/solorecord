@@ -417,7 +417,7 @@ APK 有两种构建方式：
 内部分发构建示例：
 
 ```powershell
-& 'C:\Users\Andy\.gradle\wrapper\dists\gradle-8.7-bin\bhs2wmbdwecv87pi65oeuq5iu\gradle-8.7\bin\gradle.bat' assembleDebug -PSOLO_SERVER_ENDPOINT=https://record.example.com
+& 'C:\Users\Andy\.gradle\wrapper\dists\gradle-8.7-bin\bhs2wmbdwecv87pi65oeuq5iu\gradle-8.7\bin\gradle.bat' assembleDebug -PSOLO_SERVER_ENDPOINT=https://record.uino.com
 ```
 
 输出文件：
@@ -433,7 +433,7 @@ Windows 客户端构建：
 ```powershell
 cd clients\desktop
 npm install
-$env:SOLO_SERVER_URL="https://record.example.com"
+$env:SOLO_SERVER_URL="https://record.uino.com"
 npm run pack
 npm run portable:win
 ```
@@ -982,7 +982,7 @@ There are two APK build modes:
 Internal build example:
 
 ```powershell
-& 'C:\Users\Andy\.gradle\wrapper\dists\gradle-8.7-bin\bhs2wmbdwecv87pi65oeuq5iu\gradle-8.7\bin\gradle.bat' assembleDebug -PSOLO_SERVER_ENDPOINT=https://record.example.com
+& 'C:\Users\Andy\.gradle\wrapper\dists\gradle-8.7-bin\bhs2wmbdwecv87pi65oeuq5iu\gradle-8.7\bin\gradle.bat' assembleDebug -PSOLO_SERVER_ENDPOINT=https://record.uino.com
 ```
 
 Output:
@@ -998,7 +998,7 @@ Windows client build:
 ```powershell
 cd clients\desktop
 npm install
-$env:SOLO_SERVER_URL="https://record.example.com"
+$env:SOLO_SERVER_URL="https://record.uino.com"
 npm run pack
 npm run portable:win
 ```
