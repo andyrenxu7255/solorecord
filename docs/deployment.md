@@ -37,12 +37,12 @@ docker compose up -d --build solorecord
 
 首次部署默认使用 SQLite 和 `var/` 下的本地文件存储。
 
-默认 Docker Compose 构建会安装 `ffmpeg`，人物校对区“试听”优先由服务器生成 5-20 秒 mp3 短样本，避免浏览器无法解码某些手机录音格式。
+默认 Docker Compose 构建使用轻量镜像，不安装系统媒体包。人物校对会优先请求服务器裁剪样本；如果服务器没有 `ffmpeg`，Web 会退回到受权限保护的原始录音分段，并尽量在浏览器端裁剪 5-20 秒样本。
 
-如果服务器包源或磁盘空间临时受限，可以关闭系统媒体包安装；此时 Web 会退回到受权限保护的原始录音分段，并尽量在浏览器端裁剪 5-20 秒样本：
+如果服务器包源和磁盘空间稳定，希望由服务端统一转码试听样本，可启用 `ffmpeg`：
 
 ```bash
-INSTALL_MEDIA_TOOLS=false docker compose up -d --build solorecord
+INSTALL_MEDIA_TOOLS=true docker compose up -d --build solorecord
 ```
 
 中文 PDF 如果需要系统级 CJK 字体，可额外启用字体包：
@@ -51,7 +51,7 @@ INSTALL_MEDIA_TOOLS=false docker compose up -d --build solorecord
 INSTALL_CJK_FONTS=true docker compose up -d --build solorecord
 ```
 
-常规构建：
+常规轻量构建：
 
 ```bash
 docker compose up -d --build solorecord
@@ -243,16 +243,16 @@ docker compose up -d --build solorecord
 
 The first deploy uses SQLite and local file storage under `var/`.
 
-By default, Docker Compose installs `ffmpeg`. The people calibration "play"
-action first asks the server to create a 5-20 second mp3 sample, avoiding
-browser decode failures on some phone recording formats.
+By default, Docker Compose uses a lightweight image and does not install OS
+media packages. The people calibration UI first requests a server-side clipped
+sample; when `ffmpeg` is not installed, the Web UI falls back to protected
+original segments and tries browser-side 5-20 second clipping.
 
-If the package mirror or disk capacity is temporarily constrained, disable OS
-media packages. The Web UI then falls back to protected original segments and
-tries browser-side 5-20 second clipping:
+If the server package mirror and disk capacity are ready, enable `ffmpeg` for
+server-side sample transcoding:
 
 ```bash
-INSTALL_MEDIA_TOOLS=false docker compose up -d --build solorecord
+INSTALL_MEDIA_TOOLS=true docker compose up -d --build solorecord
 ```
 
 If Chinese PDF export needs system CJK fonts, enable the font package
@@ -262,7 +262,7 @@ explicitly:
 INSTALL_CJK_FONTS=true docker compose up -d --build solorecord
 ```
 
-Regular build:
+Regular lightweight build:
 
 ```bash
 docker compose up -d --build solorecord

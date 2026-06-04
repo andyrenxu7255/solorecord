@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        INSTALL_MEDIA_TOOLS: ${INSTALL_MEDIA_TOOLS:-true}
+        INSTALL_MEDIA_TOOLS: ${INSTALL_MEDIA_TOOLS:-false}
         INSTALL_CJK_FONTS: ${INSTALL_CJK_FONTS:-false}
     env_file:
       - server/.env
