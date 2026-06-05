@@ -357,6 +357,13 @@ macOS/iOS/HarmonyOS 发布：
 6. 转写失败：查 ASR command 是否可执行、stdout 是否合法 JSON、远程 STT endpoint/model/key、上游 HTTP 错误、`processing_jobs.error_message`。
 7. 纪要失败：查 LLM endpoint/model/key；必要时回退 mock。
 8. 终端应用下载失败：查 `apk_releases`、`var/apk` 文件、`platform`、反代下载路径。
+
+### Android 录音调试日志
+
+- APK 会在本地记录 `recording_start`、`audio_segment_closed`、`segment_auto_upload_failed`、`recording_service_destroy` 等关键事件，并在用户已登录且网络可用时自动上传到 `/api/mobile/client-logs`。
+- 管理员通过 `GET /api/admin/mobile-logs?meeting_id=<meeting-id>&level=error` 查询。日志只用于调试，不包含 LDAP 密码、ASR/LLM key 或音频内容。
+- 用户反馈“中途停止录音”时，优先查 `recording_task_removed`、`recording_service_destroy`、`audio_write_failed`、`recording_stopped_by_service`。
+- 用户反馈“很多段没上传”时，优先查 App 首页“录音分段与上传状态”，再查 `segment_auto_upload_failed`、`auto_upload_failed`、反代 body size、会话过期和 `var/storage` 权限。
 9. 外部系统失败：查 `SOLO_EXTERNAL_API_TOKENS`、Hermes webhook URL/token、网络连通性。
 
 ## 上下文摘要
@@ -817,6 +824,13 @@ macOS/iOS/HarmonyOS:
 6. ASR fails: check ASR command execution, valid JSON stdout, remote STT endpoint/model/key, upstream HTTP errors, and `processing_jobs.error_message`.
 7. Summary fails: check LLM endpoint/model/key; fall back to mock if needed.
 8. Client download fails: check `apk_releases`, `var/apk` files, `platform`, and reverse proxy download path.
+
+### Android Recording Debug Logs
+
+- The APK records key events such as `recording_start`, `audio_segment_closed`, `segment_auto_upload_failed`, and `recording_service_destroy`, then uploads them to `/api/mobile/client-logs` after the user is signed in and the network is available.
+- Admins query them with `GET /api/admin/mobile-logs?meeting_id=<meeting-id>&level=error`. Logs are for debugging only and do not contain LDAP passwords, ASR/LLM keys, or audio content.
+- For unexpected recording stops, inspect `recording_task_removed`, `recording_service_destroy`, `audio_write_failed`, and `recording_stopped_by_service`.
+- For missing uploads, first inspect the Android recording page's segment status, then inspect `segment_auto_upload_failed`, `auto_upload_failed`, reverse-proxy body limits, session expiry, and `var/storage` permissions.
 9. External integration fails: check `SOLO_EXTERNAL_API_TOKENS`, Hermes webhook URL/token, and network connectivity.
 
 ### User Goal Summary

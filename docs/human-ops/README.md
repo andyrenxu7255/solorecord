@@ -577,6 +577,27 @@ INSTALL_CJK_FONTS=true docker compose up -d --build solorecord
 
 本地 Windows 可先用挂载源码方式 smoke。生产服务器建议使用 Linux Docker 构建。
 
+## Android 录音与日志排查
+
+调试阶段 Android APK 会把关键事件写到 App 私有目录，并在用户已登录、网络可用时自动上传到服务端。日志只包含录音状态、分段号、上传状态、文件大小、设备型号、App 版本和异常摘要；不包含 LDAP 密码、ASR/LLM key 或音频内容。
+
+管理员可查询最近移动端日志：
+
+```bash
+curl -H "Authorization: Bearer <admin-token>" \
+  "https://record.example.com/api/admin/mobile-logs?limit=100"
+
+curl -H "Authorization: Bearer <admin-token>" \
+  "https://record.example.com/api/admin/mobile-logs?meeting_id=<meeting-id>&level=error"
+```
+
+排查顺序：
+
+1. 先看 App “录音”页的“录音分段与上传状态”：`正在写入` 表示当前 WAV 仍在本机追加；`等待上传` 表示分段已落盘；`上传中` 表示正在发往服务器；`上传失败，等待重试` 表示网络或服务端暂时失败，App 会每 30 秒重试。
+2. 如果用户说“中途停止录音”，查 `recording_service_destroy`、`recording_task_removed`、`audio_write_failed`、`recording_stopped_by_service`。
+3. 如果用户说“很多段没上传”，查 `segment_auto_upload_failed`、`auto_upload_failed`、反代 body size、会话是否过期、`var/storage` 权限。
+4. 如果服务器日志里没有移动端日志，先确认用户已登录、网络可达、`POST /api/mobile/client-logs` 返回 200。
+
 ## 上线前检查清单
 
 - `SOLO_SECRET_KEY` 已更换。
@@ -1062,6 +1083,27 @@ Expected:
 LDAP login failures usually point to `SOLO_LDAP_SERVER`, `SOLO_LDAP_BIND_DN_TEMPLATE`, `SOLO_LDAP_SEARCH_DN`, `SOLO_LDAP_SEARCH_FILTER`, TLS trust, or the user's LDAP password. Browser SSO failures usually point to `SOLO_BASE_URL`, `SOLO_SSO_REDIRECT_URI`, Synology callback configuration, or reverse proxy Host/TLS settings.
 
 Sync failures usually point to the APK server endpoint, network access, expired token, or `GET /api/mobile/sync`.
+
+### Android Recording And Log Troubleshooting
+
+During debugging, the Android APK writes key events to app-private storage and uploads them automatically after the user signs in and the network is available. Logs include recording state, segment number, upload state, file size, device model, app version, and exception summaries. They do not include LDAP passwords, ASR/LLM keys, or audio content.
+
+Admin query examples:
+
+```bash
+curl -H "Authorization: Bearer <admin-token>" \
+  "https://record.example.com/api/admin/mobile-logs?limit=100"
+
+curl -H "Authorization: Bearer <admin-token>" \
+  "https://record.example.com/api/admin/mobile-logs?meeting_id=<meeting-id>&level=error"
+```
+
+Troubleshooting order:
+
+1. First check the Android recording page. `正在写入` means the current WAV file is still open; `等待上传` means the segment is saved locally; `上传中` means it is being sent; `上传失败，等待重试` means the app will retry every 30 seconds.
+2. For unexpected recording stops, inspect `recording_service_destroy`, `recording_task_removed`, `audio_write_failed`, and `recording_stopped_by_service`.
+3. For missing uploads, inspect `segment_auto_upload_failed`, `auto_upload_failed`, reverse-proxy body limits, session expiry, and `var/storage` permissions.
+4. If server-side mobile logs are absent, confirm the user is signed in, the network can reach the server, and `POST /api/mobile/client-logs` returns 200.
 
 ### Go-Live LLM Quality Probe
 

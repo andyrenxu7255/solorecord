@@ -53,6 +53,16 @@ Windows 版本下载后解压，运行 `SoloRecord.exe`。iOS、macOS 和 Harmon
 
 录音中页面会显示音频分段数、已上传数、待上传数和正在写入的当前段。当前段也会定期写入本地索引，WAV 文件头会边录边刷新；如果系统异常关闭，已写入的部分更容易被本机保留下来。下次打开 App 时，异常中断的当前段会转成待上传分段。正常结束录音时，最后一段会先保存到本机，再提交服务器处理。
 
+“录音分段与上传状态”会持续更新每一段的状态：
+
+- `正在写入`：当前这一段还在录音。
+- `等待上传`：这一段已经保存在手机里，网络稳定后会上传。
+- `上传中`：正在发送到服务器。
+- `已上传`：服务器已经收到。
+- `上传失败，等待重试`：通常是网络不稳或服务器暂时不可达，App 会继续重试；不要删除 App 数据。
+
+调试阶段 App 会自动把录音开始、分段保存、上传失败等状态日志发给服务器，方便运维排查。日志不包含你的 LDAP 密码，也不包含录音内容。
+
 如果录音时网络可用，每个分段完成后会自动上传到服务器，并返回该分段的阶段转写。你看到的仍然是同一条会议记录，转写内容会持续补充；点击结束录音后，系统再整理整场会议的完整纪要和待办。
 
 如果关闭 App，录音会停止，并尽量保存当前音频段。
@@ -308,6 +318,16 @@ If the network is unstable or you tap join again, the same account, device name,
 The app saves audio in rolling segments while recording. The default is about five minutes per segment, controlled by the server. Adjacent segments keep about two seconds of overlap to reduce boundary word loss. Long meetings are split into smaller files to reduce loss risk. If the app is closed, recording stops and the current segment is preserved as far as possible.
 
 During recording, the screen shows segment count, uploaded count, pending count, and the segment currently being written. The current segment is checkpointed into the local index, and the WAV header is refreshed while recording. If the system closes the app unexpectedly, already written audio is easier to recover. On next launch, the interrupted open segment becomes a pending upload segment. On normal stop, the last segment is saved locally before server processing starts.
+
+The segment status panel updates each segment:
+
+- `正在写入`: the current segment is still being recorded.
+- `等待上传`: the segment is saved on the phone and will upload when the network is stable.
+- `上传中`: the segment is being sent to the server.
+- `已上传`: the server has received it.
+- `上传失败，等待重试`: the network or server was temporarily unavailable; the app will retry, so do not delete app data.
+
+During debugging, the app automatically sends status logs such as recording start, segment save, and upload failure to the server for operations troubleshooting. Logs do not contain your LDAP password or audio content.
 
 When the network is available, each completed segment is uploaded and transcribed into the same meeting record. The transcript keeps growing during the meeting. After you stop recording, the server produces the full meeting summary and action items.
 
