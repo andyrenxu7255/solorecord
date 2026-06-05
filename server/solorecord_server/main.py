@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import hmac
 import json
+import logging
 import mimetypes
 import shutil
 import sqlite3
@@ -67,6 +68,7 @@ from .utils import new_id, now_iso, resolve_existing_file, row_to_dict, sha256_f
 app = FastAPI(title="SoloRecord Internal API", version="0.7.0")
 settings = get_settings()
 job_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="solorecord-job")
+logger = logging.getLogger("solorecord_server")
 
 SUPPORTED_RELEASE_PLATFORMS = {"android", "windows", "macos", "ios", "harmony"}
 RELEASE_DOWNLOAD_TOKEN_TTL_SECONDS = 2 * 60 * 60
@@ -214,6 +216,10 @@ def upload_mobile_client_logs(request: MobileClientLogsUpload, user: CurrentUser
     with get_db() as db:
         for item in logs:
             raw = item.model_dump()
+            level = _normalize_log_level(item.level)
+            event = _normalize_log_text(item.event, 96)
+            meeting_id = _normalize_log_text(item.meeting_id, 128)
+            message = _normalize_log_text(_log_message(item), 2000)
             db.execute(
                 """
                 INSERT INTO mobile_client_logs
@@ -225,11 +231,11 @@ def upload_mobile_client_logs(request: MobileClientLogsUpload, user: CurrentUser
                 (
                     new_id("mlog"),
                     user["id"],
-                    _normalize_log_text(item.meeting_id, 128),
+                    meeting_id,
                     platform,
-                    _normalize_log_level(item.level),
-                    _normalize_log_text(item.event, 96),
-                    _normalize_log_text(_log_message(item), 2000),
+                    level,
+                    event,
+                    message,
                     item.client_ts,
                     _normalize_log_text(item.app_version, 64),
                     item.app_version_code,
@@ -238,6 +244,16 @@ def upload_mobile_client_logs(request: MobileClientLogsUpload, user: CurrentUser
                     json.dumps(raw, ensure_ascii=False),
                     now_iso(),
                 ),
+            )
+            _log_mobile_client_event(
+                level=level,
+                event=event,
+                meeting_id=meeting_id,
+                message=message,
+                user=user,
+                platform=platform,
+                device=_normalize_log_text(item.device, 160),
+                app_version=_normalize_log_text(item.app_version, 64),
             )
     return {"stored": len(logs)}
 
@@ -1927,6 +1943,38 @@ def _log_message(item) -> str:
         suffix = " / ".join(details)
         return f"{message} ({suffix})" if message else suffix
     return message
+
+
+def _log_mobile_client_event(
+    *,
+    level: str,
+    event: str,
+    meeting_id: str,
+    message: str,
+    user: dict,
+    platform: str,
+    device: str,
+    app_version: str,
+) -> None:
+    payload = {
+        "source": "mobile_client",
+        "level": level,
+        "event": event,
+        "meeting_id": meeting_id,
+        "user_id": user.get("id"),
+        "user_name": user.get("display_name"),
+        "platform": platform,
+        "device": device,
+        "app_version": app_version,
+        "message": message,
+    }
+    text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    if level == "error":
+        logger.error(text)
+    elif level in {"warn", "warning"}:
+        logger.warning(text)
+    else:
+        logger.info(text)
 
 static_path = settings.static_dir
 if static_path.exists():
