@@ -58,6 +58,46 @@ public final class HttpJsonClient {
         }
     }
 
+    public JSONObject postJson(String endpoint, String apiKey, JSONObject body, int timeoutMillis) throws IOException {
+        if (endpoint == null || endpoint.trim().isEmpty()) {
+            throw new IOException("接口地址未配置");
+        }
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(endpoint.trim()).openConnection();
+            connection.setRequestMethod("POST");
+            connection.setConnectTimeout(timeoutMillis);
+            connection.setReadTimeout(timeoutMillis);
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            if (apiKey != null && !apiKey.trim().isEmpty()) {
+                connection.setRequestProperty("Authorization", "Bearer " + apiKey.trim());
+            }
+
+            byte[] payload = body.toString().getBytes(StandardCharsets.UTF_8);
+            connection.setFixedLengthStreamingMode(payload.length);
+            try (OutputStream output = connection.getOutputStream()) {
+                output.write(payload);
+            }
+
+            int code = connection.getResponseCode();
+            String response = readResponse(code >= 400 ? connection.getErrorStream() : connection.getInputStream());
+            if (code >= 400) {
+                throw new IOException("HTTP " + code + ": " + response);
+            }
+            return new JSONObject(response);
+        } catch (Exception exception) {
+            if (exception instanceof IOException) {
+                throw (IOException) exception;
+            }
+            throw new IOException("请求失败", exception);
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
     public JSONObject getJson(String endpoint, String apiKey) throws IOException {
         if (endpoint == null || endpoint.trim().isEmpty()) {
             throw new IOException("接口地址未配置");

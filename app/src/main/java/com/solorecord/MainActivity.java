@@ -3,6 +3,7 @@ package com.solorecord;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Context;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -27,6 +28,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.solorecord.config.PreconfiguredConfig;
+import com.solorecord.log.AppLogger;
 import com.solorecord.model.ActionItem;
 import com.solorecord.model.AudioSegment;
 import com.solorecord.model.MeetingRecord;
@@ -37,6 +39,8 @@ import com.solorecord.service.RecordingService;
 import com.solorecord.storage.MeetingStore;
 import com.solorecord.storage.SessionStore;
 import com.solorecord.util.TimeFormat;
+
+import org.json.JSONArray;
 
 import java.io.File;
 import java.io.IOException;
@@ -62,14 +66,19 @@ public final class MainActivity extends Activity {
     private static final int COLOR_LINE = 0xFFD6DDE8;
     private static final int COLOR_SIDEBAR = 0xFF102433;
 
-    private final RollingAudioRecorder audioRecorder = new RollingAudioRecorder();
+    private static final RollingAudioRecorder audioRecorder = new RollingAudioRecorder();
+    private static volatile String activeRecordingMeetingId = "";
+    private static volatile long activeRecordingStartedAt;
+
     private final SoloServerClient serverClient = new SoloServerClient();
     private final ExecutorService executorService = Executors.newSingleThreadExecutor();
     private final Handler segmentHandler = new Handler(Looper.getMainLooper());
     private final Handler recordingUiHandler = new Handler(Looper.getMainLooper());
+    private final Handler retryUploadHandler = new Handler(Looper.getMainLooper());
 
     private MeetingStore meetingStore;
     private SessionStore sessionStore;
+    private AppLogger appLogger;
     private LinearLayout root;
     private LinearLayout content;
     private TextView titleText;
@@ -86,6 +95,8 @@ public final class MainActivity extends Activity {
     private EditText recordingTitleInput;
     private EditText recordingJoinCodeInput;
     private EditText recordingSourceLabelInput;
+    private boolean recordingStopRequested;
+    private long lastLogUploadAt;
     private final Runnable segmentRotation = new Runnable() {
         @Override
         public void run() {
@@ -106,12 +117,24 @@ public final class MainActivity extends Activity {
             recordingUiHandler.postDelayed(this, 5_000L);
         }
     };
+    private final Runnable uploadRetry = new Runnable() {
+        @Override
+        public void run() {
+            if (audioRecorder.isRecording() && currentMeeting != null) {
+                autoUploadCurrentMeeting(true);
+                uploadLogsAsync(false);
+                retryUploadHandler.postDelayed(this, 30_000L);
+            }
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         meetingStore = new MeetingStore(this);
         sessionStore = new SessionStore(this);
+        appLogger = AppLogger.get(this);
+        appLogger.info("app_create", "", "MainActivity 创建");
         String configuredServerEndpoint = PreconfiguredConfig.serverEndpoint();
         String savedServerEndpoint = sessionStore.getServerEndpoint();
         if ((savedServerEndpoint.isEmpty() || savedServerEndpoint.equals("http://127.0.0.1:8000"))
@@ -122,6 +145,7 @@ public final class MainActivity extends Activity {
         currentMeeting = meetingStore.loadLatestMetadata();
         buildShell();
         handleAuthCallback(getIntent());
+        resumeSharedRecordingIfNeeded();
         renderCurrentTab();
     }
 
@@ -135,14 +159,44 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        if (audioRecorder.isRecording()) {
+        if (audioRecorder.isRecording() && (isFinishing() || recordingStopRequested)) {
+            appLogger.warn("activity_destroy_stop_recording", recordingMeetingId, "Activity 销毁，保存并停止录音");
             stopRecording(false);
+        } else if (audioRecorder.isRecording()) {
+            checkpointRecording(false);
+            appLogger.warn("activity_destroy_keep_recording", recordingMeetingId, "Activity 被系统销毁，保留前台录音服务和本地分段");
         }
         releasePlayer();
         segmentHandler.removeCallbacks(segmentRotation);
         recordingUiHandler.removeCallbacks(recordingCheckpoint);
+        retryUploadHandler.removeCallbacks(uploadRetry);
         executorService.shutdownNow();
         super.onDestroy();
+    }
+
+    public static void stopRecordingFromService(Context context, String reason) {
+        if (!audioRecorder.isRecording()) {
+            return;
+        }
+        AppLogger logger = AppLogger.get(context);
+        String meetingId = activeRecordingMeetingId;
+        try {
+            List<AudioSegment> segments = new ArrayList<>(audioRecorder.stop());
+            MeetingStore store = new MeetingStore(context.getApplicationContext());
+            MeetingRecord base = meetingId.isEmpty() ? store.loadLatestMetadata() : store.findById(meetingId);
+            if (base == null) {
+                base = store.loadLatestMetadata();
+            }
+            if (base != null) {
+                store.upsert(base.withAudioSegments(segments, "local_recorded"));
+            }
+            logger.warn("recording_stopped_by_service", meetingId, "录音服务停止并保存分段：" + reason);
+        } catch (IOException exception) {
+            logger.error("recording_service_stop_failed", meetingId, "录音服务停止保存失败：" + reason, exception);
+        } finally {
+            activeRecordingMeetingId = "";
+            activeRecordingStartedAt = 0L;
+        }
     }
 
     private void buildShell() {
@@ -205,6 +259,27 @@ public final class MainActivity extends Activity {
         } catch (IOException ignored) {
             // Recovery is best effort; the record list remains readable even if one save fails.
         }
+    }
+
+    private void resumeSharedRecordingIfNeeded() {
+        if (!audioRecorder.isRecording()) {
+            return;
+        }
+        recordingMeetingId = activeRecordingMeetingId;
+        recordingStartedAt = activeRecordingStartedAt > 0 ? activeRecordingStartedAt : System.currentTimeMillis();
+        if (!recordingMeetingId.isEmpty()) {
+            MeetingRecord active = meetingStore.findById(recordingMeetingId);
+            if (active != null) {
+                currentMeeting = active;
+            }
+        }
+        segmentHandler.removeCallbacks(segmentRotation);
+        recordingUiHandler.removeCallbacks(recordingCheckpoint);
+        retryUploadHandler.removeCallbacks(uploadRetry);
+        segmentHandler.postDelayed(segmentRotation, segmentRotateIntervalMillis());
+        recordingUiHandler.postDelayed(recordingCheckpoint, 1_000L);
+        retryUploadHandler.postDelayed(uploadRetry, 5_000L);
+        appLogger.warn("recording_activity_resumed", recordingMeetingId, "界面重新接管正在进行的录音");
     }
 
     private Button tabButton(String label, int tab) {
@@ -293,10 +368,11 @@ public final class MainActivity extends Activity {
             if (audioRecorder.isRecording()) {
                 checkpointRecording(false);
             }
-            addMeetingSummary(currentMeeting);
-            if (currentMeeting.hasPendingLocalAudio()) {
-                addHint("仍有待上传音频分段，网络恢复后会继续补传。");
-            }
+        addMeetingSummary(currentMeeting);
+        addRecordingSegmentStatus(currentMeeting);
+        if (currentMeeting.hasPendingLocalAudio()) {
+            addHint("仍有待上传音频分段，网络恢复后会继续补传。");
+        }
         }
     }
 
@@ -586,6 +662,9 @@ public final class MainActivity extends Activity {
         try {
             recordingStartedAt = System.currentTimeMillis();
             recordingMeetingId = "local_" + recordingStartedAt;
+            activeRecordingMeetingId = recordingMeetingId;
+            activeRecordingStartedAt = recordingStartedAt;
+            recordingStopRequested = false;
             String title = inputValue(recordingTitleInput);
             if (title.isEmpty()) {
                 title = "会议 " + TimeFormat.display(recordingStartedAt);
@@ -613,13 +692,17 @@ public final class MainActivity extends Activity {
             meetingStore.upsert(currentMeeting);
             startRecordingService();
             audioRecorder.start(this, recordingMeetingId);
+            appLogger.info("recording_start", recordingMeetingId, "用户开始录音：" + title);
             refreshMobileConfigAsync();
             segmentHandler.postDelayed(segmentRotation, segmentRotateIntervalMillis());
             recordingUiHandler.postDelayed(recordingCheckpoint, 1_000L);
+            retryUploadHandler.postDelayed(uploadRetry, 5_000L);
+            uploadLogsAsync(false);
             renderCurrentTab();
             toast("录音已开始");
         } catch (IOException exception) {
             stopRecordingService();
+            appLogger.error("recording_start_failed", recordingMeetingId, "录音启动失败", exception);
             toast(exception.getMessage());
         }
     }
@@ -630,8 +713,10 @@ public final class MainActivity extends Activity {
 
     private void stopRecording(boolean submitAfterSave) {
         try {
+            recordingStopRequested = true;
             segmentHandler.removeCallbacks(segmentRotation);
             recordingUiHandler.removeCallbacks(recordingCheckpoint);
+            retryUploadHandler.removeCallbacks(uploadRetry);
             List<AudioSegment> segments = new ArrayList<>(audioRecorder.stop());
             stopRecordingService();
             MeetingRecord base = currentMeeting == null
@@ -650,6 +735,10 @@ public final class MainActivity extends Activity {
             MeetingRecord draft = base.withAudioSegments(segments, "local_recorded");
             currentMeeting = draft;
             meetingStore.upsert(draft);
+            activeRecordingMeetingId = "";
+            activeRecordingStartedAt = 0L;
+            appLogger.info("recording_stop", draft.getId(), "用户结束录音，分段数：" + segments.size());
+            uploadLogsAsync(false);
             if (submitAfterSave) {
                 renderCurrentTab();
                 toast("录音已保存");
@@ -657,6 +746,8 @@ public final class MainActivity extends Activity {
             }
         } catch (IOException exception) {
             stopRecordingService();
+            appLogger.error("recording_stop_failed", recordingMeetingId, "停止录音失败", exception);
+            uploadLogsAsync(false);
             if (submitAfterSave) {
                 toast(exception.getMessage());
             }
@@ -669,12 +760,16 @@ public final class MainActivity extends Activity {
             if (currentMeeting != null) {
                 currentMeeting = currentMeeting.withAudioSegments(segments, "local_recording");
                 meetingStore.upsert(currentMeeting);
+                appLogger.info("recording_segment_rotated", currentMeeting.getId(), "完成滚动分段，当前分段数：" + segments.size());
                 autoUploadCurrentMeeting(true);
+                uploadLogsAsync(false);
                 if (currentTab == 0) {
                     renderCurrentTab();
                 }
             }
         } catch (IOException exception) {
+            appLogger.error("recording_segment_rotate_failed", recordingMeetingId, "分段保存失败", exception);
+            uploadLogsAsync(false);
             toast("分段保存失败：" + exception.getMessage());
         }
     }
@@ -691,6 +786,7 @@ public final class MainActivity extends Activity {
                 renderCurrentTab();
             }
         } catch (IOException exception) {
+            appLogger.error("recording_checkpoint_failed", recordingMeetingId, "录音状态保存失败", exception);
             toast("录音状态保存失败：" + exception.getMessage());
         }
     }
@@ -760,10 +856,21 @@ public final class MainActivity extends Activity {
                         working,
                         new SoloServerClient.UploadProgressListener() {
                             @Override
+                            public void onSegmentUploadStarted(MeetingRecord uploading, AudioSegment segment) throws Exception {
+                                activeRecordId[0] = uploading.getId();
+                                meetingStore.upsert(uploading);
+                                currentMeeting = uploading;
+                                appLogger.info("segment_upload_start", uploading.getId(), segmentLogMessage(segment, "开始上传"));
+                                runOnUiThread(() -> renderRecordingIfCurrent());
+                            }
+
+                            @Override
                             public void onRemoteMeetingReady(MeetingRecord uploading) throws Exception {
                                 activeRecordId[0] = uploading.getId();
                                 meetingStore.replace(localId, uploading);
                                 currentMeeting = uploading;
+                                appLogger.info("remote_meeting_ready", uploading.getId(), "服务器会议已创建");
+                                uploadLogsAsync(false);
                             }
 
                             @Override
@@ -771,6 +878,19 @@ public final class MainActivity extends Activity {
                                 activeRecordId[0] = uploading.getId();
                                 meetingStore.upsert(uploading);
                                 currentMeeting = uploading;
+                                appLogger.info("segment_upload_success", uploading.getId(), segmentLogMessage(segment, "上传成功"));
+                                uploadLogsAsync(false);
+                                runOnUiThread(() -> renderRecordingIfCurrent());
+                            }
+
+                            @Override
+                            public void onSegmentUploadFailed(MeetingRecord uploading, AudioSegment segment, Exception exception) throws Exception {
+                                activeRecordId[0] = uploading.getId();
+                                meetingStore.upsert(uploading);
+                                currentMeeting = uploading;
+                                appLogger.error("segment_upload_failed", uploading.getId(), segmentLogMessage(segment, "上传失败"), exception);
+                                uploadLogsAsync(false);
+                                runOnUiThread(() -> renderRecordingIfCurrent());
                             }
                         });
                 meetingStore.replace(localId, processed);
@@ -782,6 +902,8 @@ public final class MainActivity extends Activity {
                 });
             } catch (Exception exception) {
                 MeetingRecord latest = meetingStore.findById(activeRecordId[0]);
+                appLogger.error("meeting_sync_failed", activeRecordId[0], "同步中断，已保留进度", exception);
+                uploadLogsAsync(false);
                 runOnUiThread(() -> {
                     autoSyncRunning = false;
                     currentMeeting = latest == null ? currentMeeting : latest;
@@ -836,10 +958,21 @@ public final class MainActivity extends Activity {
                         record,
                         new SoloServerClient.UploadProgressListener() {
                             @Override
+                            public void onSegmentUploadStarted(MeetingRecord uploading, AudioSegment segment) throws Exception {
+                                activeRecordId[0] = uploading.getId();
+                                meetingStore.upsert(uploading);
+                                currentMeeting = uploading;
+                                appLogger.info("segment_auto_upload_start", uploading.getId(), segmentLogMessage(segment, "自动上传开始"));
+                                runOnUiThread(() -> renderRecordingIfCurrent());
+                            }
+
+                            @Override
                             public void onRemoteMeetingReady(MeetingRecord uploading) throws Exception {
                                 activeRecordId[0] = uploading.getId();
                                 meetingStore.replace(localId, uploading);
                                 currentMeeting = uploading;
+                                appLogger.info("remote_meeting_ready", uploading.getId(), "自动上传已创建服务器会议");
+                                uploadLogsAsync(false);
                             }
 
                             @Override
@@ -847,6 +980,19 @@ public final class MainActivity extends Activity {
                                 activeRecordId[0] = uploading.getId();
                                 meetingStore.upsert(uploading);
                                 currentMeeting = uploading;
+                                appLogger.info("segment_auto_upload_success", uploading.getId(), segmentLogMessage(segment, "自动上传成功"));
+                                uploadLogsAsync(false);
+                                runOnUiThread(() -> renderRecordingIfCurrent());
+                            }
+
+                            @Override
+                            public void onSegmentUploadFailed(MeetingRecord uploading, AudioSegment segment, Exception exception) throws Exception {
+                                activeRecordId[0] = uploading.getId();
+                                meetingStore.upsert(uploading);
+                                currentMeeting = uploading;
+                                appLogger.error("segment_auto_upload_failed", uploading.getId(), segmentLogMessage(segment, "自动上传失败"), exception);
+                                uploadLogsAsync(false);
+                                runOnUiThread(() -> renderRecordingIfCurrent());
                             }
                         });
                 meetingStore.replace(localId, uploaded);
@@ -859,6 +1005,8 @@ public final class MainActivity extends Activity {
                 });
             } catch (Exception exception) {
                 MeetingRecord latest = meetingStore.findById(activeRecordId[0]);
+                appLogger.error("auto_upload_failed", activeRecordId[0], "自动上传中断，稍后继续", exception);
+                uploadLogsAsync(false);
                 runOnUiThread(() -> {
                     autoSyncRunning = false;
                     currentMeeting = latest == null ? currentMeeting : latest;
@@ -1123,6 +1271,82 @@ public final class MainActivity extends Activity {
         content.addView(card, spacedParams());
     }
 
+    private void addRecordingSegmentStatus(MeetingRecord record) {
+        if (record.getAudioSegments().isEmpty()) {
+            return;
+        }
+        LinearLayout card = card();
+        card.addView(text("录音分段与上传状态", 16, true), matchWrap());
+        for (AudioSegment segment : record.getAudioSegments()) {
+            File file = new File(segment.getPath());
+            StringBuilder line = new StringBuilder();
+            line.append("分段 ").append(segment.getSegmentNo())
+                    .append("  ")
+                    .append(time(segment.getStartMillis()))
+                    .append("-")
+                    .append(time(segment.getEndMillis()))
+                    .append(" · ")
+                    .append(uploadStatusLabel(segment.getUploadStatus()));
+            if (file.exists()) {
+                line.append(" · ").append(formatBytes(file.length()));
+            } else if (!segment.getDownloadUrl().isEmpty()) {
+                line.append(" · 服务器可下载");
+            } else {
+                line.append(" · 本机文件待确认");
+            }
+            card.addView(text(line.toString(), 13, false), matchWrap());
+        }
+        if (autoSyncRunning) {
+            card.addView(text("正在自动上传，完成后这里会继续更新。", 13, false), matchWrap());
+        } else if (record.hasPendingLocalAudio()) {
+            card.addView(text("网络不稳定时会保留在本机，并每 30 秒自动重试。", 13, false), matchWrap());
+        }
+        content.addView(card, spacedParams());
+    }
+
+    private void renderRecordingIfCurrent() {
+        if (currentTab == 0) {
+            renderCurrentTab();
+        }
+    }
+
+    private String segmentLogMessage(AudioSegment segment, String prefix) {
+        File file = new File(segment.getPath());
+        return prefix
+                + "：segmentNo=" + segment.getSegmentNo()
+                + ", sourceId=" + segment.getSourceId()
+                + ", sourceSegmentNo=" + segment.getSourceSegmentNo()
+                + ", status=" + segment.getUploadStatus()
+                + ", fileExists=" + file.exists()
+                + ", size=" + (file.exists() ? file.length() : 0);
+    }
+
+    private void uploadLogsAsync(boolean force) {
+        if (!sessionStore.isLoggedIn()) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (!force && now - lastLogUploadAt < 15_000L) {
+            return;
+        }
+        lastLogUploadAt = now;
+        executorService.execute(() -> {
+            try {
+                JSONArray logs = appLogger.snapshot(200);
+                if (logs.length() == 0) {
+                    return;
+                }
+                serverClient.uploadClientLogs(
+                        sessionStore.getServerEndpoint(),
+                        sessionStore.getToken(),
+                        logs);
+                appLogger.markUploaded();
+            } catch (Exception ignored) {
+                // Local logs stay on disk and will be retried later.
+            }
+        });
+    }
+
     private void addSectionTitle(String label) {
         TextView view = text(label, 20, true);
         view.setPadding(0, dp(12), 0, dp(8));
@@ -1304,6 +1528,36 @@ public final class MainActivity extends Activity {
                 + " · 待上传：" + pending
                 + (open > 0 ? " · 正在写入：" + open : "")
                 + " · 转写段落：" + transcripts;
+    }
+
+    private String uploadStatusLabel(String status) {
+        if ("uploaded".equals(status)) {
+            return "已上传";
+        }
+        if ("uploading".equals(status)) {
+            return "上传中";
+        }
+        if ("upload_failed".equals(status)) {
+            return "上传失败，等待重试";
+        }
+        if ("local_recording".equals(status)) {
+            return "正在写入";
+        }
+        if ("local".equals(status) || "local_recorded".equals(status)) {
+            return "等待上传";
+        }
+        return status == null || status.isEmpty() ? "等待上传" : status;
+    }
+
+    private String formatBytes(long bytes) {
+        if (bytes < 1024) {
+            return bytes + " B";
+        }
+        double kb = bytes / 1024.0;
+        if (kb < 1024) {
+            return String.format("%.1f KB", kb);
+        }
+        return String.format("%.1f MB", kb / 1024.0);
     }
 
     private String time(long millis) {

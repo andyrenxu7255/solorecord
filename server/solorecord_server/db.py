@@ -218,6 +218,24 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS mobile_client_logs (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    meeting_id TEXT NOT NULL DEFAULT '',
+    platform TEXT NOT NULL DEFAULT 'android',
+    level TEXT NOT NULL DEFAULT 'info',
+    event TEXT NOT NULL DEFAULT '',
+    message TEXT NOT NULL DEFAULT '',
+    client_ts INTEGER,
+    app_version TEXT NOT NULL DEFAULT '',
+    app_version_code INTEGER,
+    device TEXT NOT NULL DEFAULT '',
+    android_sdk INTEGER,
+    raw_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+);
+
 """
 
 
@@ -286,6 +304,18 @@ def init_db() -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_audio_segments_source
             ON audio_segments(meeting_id, source_id, source_segment_no)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_mobile_client_logs_user_created
+            ON mobile_client_logs(user_id, created_at DESC)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_mobile_client_logs_meeting_created
+            ON mobile_client_logs(meeting_id, created_at DESC)
             """
         )
 

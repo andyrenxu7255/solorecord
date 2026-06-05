@@ -52,6 +52,7 @@ from .schemas import (
     LoginRequest,
     MeetingCreate,
     MeetingUpdate,
+    MobileClientLogsUpload,
     MultiSourceJoinRequest,
     ProviderConfig,
     RecordingSourceCreate,
@@ -202,6 +203,76 @@ def mobile_config() -> dict:
             "maxRecordingSources": 8,
         },
     }
+
+
+@app.post("/api/mobile/client-logs")
+def upload_mobile_client_logs(request: MobileClientLogsUpload, user: CurrentUser) -> dict:
+    logs = request.logs[:200]
+    if not logs:
+        return {"stored": 0}
+    platform = _normalize_log_text(request.platform, 32) or "android"
+    with get_db() as db:
+        for item in logs:
+            raw = item.model_dump()
+            db.execute(
+                """
+                INSERT INTO mobile_client_logs
+                (id, user_id, meeting_id, platform, level, event, message,
+                 client_ts, app_version, app_version_code, device, android_sdk,
+                 raw_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    new_id("mlog"),
+                    user["id"],
+                    _normalize_log_text(item.meeting_id, 128),
+                    platform,
+                    _normalize_log_level(item.level),
+                    _normalize_log_text(item.event, 96),
+                    _normalize_log_text(_log_message(item), 2000),
+                    item.client_ts,
+                    _normalize_log_text(item.app_version, 64),
+                    item.app_version_code,
+                    _normalize_log_text(item.device, 160),
+                    item.android_sdk,
+                    json.dumps(raw, ensure_ascii=False),
+                    now_iso(),
+                ),
+            )
+    return {"stored": len(logs)}
+
+
+@app.get("/api/admin/mobile-logs")
+def admin_mobile_logs(
+    user: CurrentUser,
+    meeting_id: str = Query(""),
+    level: str = Query(""),
+    limit: int = Query(100),
+) -> dict:
+    require_admin(user)
+    filters = []
+    values: list[object] = []
+    if meeting_id:
+        filters.append("meeting_id = ?")
+        values.append(meeting_id)
+    if level:
+        filters.append("level = ?")
+        values.append(_normalize_log_level(level))
+    where = "WHERE " + " AND ".join(filters) if filters else ""
+    values.append(max(1, min(500, limit)))
+    with get_db() as db:
+        rows = db.execute(
+            f"""
+            SELECT mobile_client_logs.*, users.display_name AS user_name, users.email AS user_email
+            FROM mobile_client_logs
+            JOIN users ON users.id = mobile_client_logs.user_id
+            {where}
+            ORDER BY mobile_client_logs.created_at DESC
+            LIMIT ?
+            """,
+            values,
+        ).fetchall()
+    return {"items": [row_to_dict(row) for row in rows]}
 
 
 @app.post("/api/mobile/meetings")
@@ -1831,6 +1902,31 @@ def _release_media_type(platform: str) -> str:
         "ios": "application/octet-stream",
         "harmony": "application/octet-stream",
     }.get(platform, "application/octet-stream")
+
+
+def _normalize_log_level(level: str | None) -> str:
+    value = str(level or "info").strip().lower()
+    return value if value in {"debug", "info", "warn", "warning", "error"} else "info"
+
+
+def _normalize_log_text(value: str | None, limit: int) -> str:
+    text = str(value or "").replace("\x00", "").strip()
+    if len(text) > limit:
+        return text[:limit]
+    return text
+
+
+def _log_message(item) -> str:
+    message = str(item.message or "")
+    details = []
+    if item.exception:
+        details.append(str(item.exception))
+    if item.exception_message:
+        details.append(str(item.exception_message))
+    if details:
+        suffix = " / ".join(details)
+        return f"{message} ({suffix})" if message else suffix
+    return message
 
 static_path = settings.static_dir
 if static_path.exists():

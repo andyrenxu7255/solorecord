@@ -5,6 +5,7 @@ import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
 
+import com.solorecord.log.AppLogger;
 import com.solorecord.model.AudioSegment;
 import com.solorecord.util.TimeFormat;
 
@@ -33,6 +34,8 @@ public final class RollingAudioRecorder {
     private File audioDir;
     private WavSegmentWriter currentWriter;
     private boolean recording;
+    private AppLogger logger;
+    private String activeMeetingId = "";
     private long meetingStartedAt;
     private long currentSegmentStartedAt;
     private int nextSegmentNo = 1;
@@ -42,7 +45,12 @@ public final class RollingAudioRecorder {
             if (recording) {
                 throw new IOException("录音已经开始");
             }
-            audioDir = new File(context.getFilesDir(), "audio/" + meetingId);
+            logger = AppLogger.get(context);
+            activeMeetingId = meetingId == null ? "" : meetingId;
+            String safeMeetingDir = activeMeetingId.isEmpty()
+                    ? "local_" + System.currentTimeMillis()
+                    : activeMeetingId.replaceAll("[^A-Za-z0-9_.-]", "_");
+            audioDir = new File(context.getFilesDir(), "audio/" + safeMeetingDir);
             if (!audioDir.exists() && !audioDir.mkdirs()) {
                 throw new IOException("无法创建音频目录");
             }
@@ -71,6 +79,7 @@ public final class RollingAudioRecorder {
             audioRecord.startRecording();
             recordThread = new Thread(() -> captureLoop(minBuffer), "SoloRecordAudioCapture");
             recordThread.start();
+            logInfo("audio_record_start", "录音设备已开始采集");
         }
     }
 
@@ -79,6 +88,7 @@ public final class RollingAudioRecorder {
             if (!recording) {
                 return Collections.emptyList();
             }
+            logInfo("audio_segment_rotate", "开始滚动保存分段 " + nextSegmentNo);
             closeCurrentSegmentLocked("local");
             currentWriter = openWriter(nextSegmentNo);
             currentSegmentStartedAt = System.currentTimeMillis() - OVERLAP_MILLIS;
@@ -98,6 +108,7 @@ public final class RollingAudioRecorder {
                 throw new IOException("录音尚未开始");
             }
             recording = false;
+            logInfo("audio_record_stop", "正在停止录音设备");
             threadToJoin = recordThread;
             recorderToStop = audioRecord;
         }
@@ -123,6 +134,7 @@ public final class RollingAudioRecorder {
             }
             closeCurrentSegmentLocked("local");
             recordThread = null;
+            logInfo("audio_record_stopped", "录音已停止并保存分段");
             return snapshotLocked();
         }
     }
@@ -171,7 +183,8 @@ public final class RollingAudioRecorder {
                     try {
                         currentWriter.write(buffer, 0, read);
                         rememberOverlap(buffer, read);
-                    } catch (IOException ignored) {
+                    } catch (IOException exception) {
+                        logError("audio_write_failed", "音频写入失败，录音被保护性停止", exception);
                         recording = false;
                     }
                 }
@@ -200,9 +213,27 @@ public final class RollingAudioRecorder {
             long duration = Math.max(0, writer.pcmBytes() * 1000 / (SAMPLE_RATE * BYTES_PER_SAMPLE));
             long correctedEndOffset = Math.max(startOffset, startOffset + duration);
             segments.add(new AudioSegment(nextSegmentNo, writer.file().getAbsolutePath(), startOffset, correctedEndOffset, uploadStatus));
+            logInfo(
+                    "audio_segment_closed",
+                    "分段 " + nextSegmentNo + " 已落盘，大小 " + writer.sizeBytes() + " 字节，状态 " + uploadStatus);
             nextSegmentNo += 1;
         } else if (writer.file().exists()) {
             writer.file().delete();
+            logInfo("audio_segment_empty_deleted", "空音频分段已删除");
+        }
+    }
+
+    private void logInfo(String event, String message) {
+        AppLogger currentLogger = logger;
+        if (currentLogger != null) {
+            currentLogger.info(event, activeMeetingId, message);
+        }
+    }
+
+    private void logError(String event, String message, Throwable throwable) {
+        AppLogger currentLogger = logger;
+        if (currentLogger != null) {
+            currentLogger.error(event, activeMeetingId, message, throwable);
         }
     }
 

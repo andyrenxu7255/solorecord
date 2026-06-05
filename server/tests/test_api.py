@@ -180,6 +180,43 @@ def test_ldap_login_uses_server_side_bind_and_session(tmp_path: Path) -> None:
     assert client.get("/api/web/me", headers=headers).json()["user"]["display_name"] == "任旭"
 
 
+def test_mobile_client_logs_are_persisted_for_admin_debug(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    headers = login(client)
+
+    response = client.post(
+        "/api/mobile/client-logs",
+        headers=headers,
+        json={
+            "platform": "android",
+            "logs": [
+                {
+                    "client_ts": 1710000000000,
+                    "level": "error",
+                    "event": "segment_auto_upload_failed",
+                    "meeting_id": "mtg_debug",
+                    "message": "分段 2 上传失败",
+                    "app_version": "0.7.0",
+                    "app_version_code": 73,
+                    "device": "Pixel Test",
+                    "android_sdk": 35,
+                    "exception": "java.io.IOException",
+                    "exception_message": "timeout",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["stored"] == 1
+    logs = client.get("/api/admin/mobile-logs?meeting_id=mtg_debug", headers=headers)
+    assert logs.status_code == 200
+    item = logs.json()["items"][0]
+    assert item["level"] == "error"
+    assert item["event"] == "segment_auto_upload_failed"
+    assert "timeout" in item["message"]
+
+
 def test_ldap_login_can_be_disabled(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     response = client.post(

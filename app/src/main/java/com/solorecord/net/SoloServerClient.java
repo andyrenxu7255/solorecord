@@ -20,9 +20,15 @@ public final class SoloServerClient {
     private final HttpJsonClient httpJsonClient = new HttpJsonClient();
 
     public interface UploadProgressListener {
+        default void onSegmentUploadStarted(MeetingRecord record, AudioSegment segment) throws Exception {
+        }
+
         void onRemoteMeetingReady(MeetingRecord record) throws Exception;
 
         void onSegmentUploaded(MeetingRecord record, AudioSegment segment) throws Exception;
+
+        default void onSegmentUploadFailed(MeetingRecord record, AudioSegment segment, Exception exception) throws Exception {
+        }
     }
 
     public LoginResult ldapLogin(String serverEndpoint, String username, String password) throws Exception {
@@ -177,6 +183,7 @@ public final class SoloServerClient {
             MeetingRecord record,
             String remoteMeetingId,
             UploadProgressListener listener) throws Exception {
+        Exception firstFailure = null;
         for (AudioSegment segment : record.getAudioSegments()) {
             if (segment.isUploaded()) {
                 continue;
@@ -186,15 +193,51 @@ public final class SoloServerClient {
             }
             File file = new File(segment.getPath());
             if (file.exists()) {
-                JSONObject upload = uploadSegment(serverEndpoint, token, remoteMeetingId, record, segment);
-                int serverSegmentNo = upload.optInt("segmentNo", segment.getSegmentNo());
-                record = record.withUploadedSegment(segment, serverSegmentNo);
-                if (listener != null) {
-                    listener.onSegmentUploaded(record, segment.withServerSegmentNo(serverSegmentNo, "uploaded"));
+                try {
+                    record = record.withSegmentUploadStatus(
+                            segment.getSegmentNo(),
+                            segment.getSourceId(),
+                            segment.getSourceSegmentNo(),
+                            "uploading");
+                    if (listener != null) {
+                        listener.onSegmentUploadStarted(record, segment.withUploadStatus("uploading"));
+                    }
+                    JSONObject upload = uploadSegment(serverEndpoint, token, remoteMeetingId, record, segment);
+                    int serverSegmentNo = upload.optInt("segmentNo", segment.getSegmentNo());
+                    record = record.withUploadedSegment(segment, serverSegmentNo);
+                    if (listener != null) {
+                        listener.onSegmentUploaded(record, segment.withServerSegmentNo(serverSegmentNo, "uploaded"));
+                    }
+                } catch (Exception exception) {
+                    record = record.withSegmentUploadStatus(
+                            segment.getSegmentNo(),
+                            segment.getSourceId(),
+                            segment.getSourceSegmentNo(),
+                            "upload_failed");
+                    if (listener != null) {
+                        listener.onSegmentUploadFailed(record, segment.withUploadStatus("upload_failed"), exception);
+                    }
+                    if (firstFailure == null) {
+                        firstFailure = exception;
+                    }
                 }
             } else {
-                throw new java.io.IOException("本地音频分段不可用：" + segment.getSegmentNo());
+                java.io.IOException missing = new java.io.IOException("本地音频分段不可用：" + segment.getSegmentNo());
+                record = record.withSegmentUploadStatus(
+                        segment.getSegmentNo(),
+                        segment.getSourceId(),
+                        segment.getSourceSegmentNo(),
+                        "upload_failed");
+                if (listener != null) {
+                    listener.onSegmentUploadFailed(record, segment.withUploadStatus("upload_failed"), missing);
+                }
+                if (firstFailure == null) {
+                    firstFailure = missing;
+                }
             }
+        }
+        if (firstFailure != null) {
+            throw firstFailure;
         }
         return record;
     }
@@ -249,6 +292,16 @@ public final class SoloServerClient {
             String meetingId,
             AudioSegment segment) throws Exception {
         return uploadSegment(serverEndpoint, token, meetingId, null, segment);
+    }
+
+    public void uploadClientLogs(String serverEndpoint, String token, JSONArray logs) throws Exception {
+        if (logs == null || logs.length() == 0) {
+            return;
+        }
+        JSONObject body = new JSONObject();
+        body.put("platform", "android");
+        body.put("logs", logs);
+        httpJsonClient.postJson(url(serverEndpoint, "/api/mobile/client-logs"), token, body, 30_000);
     }
 
     public JSONObject uploadSegment(

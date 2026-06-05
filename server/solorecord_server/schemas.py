@@ -123,3 +123,22 @@ class SegmentJsonUpload(BaseModel):
     start_ms: int = 0
     end_ms: int = 0
     duration_ms: int = 0
+
+
+class MobileClientLogItem(BaseModel):
+    client_ts: int | None = None
+    level: str = "info"
+    event: str = ""
+    meeting_id: str = ""
+    message: str = ""
+    app_version: str = ""
+    app_version_code: int | None = None
+    device: str = ""
+    android_sdk: int | None = None
+    exception: str = ""
+    exception_message: str = ""
+
+
+class MobileClientLogsUpload(BaseModel):
+    platform: str = "android"
+    logs: list[MobileClientLogItem] = Field(default_factory=list)
